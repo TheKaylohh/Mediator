@@ -224,6 +224,10 @@ static class JournalFaultTests
     {
         if (!OperatingSystem.IsLinux() || !Cockpit.Core.Isolation.BubblewrapSandbox.RunningAsRoot) throw new SkipException("needs root to run the child as uid 65534");
         if (Cockpit.Core.Jobs.CliLaunchBuilder.ResolveOnPath("setpriv") is not string setpriv) throw new SkipException("setpriv missing");
+        // The child runs the test binary as uid 65534, so every folder above it must be searchable by others.
+        for (var d = new DirectoryInfo(Path.GetDirectoryName(TestsDll)!); d is not null; d = d.Parent)
+            if ((File.GetUnixFileMode(d.FullName) & UnixFileMode.OtherExecute) == 0)
+                throw new SkipException($"{d.FullName} is not searchable by other users, so uid 65534 cannot start the test binary; run the suite from a checkout outside it");
         var f = Make(4);
         string dbDir = Path.GetDirectoryName(f.Db)!;
         Directory.CreateDirectory(dbDir);
