@@ -634,6 +634,27 @@ public sealed class FileJournalService : IAsyncDisposable
         }
     }
 
+    /// <summary>Every job's batches, newest first, at most <paramref name="limit"/> (support bundle; no paths).</summary>
+    public async Task<IReadOnlyList<(string JobId, BatchSummary Batch)>> ListAllBatchesAsync(int limit, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT job_id, batch_id, status, created_utc, note, op_count, total_bytes FROM batch ORDER BY created_utc DESC, rowid DESC LIMIT $n;";
+            cmd.Parameters.AddWithValue("$n", limit);
+            var list = new List<(string, BatchSummary)>();
+            using var r = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await r.ReadAsync(ct).ConfigureAwait(false))
+                list.Add((r.GetString(0), new BatchSummary(r.GetString(1), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetInt32(5), r.GetInt64(6))));
+            return list;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>A sample of a batch's moves for the approval preview.</summary>
     public async Task<IReadOnlyList<PlannedOp>> SampleOpsAsync(string batchId, string jobId, int max, CancellationToken ct)
     {

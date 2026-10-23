@@ -29,6 +29,7 @@ public static class Commands
               cockpit rollback <jobId> [--batch <batchId>] [--yes]
               cockpit operations [--unresolved] [--job-id <id>]              (side-effecting calls and their state)
               cockpit operations resolve <operationId> --done|--not-done --note "<what you checked>"
+              cockpit support-bundle [--output <file.zip>]                   (redacted diagnostics to share)
               cockpit cad      <folder> --request "front suspension: hub, disc, spring"   (build123d → STEP → SolidWorks)
               cockpit resolve  <folder> --request "60 s teaser, music under"            (FCPXML + EDL for DaVinci Resolve)
               cockpit blender  <folder> --request "red car through a neon city"        (scene .blend + preview frames)
@@ -353,6 +354,20 @@ public static class Commands
         return conflicts == 0 ? 0 : 1;
     }
 
+    // ── support bundle ────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Writes a shareable zip: secrets redacted, paths anonymized, no databases, configs, prompts or user files.</summary>
+    public static async Task<int> SupportBundleAsync(CliArgs cli)
+    {
+        await using var runtime = await CockpitRuntime.CreateAsync(Options(cli));
+        string output = cli.Get("output") ?? Path.Combine(Environment.CurrentDirectory,
+            "cockpit-support-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".zip");
+        string written = await Cockpit.Core.Diagnostics.SupportBundle.CreateAsync(runtime, output);
+        Console.WriteLine($"Support bundle: {written}");
+        Console.WriteLine("It contains no secrets, prompts, file names or file contents; paths are replaced by <path#hash>. Open it to check before sharing.");
+        return 0;
+    }
+
     // ── operations ────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>Lists side-effecting calls, or records the user's verdict on one whose outcome was unknown.</summary>
@@ -405,6 +420,11 @@ public static class Commands
             runtime = await CockpitRuntime.CreateAsync(Options(cli));
             Add("state folder", "ok", runtime.Paths.DataDirectory);
             Add("bus", "ok", runtime.Bus.PipeEndpoint.ToString());
+            var chain = await runtime.Audit.VerifyAsync();
+            Add("audit chain", chain.Ok ? "ok" : "fail", chain.Ok
+                ? $"{chain.RowsChecked} rows verified; head {chain.Head?[..Math.Min(16, chain.Head.Length)]}… (note it down to detect a truncated log later)"
+                : $"row {chain.FirstBadId}: {chain.Problem}");
+            if (runtime.Recovery.NeedsUser > 0) Add("operations", "warn", $"{runtime.Recovery.NeedsUser} operation(s) need your check: cockpit operations --unresolved");
         }
         catch (Exception ex)
         {

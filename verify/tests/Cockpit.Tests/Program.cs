@@ -35,6 +35,8 @@ if (args.Length == 2 && args[0] == "--write-fcpxml")
     File.WriteAllText(args[1], Cockpit.Core.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
+if (args.Length == 2 && args[0] == "--audit-child") return await Cockpit.Tests.AuditTests.ChildAppend(args[1]);
+if (args.Length == 4 && args[0] == "--pdf-child") return Cockpit.Tests.PdfHardeningTests.Child(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
 if (args.Length == 5 && args[0] == "--ops-core") return await Cockpit.Tests.OperationTests.CoreChildAsync(args[1], args[2], args[3], args[4]);
 if (args.Length == 6 && args[0] == "--journal-child") return await Cockpit.Tests.JournalFaultTests.ChildAsync(args);
 if (args.Length == 2 && args[0] == "--test-pdf") { File.WriteAllBytes(args[1], Cockpit.Tests.TestPdf.Build()); return 0; }
@@ -55,6 +57,7 @@ var bridgeDll = args.Length > 0 ? Path.GetFullPath(args[0]) : throw new Argument
 var cliDll = args.Length > 1 ? Path.GetFullPath(args[1]) : throw new ArgumentException("Pass the path to cockpit.dll (the console host)");
 var testsDll = typeof(Check).Assembly.Location;
 Cockpit.Tests.JournalFaultTests.TestsDll = testsDll;
+Cockpit.Tests.PdfHardeningTests.TestsDll = testsDll;
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("xxhash64 matches reference vectors", Tests.XxHashVectors),
@@ -123,6 +126,16 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("bus: per-connection in-flight cap refuses excess requests with an error", Cockpit.Tests.BusHardeningTests.InFlightCap),
     ("bus: a grant revoked while a Write waits for approval never executes, even if approval arrives after", Cockpit.Tests.BusHardeningTests.RevokedWhileAwaitingApproval),
     ("bus: 4 jobs x 40 concurrent calls with a mid-run revocation; every response to the right id and job; no deadlock", Cockpit.Tests.BusHardeningTests.ConcurrencyStress),
+    // V6 Phases 4-5: hostile inputs
+    ("pdf: 200 000 nested arrays → FormatException in a child process (was a stack overflow that killed the process)", Cockpit.Tests.PdfHardeningTests.DeepNestingIsAFormatError),
+    ("pdf: limits: 300 MiB decompression bomb, total budget, operand flood, time budget, huge ObjStm /N, encrypted, DCT, page ranges", Cockpit.Tests.PdfHardeningTests.ResourceLimits),
+    ("pdf: 3000 seeded mutations (flips, truncation, junk, splices) → parse or FormatException only, none over 5 s, no crash", Cockpit.Tests.PdfHardeningTests.MutationFuzz),
+    ("tutor: exact near-singular/singular/rational/defective/complex/huge cases; pathological numbers and malformed claims refused", () => Cockpit.Tests.TutorExactnessTests.ExactnessAndPathologicalInput(bridgeDll)),
+    ("audit: hash chain detects edit, delete, insert and unhashed rows; append-only triggers still refuse UPDATE", Cockpit.Tests.AuditTests.HashChainDetectsTampering),
+    ("audit: V5 log migrates; rotation archives (never deletes) and the new log continues the chain; forged link detected", Cockpit.Tests.AuditTests.V5LogMigratesAndRotationContinuesChain),
+    ("audit: secrets redacted before storage (registered values, key formats, secret fields, bearer, VAR=value)", Cockpit.Tests.AuditTests.RedactionBeforeStorage),
+    ("audit: appender SIGKILLed mid-stream 3 times; chain verifies and continues each time", () => Cockpit.Tests.AuditTests.CrashMidAppendStaysConsistent(testsDll)),
+    ("support bundle: only documented files; no secrets, tokens, file names, contents or real paths; chain head included", () => Cockpit.Tests.AuditTests.SupportBundleIsClean(bridgeDll)),
     // V6 Phase 2d: durable operation store
     ("operations: state machine refuses illegal transitions; canonical request keys; full history", Cockpit.Tests.OperationTests.StateMachineRules),
     ("operations: replay after commit returns the stored result; concurrent duplicate refused; one side effect", () => Cockpit.Tests.OperationTests.ReplayAndDuplicates(bridgeDll)),

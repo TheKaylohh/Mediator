@@ -75,6 +75,7 @@ public sealed class JobRegistry
         };
         if (!_jobs.TryAdd(jobId, grant))
             throw new InvalidOperationException($"Job '{jobId}' already has a grant.");
+        Cockpit.Core.Security.Redactor.Register(grant.Token); // never written anywhere, even by accident
         JobIssued?.Invoke(grant);
         return grant;
     }

@@ -25,6 +25,37 @@ public static partial class PdfTextExtractor
     /// <summary>Largest PDF the built-in reader accepts.</summary>
     public const long MaxFileBytes = 256L * 1024 * 1024;
 
+    /// <summary>
+    /// V6 resource limits for untrusted PDFs. Every limit fails with a <see cref="FormatException"/>; nothing else
+    /// escapes <see cref="Extract(byte[], int, int)"/>. Nesting is bounded so a hostile file cannot overflow the stack
+    /// (which would kill the whole process, uncatchably).
+    /// </summary>
+    public sealed record Limits
+    {
+        public long MaxDecodedBytesPerStream { get; init; } = 64L * 1024 * 1024;
+        public long MaxDecodedBytesTotal { get; init; } = 512L * 1024 * 1024;
+        public int MaxNesting { get; init; } = 128;
+        public int MaxOperands { get; init; } = 4096;
+        public int MaxPages { get; init; } = 20_000;
+        public int MaxTextChars { get; init; } = 16 * 1024 * 1024;
+        public TimeSpan MaxTime { get; init; } = TimeSpan.FromSeconds(60);
+        public static readonly Limits Default = new();
+    }
+
+    private sealed class Budget(Limits limits)
+    {
+        public readonly Limits L = limits;
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        public long Decoded;
+        public void Tick()
+        {
+            if (_clock.Elapsed > L.MaxTime) throw new FormatException($"The PDF took longer than {L.MaxTime.TotalSeconds:0} s to read; it may be malformed.");
+        }
+    }
+
+    [ThreadStatic] private static Budget? _budget;
+    private static Budget B => _budget ?? new Budget(Limits.Default);
+
     public static PdfDocumentText Extract(string path, int firstPage, int lastPage)
     {
         using var fs = File.OpenRead(path);
@@ -46,7 +77,24 @@ public static partial class PdfTextExtractor
         return ms.ToArray();
     }
 
-    public static PdfDocumentText Extract(byte[] data, int firstPage, int lastPage)
+    public static PdfDocumentText Extract(byte[] data, int firstPage, int lastPage) => Extract(data, firstPage, lastPage, Limits.Default);
+
+    public static PdfDocumentText Extract(byte[] data, int firstPage, int lastPage, Limits limits)
+    {
+        var previous = _budget;
+        _budget = new Budget(limits);
+        try { return ExtractCore(data, firstPage, lastPage); }
+        catch (FormatException) { throw; }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or InvalidCastException or OverflowException
+            or KeyNotFoundException or InvalidOperationException or NullReferenceException or InvalidDataException or DecoderFallbackException)
+        {
+            // Defence in depth: a malformed file is a format error, never a crash of the tool call.
+            throw new FormatException($"The PDF is malformed ({ex.GetType().Name}).", ex);
+        }
+        finally { _budget = previous; }
+    }
+
+    private static PdfDocumentText ExtractCore(byte[] data, int firstPage, int lastPage)
     {
         if (data.Length < 8 || Encoding.ASCII.GetString(data, 0, 5) != "%PDF-") throw new FormatException("Not a PDF file.");
         var objects = ReadObjects(data);
@@ -62,7 +110,8 @@ public static partial class PdfTextExtractor
         var pages = new List<(Dictionary<string, object?> Page, Dictionary<string, object?>? Resources)>();
         void Walk(Dictionary<string, object?>? node, Dictionary<string, object?>? inherited, int depth)
         {
-            if (node is null || depth > 64) return;
+            if (node is null || depth > 64 || pages.Count > B.L.MaxPages) return;
+            B.Tick();
             var resources = Dict(node.GetValueOrDefault("Resources")) ?? inherited;
             if (Name(node, "Type") == "Page" || (!node.ContainsKey("Kids") && node.ContainsKey("Contents"))) { pages.Add((node, resources)); return; }
             if (Resolve(node.GetValueOrDefault("Kids")) is List<object?> kids)
@@ -70,6 +119,7 @@ public static partial class PdfTextExtractor
         }
         Walk(Dict(catalog.GetValueOrDefault("Pages")), null, 0);
         if (pages.Count == 0) throw new FormatException("No pages found.");
+        if (pages.Count > B.L.MaxPages) throw new FormatException($"The PDF claims more than {B.L.MaxPages} pages.");
 
         string? title = null;
         var info = objects.Values.Select(Dict).FirstOrDefault(d => d is not null && d.ContainsKey("Producer") || d is not null && d.ContainsKey("Title"));
@@ -77,8 +127,10 @@ public static partial class PdfTextExtractor
 
         int from = Math.Max(1, firstPage), to = Math.Min(pages.Count, lastPage);
         var result = new List<PdfPageText>();
+        long chars = 0;
         for (int n = from; n <= to; n++)
         {
+            B.Tick();
             var (page, resources) = pages[n - 1];
             var fonts = new Dictionary<string, Font>(StringComparer.Ordinal);
             if (Dict(resources?.GetValueOrDefault("Font")) is { } fontDict)
@@ -88,7 +140,10 @@ public static partial class PdfTextExtractor
             var contents = Resolve(page.GetValueOrDefault("Contents"));
             foreach (var part in contents is List<object?> list ? list.Select(Resolve) : [contents])
                 if (part is PdfStream s && Decode(s) is { } bytes) { content.Write(bytes); content.WriteByte((byte)'\n'); }
-            result.Add(new PdfPageText(n, Clean(Interpret(content.ToArray(), fonts))));
+            string text = Clean(Interpret(content.ToArray(), fonts));
+            chars += text.Length;
+            if (chars > B.L.MaxTextChars) throw new FormatException($"The selected pages hold more than {B.L.MaxTextChars} characters of text; choose fewer pages.");
+            result.Add(new PdfPageText(n, text));
         }
         return new PdfDocumentText(pages.Count, result, title);
     }
@@ -104,6 +159,7 @@ public static partial class PdfTextExtractor
         string latin = Encoding.Latin1.GetString(data);
         foreach (Match m in ObjHeader().Matches(latin))
         {
+            B.Tick();
             int num = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
             var lexer = new Lexer(data, m.Index + m.Length);
             try { objects[num] = lexer.ReadObjectBody(objects); } // later definitions (incremental updates) win
@@ -114,7 +170,7 @@ public static partial class PdfTextExtractor
         {
             var decoded = Decode(stream);
             if (decoded is null) continue;
-            int count = (int)Num(stream.Dict.GetValueOrDefault("N")), first = (int)Num(stream.Dict.GetValueOrDefault("First"));
+            int count = (int)Math.Clamp(Num(stream.Dict.GetValueOrDefault("N")), 0, decoded.Length / 2 + 1), first = (int)Num(stream.Dict.GetValueOrDefault("First"));
             var header = new Lexer(decoded, 0);
             var pairs = new List<(int Num, int Offset)>();
             for (int i = 0; i < count; i++)
@@ -144,7 +200,7 @@ public static partial class PdfTextExtractor
             {
                 using var z = new ZLibStream(new MemoryStream(bytes), CompressionMode.Decompress);
                 var outStream = new MemoryStream();
-                try { z.CopyTo(outStream); } catch (InvalidDataException) when (outStream.Length > 0) { } // truncated trailing bytes
+                try { CopyBounded(z, outStream); } catch (InvalidDataException) when (outStream.Length > 0) { } // truncated trailing bytes
                 bytes = outStream.ToArray();
             }
             catch (InvalidDataException) { return null; }
@@ -152,8 +208,27 @@ public static partial class PdfTextExtractor
         return bytes;
     }
 
+    /// <summary>Decompresses with a per-stream and a per-document cap, so a small "zip bomb" cannot exhaust memory.</summary>
+    private static void CopyBounded(Stream source, MemoryStream target)
+    {
+        var budget = B;
+        var buffer = new byte[81920];
+        int n;
+        while ((n = source.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            if (target.Length + n > budget.L.MaxDecodedBytesPerStream)
+                throw new FormatException($"A PDF stream decompresses to more than {budget.L.MaxDecodedBytesPerStream / (1024 * 1024)} MiB.");
+            budget.Decoded += n;
+            if (budget.Decoded > budget.L.MaxDecodedBytesTotal)
+                throw new FormatException($"The PDF decompresses to more than {budget.L.MaxDecodedBytesTotal / (1024 * 1024)} MiB in total.");
+            target.Write(buffer, 0, n);
+            budget.Tick();
+        }
+    }
+
     private sealed class Lexer(byte[] data, int position)
     {
+        private int _depth;
         private int _pos = position;
         private object? _peeked;
         private bool _hasPeek;
@@ -260,14 +335,18 @@ public static partial class PdfTextExtractor
             switch (t)
             {
                 case PdfOperator { Op: "[" }:
+                    if (++_depth > B.L.MaxNesting) throw new FormatException("PDF arrays or dictionaries are nested too deeply.");
                     var list = new List<object?>();
                     while (Peek() is not PdfOperator { Op: "]" } && Peek() is not null) list.Add(ReadValue());
                     Next();
+                    _depth--;
                     return list;
                 case PdfOperator { Op: "<<" }:
+                    if (++_depth > B.L.MaxNesting) throw new FormatException("PDF arrays or dictionaries are nested too deeply.");
                     var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
                     while (Peek() is PdfName key) { Next(); dict[key.Value] = ReadValue(); }
                     if (Next() is not PdfOperator { Op: ">>" }) throw new FormatException("bad dictionary");
+                    _depth--;
                     return dict;
                 case double d:
                     // "n g R": look ahead without consuming unless it is a reference
@@ -426,10 +505,17 @@ public static partial class PdfTextExtractor
         void Show(byte[] s) => sb.Append(font.Decode(s));
         void NewLine() { if (sb.Length > 0 && sb[^1] != '\n') sb.Append('\n'); }
 
+        int steps = 0;
         while (!lexer.AtEnd)
         {
+            if ((++steps & 0xFFF) == 0) B.Tick();
             var t = lexer.ReadValue();
-            if (t is not PdfOperator op) { operands.Add(t); continue; }
+            if (t is not PdfOperator op)
+            {
+                if (operands.Count >= B.L.MaxOperands) operands.RemoveAt(0); // no real operator takes thousands of operands
+                operands.Add(t);
+                continue;
+            }
             switch (op.Op)
             {
                 case "BT": break;

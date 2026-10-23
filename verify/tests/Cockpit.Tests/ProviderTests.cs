@@ -93,7 +93,7 @@ static class ProviderTests
         return d;
     }
 
-    static Task<CockpitRuntime> Runtime(string bridgeDll, IApprovalPrompt prompt, IMediaProbe? probe = null, IPythonRunner? python = null,
+    internal static Task<CockpitRuntime> Runtime(string bridgeDll, IApprovalPrompt prompt, IMediaProbe? probe = null, IPythonRunner? python = null,
         IBlenderRunner? blender = null, SimulatedSwxBackend? swx = null) =>
         CockpitRuntime.CreateAsync(new RuntimeOptions
         {

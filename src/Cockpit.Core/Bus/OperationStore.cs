@@ -205,7 +205,7 @@ public sealed class OperationStore : IAsyncDisposable
             {
                 cmd.Transaction = tx;
                 cmd.CommandText = "INSERT INTO operation (op_id, job_id, tool, request_key, state, attempt, created_utc, updated_utc, arguments) VALUES ($id, $j, $t, $k, 'pending', $a, $now, $now, $args);";
-                cmd.Parameters.AddWithValue("$args", argumentsJson);
+                cmd.Parameters.AddWithValue("$args", Cockpit.Core.Security.Redactor.Redact(argumentsJson));
                 cmd.Parameters.AddWithValue("$id", id);
                 cmd.Parameters.AddWithValue("$j", jobId);
                 cmd.Parameters.AddWithValue("$t", tool);

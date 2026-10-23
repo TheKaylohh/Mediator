@@ -269,7 +269,8 @@ print(json.dumps({"ok": True, "pageCount": doc.page_count, "title": (doc.metadat
                 bool? ok = claim.Name switch
                 {
                     "determinant" => A.IsSquare ? Rational.From(claim.Value) == det!.Value : null,
-                    "rank" => claim.Value.GetInt32() == pivots.Count,
+                    "rank" => claim.Value.ValueKind == JsonValueKind.Number && claim.Value.TryGetInt32(out int rk) ? rk == pivots.Count
+                        : throw new FormatException("The rank claim must be a whole number."),
                     "rref" => ExactMatrix.From(claim.Value).SameAs(rref),
                     "inverse" => (inverse ??= A.IsSquare ? A.Inverse() : null) is { } inv && ExactMatrix.From(claim.Value).SameAs(inv),
                     "product" => B is not null && ExactMatrix.From(claim.Value).SameAs(product ??= A.Multiply(B)),

@@ -322,6 +322,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         Directory.CreateDirectory(options.Paths.DataDirectory);
         Directory.CreateDirectory(options.Paths.WorkspacesDirectory);
+        Cockpit.Core.Security.Redactor.RegisterEnvironmentSecrets(GeminiLaunchBuilder.VariablesToScrub(false));
         var audit = await AuditLog.OpenAsync(options.Paths.AuditDatabase, ct).ConfigureAwait(false);
         var journal = await FileJournalService.OpenAsync(options.Paths.JournalDatabase, options.PathPolicy ?? ProtectedPathPolicy.CreateDefault(), ct).ConfigureAwait(false);
         var usage = await UsageLedger.OpenAsync(options.Paths.UsageDatabase, ct: ct).ConfigureAwait(false);

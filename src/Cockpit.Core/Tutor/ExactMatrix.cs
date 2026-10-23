@@ -49,16 +49,26 @@ public readonly struct Rational : IEquatable<Rational>, IComparable<Rational>
         : $"{(Num.Sign < 0 ? "-" : "")}\\frac{{{BigInteger.Abs(Num).ToString(CultureInfo.InvariantCulture)}}}{{{Den.ToString(CultureInfo.InvariantCulture)}}}";
 
     /// <summary>"3", "-2/5", "0.25", "1.5e-3", or a JSON number.</summary>
+    /// <summary>Largest exponent and digit count accepted: "1e999999999" would otherwise allocate a billion-digit integer.</summary>
+    public const int MaxExponent = 400, MaxDigits = 400;
+
     public static Rational Parse(string text)
     {
         string t = text.Trim().Replace(" ", "", StringComparison.Ordinal);
+        if (t.Length > 2 * MaxDigits + 10) throw new FormatException($"Number too long (over {MaxDigits} digits).");
         int slash = t.IndexOf('/', StringComparison.Ordinal);
-        if (slash > 0) return Parse(t[..slash]) / Parse(t[(slash + 1)..]);
+        if (slash > 0)
+        {
+            var den = Parse(t[(slash + 1)..]);
+            if (den.IsZero) throw new FormatException($"'{text}' divides by zero.");
+            return Parse(t[..slash]) / den;
+        }
         int e = t.IndexOfAny(['e', 'E']);
         int exp = 0;
         if (e > 0)
         {
-            exp = int.Parse(t[(e + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+            if (!int.TryParse(t[(e + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out exp) || Math.Abs(exp) > MaxExponent)
+                throw new FormatException($"Exponent in '{text}' is outside ±{MaxExponent}.");
             t = t[..e];
         }
         bool neg = t.StartsWith('-');
