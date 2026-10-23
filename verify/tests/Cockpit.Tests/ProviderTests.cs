@@ -328,6 +328,8 @@ static class ProviderTests
         var gen = await client.CallToolAsync(CodeCadToolProvider.GenerateTool, new JsonObject { ["outputFolder"] = folder, ["parts"] = parts }, TimeSpan.FromSeconds(30));
         Check.True(!gen.IsError, "generate: " + gen.Text);
         Check.True(gen.Text.Contains("1 part(s) were excluded by the user", StringComparison.Ordinal), "unticked strut reported");
+        Check.True(gen.Text.Contains("fit-check models in millimetres", StringComparison.Ordinal) && ((string)gen.Structured!["validation"]!).Contains("NOT engineering-validated", StringComparison.Ordinal),
+            "every result says fit-check, units mm, not engineering-validated");
         var made = gen.Structured!["parts"]!.AsArray().Select(p => (string)p!["step"]!).ToList();
         Check.True(made.Count == 3 && made.All(File.Exists) && !File.Exists(Path.Combine(folder, "strut.step")), "3 STEP files, no strut");
         Check.Equal(2, python.Scripts.Count, "generator + independent re-import validator");

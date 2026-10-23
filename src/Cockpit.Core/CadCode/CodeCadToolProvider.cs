@@ -160,6 +160,9 @@ public sealed class CodeCadToolProvider(IPythonRunner python, ISandboxRunner san
         }
     }
 
+    /// <summary>Said with every generated part, so a fit-check model is never mistaken for a validated production part.</summary>
+    public const string FitCheckNotice = "These are fit-check models in millimetres: their solids, volume and bounding box were verified, but not materials, tolerances, loads or manufacturability. Do not use them for production without engineering review.";
+
     // ── Isolation policy ────────────────────────────────────────────────────────────────────────────
 
     /// <summary>Policy id recorded in approvals and the audit. Bump it when what the sandbox enforces changes.</summary>
@@ -355,10 +358,12 @@ public sealed class CodeCadToolProvider(IPythonRunner python, ISandboxRunner san
             if (parts.Count < proposed) sb.Append(CultureInfo.InvariantCulture, $" {proposed - parts.Count} part(s) were excluded by the user; do not generate them.");
             foreach (var f in failed) sb.Append(CultureInfo.InvariantCulture, $" {f!["key"]}: {f["error"]}.");
             if (made.Count > 0) sb.Append(" Next: swx_import_step with these STEP files, then swx_part_cards and swx_build_assembly.");
+            if (made.Count > 0) sb.Append(" " + FitCheckNotice);
             var structured = new JsonObject
             {
                 ["parts"] = made, ["failed"] = failed, ["script"] = scriptCopy,
                 ["runner"] = isolated ? sandbox.Id : python.Describe, ["isolated"] = isolated,
+                ["validation"] = "fit-check geometry (units: millimetres); solids, volume and bounding box verified; NOT engineering-validated: no material, tolerance, load or manufacturability check",
             };
             return made.Count == 0 ? new ToolResult(true, sb.ToString(), structured) : ToolResult.Ok(sb.ToString(), structured);
         }

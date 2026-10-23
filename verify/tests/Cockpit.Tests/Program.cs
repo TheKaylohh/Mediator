@@ -35,6 +35,7 @@ if (args.Length == 2 && args[0] == "--write-fcpxml")
     File.WriteAllText(args[1], Cockpit.Core.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
+if (args.Length == 3 && args[0] == "--bench") return await Cockpit.Tests.Benchmarks.RunAsync(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
 if (args.Length == 2 && args[0] == "--audit-child") return await Cockpit.Tests.AuditTests.ChildAppend(args[1]);
 if (args.Length == 4 && args[0] == "--pdf-child") return Cockpit.Tests.PdfHardeningTests.Child(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
 if (args.Length == 5 && args[0] == "--ops-core") return await Cockpit.Tests.OperationTests.CoreChildAsync(args[1], args[2], args[3], args[4]);
@@ -158,6 +159,7 @@ tests.Add(("live: build123d builds all 7 templates to STEP within their envelope
 tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", Live(() => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll))));
 tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", Live(() => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll))));
 tests.Add(("live: build123d custom code inside real bubblewrap through the bus; hostile script contained", Live(() => Cockpit.Tests.IsolationTests.LiveCustomCodeInSandbox(bridgeDll))));
+tests.Add(("live: every CAD template at min/max and seeded random valid parameters → STEP, validated and re-imported in the sandbox", Live(() => Cockpit.Tests.LiveCadBoundaryTests.BoundaryAndRandomParameters(bridgeDll))));
 tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Live(Cockpit.Tests.LiveTests.MediaProbes)));
 
 // A skip is never a pass: it is printed as SKIP, counted separately, and with COCKPIT_REQUIRE_ALL=1 it fails the run.
