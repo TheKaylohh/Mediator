@@ -150,6 +150,10 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("isolation (real bwrap): no network (host loopback, external, DNS)", Cockpit.Tests.IsolationTests.RealSandboxNoNetwork),
     ("isolation (real bwrap): memory, CPU, process and file-size limits; wall-clock kill; no surviving grandchildren", Cockpit.Tests.IsolationTests.RealSandboxLimitsAndCleanup),
     ("fs-auth: journal rejects link moves at plan time and stops a move whose destination was swapped after approval", Cockpit.Tests.SecurityTests.JournalRefusesLinks),
+    // V7: attachments (drag-drop, paste, Attach button)
+    ("attachments: snapshot/folder/PNG staging; links, FIFO, /proc, /dev, oversize, fake PNG refused; discard never touches user files; prune", Cockpit.Tests.AttachmentTests.StagingRules),
+    ("attachments: read-only roots allow read/list, deny create/move/mkdir (read_only); never remove write access; links still refused", Cockpit.Tests.AttachmentTests.ReadOnlyRoots),
+    ("attachments through the bus: listed, text + image content, other job refused, files tool cannot move them, live attach audited", () => Cockpit.Tests.AttachmentTests.ThroughTheBus(bridgeDll)),
 };
 
 // Live tests are always listed; without COCKPIT_LIVE_PYTHON each one reports SKIP (never PASS).

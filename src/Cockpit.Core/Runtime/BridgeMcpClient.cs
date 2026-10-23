@@ -8,7 +8,11 @@ using Cockpit.Protocol;
 
 namespace Cockpit.Core.Runtime;
 
-public sealed record McpToolCallResult(bool IsError, string Text, JsonNode? Structured);
+public sealed record McpToolCallResult(bool IsError, string Text, JsonNode? Structured)
+{
+    /// <summary>Image content blocks (V7: attachments).</summary>
+    public IReadOnlyList<Cockpit.Core.Bus.ToolImage> Images { get; init; } = [];
+}
 
 public sealed class McpClientException(string message) : Exception(message);
 
@@ -83,7 +87,9 @@ public sealed class BridgeMcpClient : IAsyncDisposable
         if (reply["error"] is JsonObject err) throw new McpClientException($"{name}: {err["message"]} (code {err["code"]})");
         var result = reply["result"]!;
         string text = string.Join("\n", result["content"]?.AsArray().Select(c => (string?)c?["text"]).Where(t => t is not null) ?? []);
-        return new McpToolCallResult((bool?)result["isError"] ?? false, text, result["structuredContent"]?.DeepClone());
+        var images = result["content"]?.AsArray().Where(c => (string?)c?["type"] == "image")
+            .Select(c => new Cockpit.Core.Bus.ToolImage((string?)c!["mimeType"] ?? "", Convert.FromBase64String((string?)c["data"] ?? ""))).ToArray() ?? [];
+        return new McpToolCallResult((bool?)result["isError"] ?? false, text, result["structuredContent"]?.DeepClone()) { Images = images };
     }
 
     private async Task<JsonNode> RequestAsync(string method, JsonObject parameters, TimeSpan timeout, CancellationToken ct)

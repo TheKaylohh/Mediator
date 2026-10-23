@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using Cockpit.Core.Attachments;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Diagnostics;
 using Cockpit.Core.Files;
@@ -26,6 +27,12 @@ public sealed record CockpitPaths(string DataDirectory)
     public string UsageDatabase => Path.Combine(DataDirectory, "usage.db");
     public string OperationsDatabase => Path.Combine(DataDirectory, "operations.db");
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "jobs");
+    /// <summary>Snapshots of files and pasted images the user attached (V7). Pruned after 7 days.</summary>
+    public string AttachmentsDirectory => Path.Combine(DataDirectory, "attachments");
+    /// <summary>Overlay settings (theme, hotkey, first-run) (V7).</summary>
+    public string SettingsFile => Path.Combine(DataDirectory, "settings.json");
+    /// <summary>Custom MCP servers the user registered in the Connectors tab (V7).</summary>
+    public string CustomMcpFile => Path.Combine(DataDirectory, "cockpit.mcp.json");
 
     /// <summary>%LOCALAPPDATA%\AiCockpit on Windows; $XDG_DATA_HOME/ai-cockpit or ~/.local/share/ai-cockpit elsewhere.</summary>
     public static CockpitPaths Default()
@@ -74,6 +81,11 @@ public sealed record JobSpec
     public AiProvider? Provider { get; init; }
     /// <summary>Refuse to start rather than switch subscriptions when the chosen one is at its limit.</summary>
     public bool NeverDowngrade { get; init; }
+    /// <summary>
+    /// What the user dropped, pasted or picked (V7). Each one's folder becomes a read-only root of the job; the job
+    /// reads them with cockpit_read_attachment. Never widens write access.
+    /// </summary>
+    public IReadOnlyList<Attachment> Attachments { get; init; } = [];
 }
 
 /// <summary>A started job. Thread-safe: the state changes on the runtime's threads, observers read snapshots.</summary>
@@ -227,6 +239,15 @@ public interface ICockpitRuntime
     Task<DateTimeOffset?> GetCooldownAsync(string provider);
     /// <summary>Which subscription a job of this category would run on right now (for the overlay's pills). Throws <see cref="ProviderUnavailableException"/>.</summary>
     Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false);
+
+    /// <summary>Stages a dropped or picked file (snapshot) or folder (read-only in place). Throws <see cref="AttachmentException"/>.</summary>
+    Attachment StageAttachment(string path);
+    /// <summary>Stages a pasted screenshot (PNG bytes). Throws <see cref="AttachmentException"/>.</summary>
+    Attachment StagePastedImage(byte[] png);
+    /// <summary>Forgets a staged attachment that was removed before use (deletes its snapshot).</summary>
+    void DiscardAttachment(Attachment attachment);
+    /// <summary>Gives a running job read-only access to an attachment. Audited as "cockpit/attach". False when the job is not running.</summary>
+    Task<bool> AttachToJobAsync(string jobId, Attachment attachment);
 }
 
 /// <summary>
@@ -267,6 +288,10 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     /// <summary>Interactive jobs' tasks, served over the bus instead of a command line.</summary>
     internal JobBriefToolProvider Briefs { get; } = new();
+
+    /// <summary>Attachments (V7): staged under the data folder, read by jobs through cockpit_read_attachment.</summary>
+    public AttachmentStore AttachmentStore { get; }
+    internal AttachmentToolProvider Attachments { get; } = new();
 
     /// <summary>What restart reconciliation found when this runtime started.</summary>
     public (int NotRun, int Settled, int NeedsUser) Recovery { get; private set; }
@@ -309,6 +334,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
         Tools.Register(new OperationsToolProvider(operations));
         Tools.Register(Briefs);
+        Tools.Register(Attachments);
+        AttachmentStore = new AttachmentStore(options.Paths.AttachmentsDirectory);
+        try { AttachmentStore.Prune(); } catch (IOException ex) { options.Log.Warn("Old attachments could not be pruned: " + ex.Message); }
         Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log, operations);
         Bus.ToolCallActivity += e =>
         {
@@ -362,9 +390,16 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
                 route.Original, route.Provider, route.Reason).ConfigureAwait(false);
         }
+        if (spec.Attachments.Count > 0) spec = spec with { Prompt = spec.Prompt + AttachmentPromptSuffix(spec.Attachments) };
         bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
-        var builtIns = brief ? new[] { OperationsToolProvider.StatusTool, JobBriefToolProvider.BriefTool } : [OperationsToolProvider.StatusTool];
-        var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        // Attachment tools are always granted: they are read-only and only see what the user attached to this job,
+        // so a file dropped onto a running job is readable without restarting it.
+        var builtIns = new List<string> { OperationsToolProvider.StatusTool };
+        builtIns.AddRange(AttachmentToolProvider.Names);
+        if (brief) builtIns.Add(JobBriefToolProvider.BriefTool);
+        var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes,
+            allowMeteredBilling: spec.AllowMeteredBilling, readOnlyRoots: spec.Attachments.Select(a => a.GrantedRoot));
+        foreach (var a in spec.Attachments) Attachments.Add(jobId, a);
         if (brief) Briefs.Set(jobId, spec.Prompt);
         RunningJob job;
         try
@@ -398,6 +433,32 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Changed(job);
         if (route?.Notice is { } notice) RaiseNotice(jobId, notice);
         return job;
+    }
+
+    internal static string AttachmentPromptSuffix(IReadOnlyList<Attachment> attachments) =>
+        "\n\nThe user attached " + (attachments.Count == 1 ? "1 item" : $"{attachments.Count} items") + " (read-only; read them with the "
+        + AttachmentToolProvider.ReadTool + " tool):\n"
+        + string.Join("\n", attachments.Select(a => $"- {a.Id}: {a.Kind.ToString().ToLowerInvariant()} {a.Name}"));
+
+    public Attachment StageAttachment(string path) => AttachmentStore.AddPath(path);
+    public Attachment StagePastedImage(byte[] png) => AttachmentStore.AddPng(png);
+    public void DiscardAttachment(Attachment attachment) => AttachmentStore.Discard(attachment);
+
+    /// <summary>
+    /// Adds a read-only root to a running job's grant and lists the attachment for it. Only read access is ever
+    /// added, the grant's tools and approval rules are unchanged, and the change is audited.
+    /// </summary>
+    public async Task<bool> AttachToJobAsync(string jobId, Attachment attachment)
+    {
+        if (!_jobs.TryGetValue(jobId, out var job) || job.State is not (JobState.Starting or JobState.Running) || !Registry.TryGet(jobId, out var grant) || grant is null || !Registry.IsCurrent(grant))
+            return false;
+        string root = grant.Paths.AddReadOnlyRoot(attachment.GrantedRoot);
+        Attachments.Add(jobId, attachment);
+        await Audit.RecordAsync(new AuditEntry(jobId, "cockpit/attach", attachment.Id, ToolRisk.ReadOnly,
+            new JsonObject { ["kind"] = attachment.Kind.ToString(), ["name"] = attachment.Name, ["root"] = root, ["access"] = "read_only" }.ToJsonString(),
+            "user", "ok", null, 0)).ConfigureAwait(false);
+        RaiseNotice(jobId, $"Attached {attachment.Name} (read-only). The job reads it with {AttachmentToolProvider.ReadTool}.");
+        return true;
     }
 
     public async Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false)
@@ -690,6 +751,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     private void OnRevoked(string jobId)
     {
         Briefs.Remove(jobId);
+        Attachments.Remove(jobId);
         // Expiry (bus sweep) or an external revoke ends the job too.
         if (_jobs.TryGetValue(jobId, out var job) && job.TryFinish(JobState.Ended, "grant revoked or expired"))
         {

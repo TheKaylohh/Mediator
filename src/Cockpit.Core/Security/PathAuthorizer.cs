@@ -59,7 +59,7 @@ public sealed class PathDeniedException : UnauthorizedAccessException
 /// </summary>
 public sealed class PathAuthorizer
 {
-    private sealed record RootEntry(string Lexical, string Final);
+    private sealed record RootEntry(string Lexical, string Final, bool ReadOnly);
 
     /// <summary>Test hook: forces the portable fallback (no openat2) to prove it also fails closed.</summary>
     internal static bool ForceFallback { get; set; }
@@ -67,31 +67,60 @@ public sealed class PathAuthorizer
     [System.Runtime.Versioning.SupportedOSPlatformGuard("linux")]
     private static bool UseKernelResolve => OperatingSystem.IsLinux() && !ForceFallback && LinuxFs.Openat2Supported;
 
-    private readonly RootEntry[] _roots;
+    private volatile RootEntry[] _roots;
+    private readonly object _rootsLock = new();
     private readonly PathSyntax _syntax;
 
+    /// <summary>Every root (writable and read-only), as real paths.</summary>
     public IReadOnlyList<string> Roots => _roots.Select(r => r.Final).ToArray();
+    /// <summary>Roots that may be read and listed but never changed (V7: attachments the user dropped or pasted).</summary>
+    public IReadOnlyList<string> ReadOnlyRoots => _roots.Where(r => r.ReadOnly).Select(r => r.Final).ToArray();
     public PathSyntax Syntax => _syntax;
 
     /// <summary>Raised for every denial (wired to the audit log by the bus).</summary>
     public event Action<PathVerdict>? Denied;
 
     /// <param name="roots">Existing folders. A root that does not exist, or cannot be resolved, is a configuration error.</param>
-    public PathAuthorizer(IEnumerable<string> roots)
+    /// <param name="readOnlyRoots">Existing folders the job may only read and list (Modify and Create are denied with code read_only).</param>
+    public PathAuthorizer(IEnumerable<string> roots, IEnumerable<string>? readOnlyRoots = null)
     {
         _syntax = PathSyntax.Current;
-        var list = new List<RootEntry>();
-        foreach (var raw in roots)
-        {
-            if (_syntax.Check(raw) is string bad) throw new ArgumentException($"Root '{raw}' is not acceptable: {bad}");
-            string lexical = Trim(Path.GetFullPath(raw));
-            if (!Directory.Exists(lexical)) throw new ArgumentException($"Root '{lexical}' does not exist or is not a folder.");
-            string final = Trim(ResolveRootFinalPath(lexical) ?? throw new ArgumentException($"Root '{lexical}' could not be resolved to a real path."));
-            if (_syntax.Check(final) is string badFinal) throw new ArgumentException($"Root '{lexical}' resolves to '{final}', which is not acceptable: {badFinal}");
-            list.Add(new RootEntry(lexical, final));
-        }
-        // Most specific first, so a nested root wins.
-        _roots = list.DistinctBy(r => r.Final, _syntax.Comparer).OrderByDescending(r => _syntax.Components(r.Final).Length).ToArray();
+        var list = roots.Select(r => Resolve(r, readOnly: false)).Concat((readOnlyRoots ?? []).Select(r => Resolve(r, readOnly: true))).ToList();
+        _roots = Order(list);
+    }
+
+    private RootEntry Resolve(string raw, bool readOnly)
+    {
+        if (_syntax.Check(raw) is string bad) throw new ArgumentException($"Root '{raw}' is not acceptable: {bad}");
+        string lexical = Trim(Path.GetFullPath(raw));
+        if (!Directory.Exists(lexical)) throw new ArgumentException($"Root '{lexical}' does not exist or is not a folder.");
+        string final = Trim(ResolveRootFinalPath(lexical) ?? throw new ArgumentException($"Root '{lexical}' could not be resolved to a real path."));
+        if (_syntax.Check(final) is string badFinal) throw new ArgumentException($"Root '{lexical}' resolves to '{final}', which is not acceptable: {badFinal}");
+        return new RootEntry(lexical, final, readOnly);
+    }
+
+    /// <summary>
+    /// Most specific first, so a nested root wins. A read-only root at or inside a writable root is dropped: it is
+    /// already readable there, and attaching something must never take write access away from a running job.
+    /// </summary>
+    private RootEntry[] Order(IEnumerable<RootEntry> list)
+    {
+        var all = list.ToList();
+        var writable = all.Where(r => !r.ReadOnly).ToList();
+        return all.Where(r => !r.ReadOnly || !writable.Any(w => _syntax.IsSameOrInside(r.Final, w.Final)))
+            .GroupBy(r => r.Final, _syntax.Comparer).Select(g => g.First())
+            .OrderByDescending(r => _syntax.Components(r.Final).Length).ToArray();
+    }
+
+    /// <summary>
+    /// Adds a read-only root to a live grant (V7: the user attached a folder to a running job). Only ever adds read
+    /// access; the caller audits it. Returns the root's real path.
+    /// </summary>
+    public string AddReadOnlyRoot(string raw)
+    {
+        var entry = Resolve(raw, readOnly: true);
+        lock (_rootsLock) _roots = Order(_roots.Append(entry));
+        return entry.Final;
     }
 
     private static string Trim(string p) => p.Length > 1 && Path.EndsInDirectorySeparator(p) && Path.GetPathRoot(p) != p ? p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : p;
@@ -139,6 +168,8 @@ public sealed class PathAuthorizer
         RootEntry? root = _roots.FirstOrDefault(r => _syntax.IsSameOrInside(full, r.Final));
         if (root is null) return PathVerdict.Deny(full, "outside_roots", "outside this job's allowed folders");
         int depth = _syntax.RelativeDepth(full, root.Final);
+        if (root.ReadOnly && access is PathAccess.Modify or PathAccess.CreateFile or PathAccess.CreateDirectory)
+            return PathVerdict.Deny(full, "read_only", "this folder was attached read-only: it can be read but nothing in it can be changed or created");
         if (depth == 0 && access is PathAccess.Modify or PathAccess.CreateFile or PathAccess.CreateDirectory)
             return PathVerdict.Deny(full, "root_itself", "an allowed folder itself can be read but never moved, replaced or deleted");
 
@@ -527,7 +558,7 @@ public sealed class PathAuthorizer
 
     // ── Root resolution ──────────────────────────────────────────────────────────────────────────────
 
-    private static string? ResolveRootFinalPath(string lexical)
+    internal static string? ResolveRootFinalPath(string lexical)
     {
         if (OperatingSystem.IsLinux())
         {

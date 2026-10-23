@@ -28,7 +28,13 @@ public sealed record ToolResult(bool IsError, string Text, JsonNode? Structured 
 {
     public static ToolResult Ok(string text, JsonNode? structured = null) => new(false, text, structured);
     public static ToolResult Fail(string text) => new(true, text);
+
+    /// <summary>Images returned to the model as MCP image content (V7: attachments). Never stored in the operation log.</summary>
+    public IReadOnlyList<ToolImage> Images { get; init; } = [];
 }
+
+/// <summary>An image for MCP image content.</summary>
+public sealed record ToolImage(string MediaType, byte[] Data);
 
 public interface IToolProvider
 {

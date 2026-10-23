@@ -816,9 +816,12 @@ internal sealed class BusConnection : IDisposable
 
     private static JsonNode ToMcpResult(ToolResult r)
     {
+        var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = r.Text });
+        foreach (var image in r.Images)
+            content.Add(new JsonObject { ["type"] = "image", ["data"] = Convert.ToBase64String(image.Data), ["mimeType"] = image.MediaType });
         var obj = new JsonObject
         {
-            ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = r.Text }),
+            ["content"] = content,
             ["isError"] = r.IsError,
         };
         if (r.Structured is not null) obj["structuredContent"] = r.Structured.DeepClone();

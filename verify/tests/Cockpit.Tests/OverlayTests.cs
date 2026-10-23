@@ -137,6 +137,19 @@ static class OverlayTests
         public void Alarm() => BillingAlarm?.Invoke("j", "ANTHROPIC_API_KEY");
         public void Say(string m) => Notice?.Invoke("j", m);
         public void Touch(RunningJob j) => JobChanged?.Invoke(j);
+
+        public readonly Cockpit.Core.Attachments.AttachmentStore Store = new(Path.Combine(Path.GetTempPath(), "cockpit-fake-attach", Guid.NewGuid().ToString("N")[..8]));
+        public readonly List<(string JobId, Cockpit.Core.Attachments.Attachment A)> AttachedToJobs = new();
+        public HashSet<string> RunningJobIds { get; } = new(StringComparer.Ordinal);
+        public Cockpit.Core.Attachments.Attachment StageAttachment(string path) => Store.AddPath(path);
+        public Cockpit.Core.Attachments.Attachment StagePastedImage(byte[] png) => Store.AddPng(png);
+        public void DiscardAttachment(Cockpit.Core.Attachments.Attachment attachment) => Store.Discard(attachment);
+        public Task<bool> AttachToJobAsync(string jobId, Cockpit.Core.Attachments.Attachment attachment)
+        {
+            if (!RunningJobIds.Contains(jobId)) return Task.FromResult(false);
+            AttachedToJobs.Add((jobId, attachment));
+            return Task.FromResult(true);
+        }
     }
 
     /// <summary>Zero-token routing, context chips, folder resolution, provider pills, banners.</summary>

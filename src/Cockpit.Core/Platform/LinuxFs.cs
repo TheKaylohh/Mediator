@@ -31,6 +31,7 @@ internal static partial class LinuxFs
     internal static int O_DIRECTORY => Arm ? 0x4000 : 0x10000;
     internal static int O_NOFOLLOW => Arm ? 0x8000 : 0x20000;
     internal const int O_CLOEXEC = 0x80000;
+    internal const int O_NONBLOCK = 0x800; // same value on x86-64 and arm64
     internal const int O_PATH = 0x200000;
     internal const int AT_FDCWD = -100;
 
