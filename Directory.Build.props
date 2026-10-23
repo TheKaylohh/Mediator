@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <WarningLevel>5</WarningLevel>
+    <!--
+      One switch for every dependency (Directory.Build.targets applies it):
+        CockpitVerify=false (default, ship): Microsoft.Data.Sqlite and System.IO.Hashing from NuGet, and the
+          SolidWorks interop assemblies from $(SolidWorksInteropDir).
+        CockpitVerify=true (offline): the stand-ins in verify/stubs, no network and no SolidWorks needed.
+      Projects opt in with CockpitUsesSqlite / CockpitUsesHashing / CockpitUsesSolidWorks.
+    -->
+    <CockpitVerify Condition="'$(CockpitVerify)' == ''">false</CockpitVerify>
+    <!-- SolidWorksApiDir is the v3 name, still honoured. scripts/check-windows-build.ps1 reads the real path from the registry. -->
+    <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == '' and '$(SolidWorksApiDir)' != ''">$(SolidWorksApiDir)</SolidWorksInteropDir>
+    <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == ''">C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist</SolidWorksInteropDir>
+    <SolidWorksInteropDir>$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</SolidWorksInteropDir>
+    <CockpitRoot>$(MSBuildThisFileDirectory)</CockpitRoot>
+    <!-- Verify builds restore from an empty local folder: no network needed. -->
+    <RestoreSources Condition="'$(CockpitVerify)' == 'true'">$(CockpitRoot)verify/local-feed</RestoreSources>
+  </PropertyGroup>
+</Project>

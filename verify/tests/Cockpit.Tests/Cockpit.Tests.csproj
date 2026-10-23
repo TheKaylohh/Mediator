@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Self-contained test runner (no xUnit: NuGet is unavailable in the verify environment).
+       Run with CockpitVerify=true, passing the paths to cockpit-mcp-bridge.dll and cockpit.dll (see verify/run-tests.sh). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- CA1416: the tests deliberately call the Windows-only worker against a fake SolidWorks on Linux. -->
+    <CockpitIsVerifySuite>true</CockpitIsVerifySuite>
+    <NoWarn>$(NoWarn);CA1303;CA1031;CA1307;CA1305;CA2007;CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(CockpitRoot)src/Cockpit.Core/Cockpit.Core.csproj" />
+    <ProjectReference Include="$(CockpitRoot)src/Cockpit.Protocol/Cockpit.Protocol.csproj" />
+    <ProjectReference Include="$(CockpitRoot)src/Cockpit.SwxWorker/Cockpit.SwxWorker.csproj" />
+    <ProjectReference Include="$(CockpitRoot)src/Cockpit.UI/Cockpit.UI.csproj" />
+  </ItemGroup>
+</Project>

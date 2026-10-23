@@ -1,0 +1,47 @@
+<Project>
+  <!-- The central dependency switch (see Directory.Build.props). Evaluated after each project's own properties. -->
+
+  <!-- SQLite -->
+  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitVerify)' != 'true'">
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitVerify)' == 'true'">
+    <ProjectReference Include="$(CockpitRoot)verify/stubs/SqliteShim/SqliteShim.csproj" />
+  </ItemGroup>
+
+  <!-- xxHash64 -->
+  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitVerify)' != 'true'">
+    <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitVerify)' == 'true'">
+    <ProjectReference Include="$(CockpitRoot)verify/stubs/HashingShim/HashingShim.csproj" />
+  </ItemGroup>
+
+  <!-- SolidWorks interop: the assemblies installed with SolidWorks, copied next to the worker. -->
+  <ItemGroup Condition="'$(CockpitUsesSolidWorks)' == 'true' and '$(CockpitVerify)' != 'true'">
+    <Reference Include="SolidWorks.Interop.sldworks">
+      <HintPath>$(SolidWorksInteropDir)SolidWorks.Interop.sldworks.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swconst">
+      <HintPath>$(SolidWorksInteropDir)SolidWorks.Interop.swconst.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(CockpitUsesSolidWorks)' == 'true' and '$(CockpitVerify)' == 'true'">
+    <ProjectReference Include="$(CockpitRoot)verify/stubs/SolidWorksInteropStub/SolidWorksInteropStub.csproj" />
+  </ItemGroup>
+
+  <Target Name="CockpitCheckSolidWorksInterop" BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(CockpitUsesSolidWorks)' == 'true' and '$(CockpitVerify)' != 'true'">
+    <Error Condition="!Exists('$(SolidWorksInteropDir)SolidWorks.Interop.sldworks.dll')"
+           Text="SolidWorks interop assemblies not found in '$(SolidWorksInteropDir)'. Pass -p:SolidWorksInteropDir=&quot;&lt;SOLIDWORKS folder&gt;\api\redist&quot; (scripts/check-windows-build.ps1 finds it in the registry), or build offline with -p:CockpitVerify=true." />
+  </Target>
+
+  <!-- The test runner only makes sense against the stand-ins (its fake SolidWorks implements the stub interfaces). -->
+  <Target Name="CockpitTestsNeedVerify" BeforeTargets="Build" Condition="'$(CockpitIsVerifySuite)' == 'true' and '$(CockpitVerify)' != 'true'">
+    <Error Text="Cockpit.Tests builds only with -p:CockpitVerify=true (see verify/run-tests.sh or scripts/check-windows-build.ps1 -RunVerifySuite)." />
+  </Target>
+</Project>

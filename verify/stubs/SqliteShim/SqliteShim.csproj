@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- VERIFY ONLY. A minimal Microsoft.Data.Sqlite look-alike over the OS's native libsqlite3, so the
+       journal and audit code can be tested without NuGet. Ship builds use the real package. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Microsoft.Data.Sqlite.VerifyShim</AssemblyName>
+    <RootNamespace>Microsoft.Data.Sqlite</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1305;CA1031</NoWarn>
+  </PropertyGroup>
+</Project>

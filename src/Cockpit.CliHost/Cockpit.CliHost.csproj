@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net8.0 on purpose: the console host has no WPF dependency, and Windows-only checks (registry, wsl.exe)
+         are guarded at run time, so the same host runs the offline verification suite on Linux. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>cockpit</AssemblyName>
+    <RootNamespace>Cockpit.CliHost</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Cockpit.Core/Cockpit.Core.csproj" />
+  </ItemGroup>
+</Project>
