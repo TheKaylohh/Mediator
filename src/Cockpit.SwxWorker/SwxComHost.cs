@@ -122,29 +122,76 @@ public sealed class SwxComHost : IDisposable
     public Task<StepImportBatch> ImportStepAsync(IReadOnlyList<string> paths, string outputFolder, TimeSpan runTimeout, CancellationToken ct) =>
         RunAsync(() => ImportStep(paths, outputFolder), runTimeout, _options.QueueTimeout, ct);
 
+    /// <summary>
+    /// V6 ownership rules. The worker closes only a document it can prove it created: one that was not among the
+    /// session's open documents before LoadFile4 (compared by COM identity and by title). If LoadFile4 hands back a
+    /// document that was already open (the user's), it is reported and left exactly as it was: not saved, not closed.
+    /// A STEP whose source or target is already open is refused before anything is loaded. An import with no solid
+    /// body (surfaces or wireframe only), or that is not a part, is closed unsaved and reported. Targets are checked
+    /// for duplicates within the batch, never overwritten, and verified on disk after saving.
+    /// </summary>
     private StepImportBatch ImportStep(IReadOnlyList<string> paths, string outputFolder)
     {
         var sw = EnsureConnected();
         var results = new List<StepImportResult>();
-        foreach (var raw in paths)
+        var planned = paths.Select(raw => (Source: Path.GetFullPath(raw),
+            Target: Path.Combine(Path.GetFullPath(outputFolder), Path.GetFileNameWithoutExtension(raw) + ".SLDPRT"))).ToList();
+        var clashes = planned.GroupBy(p => p.Target, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Source).ToList(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (source, target) in planned)
         {
-            string source = Path.GetFullPath(raw);
-            string target = Path.Combine(Path.GetFullPath(outputFolder), Path.GetFileNameWithoutExtension(source) + ".SLDPRT");
+            if (clashes.TryGetValue(target, out var others))
+            {
+                results.Add(new StepImportResult(source, null,
+                    $"duplicate_target: {string.Join(" and ", others.Select(Path.GetFileName))} would both become {Path.GetFileName(target)}; rename one and import again"));
+                continue;
+            }
             if (!File.Exists(source)) { results.Add(new StepImportResult(source, null, "not_found: file does not exist")); continue; }
             if (File.Exists(target)) { results.Add(new StepImportResult(source, null, $"exists: {target} already exists; not overwritten")); continue; }
+            if (sw.GetOpenDocumentByName(source) is ModelDoc2) { results.Add(new StepImportResult(source, null, "already_open: the STEP file is open in SolidWorks; close it and import again")); continue; }
+            if (sw.GetOpenDocumentByName(target) is ModelDoc2) { results.Add(new StepImportResult(source, null, $"target_open: a document named {Path.GetFileName(target)} is open in SolidWorks; not touched")); continue; }
+
+            var before = OpenDocuments(sw);
             ModelDoc2? doc = null;
+            bool ours = false;
             try
             {
                 int errors = 0;
                 object importData = sw.GetImportFileData(source);
                 doc = sw.LoadFile4(source, "r", importData, ref errors);
                 if (doc is null) { results.Add(new StepImportResult(source, null, $"import_failed: LoadFile4 errors={errors}")); continue; }
+                string title = doc.GetTitle();
+                ours = !before.Any(b => ReferenceEquals(b.Doc, doc) || string.Equals(b.Title, title, StringComparison.OrdinalIgnoreCase));
+                if (!ours)
+                {
+                    results.Add(new StepImportResult(source, null,
+                        $"returned_existing_document: SolidWorks returned '{title}', which was already open; it was not saved, changed or closed"));
+                    continue;
+                }
+                _docsOpenedByUs.Add(title);
+                if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
+                {
+                    results.Add(new StepImportResult(source, null, "not_a_part: the STEP imported as an assembly or drawing; import its parts separately"));
+                    continue;
+                }
+                int solids = ToObjects(((PartDoc)doc).GetBodies2((int)swBodyType_e.swSolidBody, false)).Count();
+                if (solids == 0)
+                {
+                    int sheets = ToObjects(((PartDoc)doc).GetBodies2((int)swBodyType_e.swSheetBody, false)).Count();
+                    results.Add(new StepImportResult(source, null, sheets > 0
+                        ? $"no_solid_body: the STEP produced {sheets} surface body(ies) and no solid; not saved"
+                        : "no_solid_body: the STEP produced no bodies; not saved"));
+                    continue;
+                }
                 int saveErrors = 0, saveWarnings = 0;
                 bool saved = doc.Extension.SaveAs3(target, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
                     (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null!, null!, ref saveErrors, ref saveWarnings);
-                results.Add(saved
+                var written = new FileInfo(target);
+                results.Add(saved && written.Exists && written.Length > 0
                     ? new StepImportResult(source, target, null)
-                    : new StepImportResult(source, null, $"save_failed: errors={saveErrors}, warnings={saveWarnings}"));
+                    : new StepImportResult(source, null, saved
+                        ? $"save_failed: SaveAs3 reported success but {target} is missing or empty"
+                        : $"save_failed: errors={saveErrors}, warnings={saveWarnings}"));
             }
             catch (COMException ex)
             {
@@ -152,10 +199,28 @@ public sealed class SwxComHost : IDisposable
             }
             finally
             {
-                if (doc is not null) { try { sw.CloseDoc(doc.GetTitle()); } catch (COMException) { } }
+                if (doc is not null && ours)
+                {
+                    string title = doc.GetTitle();
+                    try { sw.CloseDoc(title); } catch (COMException) { }
+                    _docsOpenedByUs.Remove(title);
+                }
             }
         }
         return new StepImportBatch(results);
+    }
+
+    private static List<(ModelDoc2 Doc, string Title)> OpenDocuments(SldWorks sw)
+    {
+        var list = new List<(ModelDoc2, string)>();
+        foreach (var o in ToObjects(sw.GetDocuments()))
+            if (o is ModelDoc2 d)
+            {
+                string t;
+                try { t = d.GetTitle(); } catch (COMException) { t = ""; }
+                list.Add((d, t));
+            }
+        return list;
     }
 
     public Task<BuildResult> BuildAssemblyAsync(ResolvedAssemblyPlan plan, TimeSpan runTimeout, CancellationToken ct) =>

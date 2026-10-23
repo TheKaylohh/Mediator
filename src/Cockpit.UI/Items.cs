@@ -11,6 +11,10 @@ public sealed class JobItemViewModel : ObservableObject
     private JobState _state;
     private string _detail = "";
     private DateTimeOffset? _endedAt;
+    private string _provider;
+    private string _routing = "";
+    private string _outcome = "";
+    private int _uncertain;
 
     public JobItemViewModel(RunningJob job, Action<JobItemViewModel> kill)
     {
@@ -20,7 +24,7 @@ public sealed class JobItemViewModel : ObservableObject
         Launch = job.Spec.Launch.ToString();
         StartedAt = job.StartedAt;
         WorkspaceFolder = job.Workspace.Root;
-        Provider = job.Provider is { } p ? ProviderRouter.DisplayName(p) : "no CLI";
+        _provider = job.Provider is { } p ? ProviderRouter.DisplayName(p) : "no CLI";
         _state = job.State;
         KillCommand = new RelayCommand(() => kill(this), () => IsActive);
     }
@@ -30,7 +34,22 @@ public sealed class JobItemViewModel : ObservableObject
     public string Kind { get; }
     public string Launch { get; }
     public string WorkspaceFolder { get; }
-    public string Provider { get; }
+    /// <summary>The subscription the job is on now (changes if it switched after a usage limit).</summary>
+    public string Provider { get => _provider; private set => SetProperty(ref _provider, value); }
+    /// <summary>Original provider, every switch or refusal and why ("before launch: …; after start: …").</summary>
+    public string RoutingText { get => _routing; private set => SetProperty(ref _routing, value); }
+    /// <summary>How the CLI run ended: "rate limited", "not signed in", "ended without a result"…</summary>
+    public string OutcomeText { get => _outcome; private set => SetProperty(ref _outcome, value); }
+    /// <summary>Calls whose outcome is unknown (timed out or cancelled while inside an app). Never shown as stopped.</summary>
+    public int UncertainCalls
+    {
+        get => _uncertain;
+        internal set
+        {
+            if (!SetProperty(ref _uncertain, Math.Max(0, value))) return;
+            OnPropertyChanged(nameof(StateText));
+        }
+    }
     public DateTimeOffset StartedAt { get; }
     public RelayCommand KillCommand { get; }
 
@@ -46,7 +65,17 @@ public sealed class JobItemViewModel : ObservableObject
         }
     }
 
-    public string StateText => State.ToString().ToLowerInvariant();
+    /// <summary>
+    /// Never implies that work stopped when it may not have: a killed job revokes access to new calls, but a call
+    /// already inside an application (a SolidWorks rebuild, say) can still finish, and the text says so.
+    /// </summary>
+    public string StateText => (State, UncertainCalls) switch
+    {
+        (JobState.Killed, > 0) => $"killed: no new calls; {UncertainCalls} call(s) may still finish in the app",
+        (JobState.Killed, _) => "killed: access revoked",
+        (_, > 0) when !IsActive => $"{State.ToString().ToLowerInvariant()}; {UncertainCalls} call(s) with unknown outcome",
+        _ => State.ToString().ToLowerInvariant(),
+    };
     public bool IsActive => State is JobState.Starting or JobState.Running;
     public string Detail { get => _detail; private set => SetProperty(ref _detail, value); }
 
@@ -65,7 +94,21 @@ public sealed class JobItemViewModel : ObservableObject
     {
         _endedAt = job.EndedAt;
         Detail = job.Detail ?? "";
+        if (job.Provider is { } p) Provider = ProviderRouter.DisplayName(p);
+        RoutingText = job.RoutingNotice is null && job.RoutingHistory.Count <= 1 ? "" : string.Join("; ", job.RoutingHistory);
+        OutcomeText = job.Outcome switch
+        {
+            null => "",
+            RunOutcome.Succeeded => "completed",
+            RunOutcome.ResultError => "the model or a tool reported an error",
+            RunOutcome.RateLimited => "usage limit reached",
+            RunOutcome.AuthFailed => "the CLI is not signed in",
+            RunOutcome.NoResult => "the CLI ended without a result",
+            RunOutcome.ResultThenAbnormalExit => "result reported, then the CLI exited abnormally",
+            _ => job.Outcome.ToString()!,
+        };
         State = job.State;
+        OnPropertyChanged(nameof(StateText));
         OnPropertyChanged(nameof(ElapsedText));
     }
 
@@ -75,7 +118,8 @@ public sealed class JobItemViewModel : ObservableObject
 /// <summary>A line in the Activity tab, from the bus's ToolCallActivity.</summary>
 /// <param name="Phase">Display text ("waiting for you", "tool error").</param>
 /// <param name="IsProblem">The bus outcome was an error, exception or timeout (shown in red).</param>
-public sealed record ActivityItemViewModel(DateTimeOffset At, string JobId, string Tool, string Phase, string Detail, bool IsProblem = false)
+/// <param name="IsUncertain">The outcome is unknown: the call may still complete (shown in amber, never as failed or stopped).</param>
+public sealed record ActivityItemViewModel(DateTimeOffset At, string JobId, string Tool, string Phase, string Detail, bool IsProblem = false, bool IsUncertain = false)
 {
     public string TimeText => At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 }
@@ -177,8 +221,17 @@ internal static class ToolPhase
         "awaiting_approval" => "waiting for you",
         "running" => "running",
         "ok" => "done",
+        "tool_error" => "failed",
+        "outcome_unknown" => "outcome unknown: may still complete",
+        "replayed" => "already done: returned the earlier result, not run again",
+        "duplicate_refused" => "not run again: an identical call is in progress or uncertain",
+        "late_ok" => "finished late: done",
+        "late_tool_error" => "finished late: failed",
+        "late_exception" => "finished late with an error",
         _ => e.Phase.Replace('_', ' '),
     };
 
-    public static bool IsProblem(ToolCallEvent e) => e.Phase is "tool_error" or "exception" or "timeout";
+    public static bool IsProblem(ToolCallEvent e) => e.Phase is "tool_error" or "exception" or "late_tool_error" or "late_exception";
+    public static bool IsUncertain(ToolCallEvent e) => e.Phase is "outcome_unknown";
+    public static bool Resolves(ToolCallEvent e) => e.Phase.StartsWith("late_", StringComparison.Ordinal);
 }

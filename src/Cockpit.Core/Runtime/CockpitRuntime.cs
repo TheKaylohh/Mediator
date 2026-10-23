@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Diagnostics;
 using Cockpit.Core.Files;
@@ -103,6 +104,14 @@ public sealed class RunningJob
     public AiProvider? Provider { get; internal set; }
     /// <summary>Why the job is not on its default subscription, when it was switched.</summary>
     public string? RoutingNotice { get; internal set; }
+    /// <summary>The subscription the job was routed to first (differs from <see cref="Provider"/> after a switch).</summary>
+    public AiProvider? OriginalProvider { get; internal set; }
+    /// <summary>How the last headless run ended (null while running, or for interactive jobs).</summary>
+    public RunOutcome? Outcome { get; internal set; }
+    /// <summary>Every routing decision for this job, oldest first (also in the audit as cockpit/route).</summary>
+    public IReadOnlyList<string> RoutingHistory => _routing;
+    internal readonly List<string> _routing = new();
+    internal bool SwitchedMidJob { get; set; }
     internal Process? Process { get; set; }
     internal ChildProcessJob ProcessGroup { get; } = new();
     internal InteractiveSession? Interactive { get; set; }
@@ -335,9 +344,23 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         var bridge = Bridge ?? throw new InvalidOperationException(
             "cockpit-mcp-bridge was not found next to the Cockpit or in the repository build output. Build src/Cockpit.Bridge first.");
-        RouteDecision? route = spec.Launch == LaunchMode.None ? null
-            : await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
         string jobId = spec.JobId ?? NewJobId(spec.Kind);
+        RouteDecision? route = null;
+        if (spec.Launch != LaunchMode.None)
+        {
+            try
+            {
+                route = await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
+            }
+            catch (ProviderUnavailableException ex)
+            {
+                await AuditRouteAsync(jobId, spec.NeverDowngrade ? FailoverDecision.RefusedNeverDowngrade : FailoverDecision.RefusedBothUnavailable,
+                    spec.Provider ?? ProviderRouter.Defaults(spec.Category).Primary, null, ex.Message).ConfigureAwait(false);
+                throw;
+            }
+            await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
+                route.Original, route.Provider, route.Reason).ConfigureAwait(false);
+        }
         bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
         var builtIns = brief ? new[] { OperationsToolProvider.StatusTool, JobBriefToolProvider.BriefTool } : [OperationsToolProvider.StatusTool];
         var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
@@ -346,7 +369,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         try
         {
             var ws = JobWorkspaceFactory.Create(Paths.WorkspacesDirectory, grant, bridge, Bus.EndpointFor(grant), _options.BridgeTimeout);
-            job = new RunningJob(spec, grant, ws) { Provider = route?.Provider, RoutingNotice = route?.Notice };
+            job = new RunningJob(spec, grant, ws) { Provider = route?.Provider, RoutingNotice = route?.Notice, OriginalProvider = route?.Original };
+            if (route is not null)
+                job._routing.Add(route.Downgraded ? $"before launch: {route.Notice}" : $"before launch: {ProviderRouter.DisplayName(route.Provider)}");
             _jobs[jobId] = job;
         }
         catch
@@ -380,6 +405,49 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         foreach (var p in Enum.GetValues<AiProvider>())
             cooldowns[p] = await Usage.GetCooldownAsync(ProviderRouter.Id(p)).ConfigureAwait(false);
         return ProviderRouter.Route(category, provider, neverDowngrade, p => cooldowns[p], p => ExecutableFor(p) is not null);
+    }
+
+    /// <summary>
+    /// Every routing decision is audited as tool "cockpit/route": the original provider, the provider attempted
+    /// (if any), the decision and the reason. Grants, tools and approval policy never change with a switch.
+    /// </summary>
+    private Task AuditRouteAsync(string jobId, FailoverDecision decision, AiProvider original, AiProvider? attempted, string? reason) =>
+        Audit.RecordAsync(new AuditEntry(jobId, "cockpit/route", "route", ToolRisk.ReadOnly,
+            new JsonObject
+            {
+                ["original"] = ProviderRouter.Id(original),
+                ["attempted"] = attempted is { } a ? ProviderRouter.Id(a) : null,
+                ["decision"] = decision.ToString(),
+            }.ToJsonString(),
+            decision is FailoverDecision.NotNeeded or FailoverDecision.SwitchedBeforeLaunch or FailoverDecision.SwitchedAfterRateLimit ? "routed" : "refused",
+            decision is FailoverDecision.NotNeeded or FailoverDecision.SwitchedBeforeLaunch or FailoverDecision.SwitchedAfterRateLimit ? "ok" : "not_run",
+            reason, 0));
+
+    private static readonly System.Text.RegularExpressions.Regex AuthText = new(
+        @"invalid api key|please run /login|not logged in|log ?in required|authenticat|unauthori[sz]ed|\b401\b|auth method|credentials? (are|were|is) (missing|invalid|expired)|oauth",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Classifies how a headless run ended. Pure; unit-tested.</summary>
+    public static RunOutcome Classify(int exitCode, RunResultEvent? result, string stderrTail)
+    {
+        if (result is null)
+            return exitCode == GeminiLaunchBuilder.ExitNoAuth || AuthText.IsMatch(stderrTail) ? RunOutcome.AuthFailed : RunOutcome.NoResult;
+        if (result.RateLimit is not null) return RunOutcome.RateLimited;
+        if (result.IsError) return AuthText.IsMatch(result.ResultText ?? "") ? RunOutcome.AuthFailed : RunOutcome.ResultError;
+        return exitCode == 0 ? RunOutcome.Succeeded : RunOutcome.ResultThenAbnormalExit;
+    }
+
+    /// <summary>
+    /// True when no side-effecting call of this job can have taken effect: every recorded operation stopped before
+    /// Executing (rejected, denied, cancelled). Anything that reached Executing, including failed calls, may have
+    /// partly taken effect, so it blocks an automatic retry on another subscription.
+    /// </summary>
+    internal async Task<(bool None, int Count)> SideEffectsAsync(string jobId)
+    {
+        var ops = await Operations.ListAsync(jobId).ConfigureAwait(false);
+        int possible = ops.Count(o => o.State is not (OperationState.Rejected or OperationState.Denied or OperationState.Cancelled
+            or OperationState.Pending or OperationState.Validated or OperationState.Approved));
+        return (possible == 0, possible);
     }
 
     private string? ExecutableFor(AiProvider provider) => provider == AiProvider.ClaudeCode
@@ -454,16 +522,68 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
                 await monitor.ObserveAsync(process.StandardOutput, CancellationToken.None).ConfigureAwait(false);
                 await process.WaitForExitAsync().ConfigureAwait(false);
                 job.LastResult = monitor.LastResult;
-                bool ok = process.ExitCode == 0 && monitor.LastResult is { IsError: false };
-                string detail = monitor.LastResult?.RateLimit?.Message ?? monitor.LastResult?.ResultText
-                    ?? $"{cli} exited with code {process.ExitCode}. {string.Join(" | ", stderrTail)}";
-                Finish(job, ok ? JobState.Succeeded : JobState.Failed, detail);
+                string tail = string.Join(" | ", stderrTail);
+                var outcome = Classify(process.ExitCode, monitor.LastResult, tail);
+                job.Outcome = outcome;
+                if (monitor.LastResult is null) await monitor.RecordMissingResultAsync($"{cli} exited with code {process.ExitCode} without a result").ConfigureAwait(false);
+                if (job.State is not (JobState.Starting or JobState.Running)) return; // killed meanwhile: the kill stands
+                if (outcome == RunOutcome.RateLimited && await TrySwitchAfterRateLimitAsync(job, provider).ConfigureAwait(false)) return;
+                string detail = outcome switch
+                {
+                    RunOutcome.Succeeded => monitor.LastResult!.ResultText ?? "done",
+                    RunOutcome.RateLimited => monitor.LastResult!.RateLimit!.Message,
+                    RunOutcome.AuthFailed => $"{cli} is not signed in or its login expired: {monitor.LastResult?.ResultText ?? tail}. Sign in by running `{cli}` once in a terminal.",
+                    RunOutcome.NoResult => $"{cli} exited with code {process.ExitCode} without a result. {tail}".TrimEnd(),
+                    RunOutcome.ResultThenAbnormalExit => $"{cli} reported a result but then exited with code {process.ExitCode}: {monitor.LastResult!.ResultText}",
+                    _ => monitor.LastResult?.ResultText ?? $"{cli} reported an error.",
+                };
+                Finish(job, outcome == RunOutcome.Succeeded ? JobState.Succeeded : JobState.Failed, detail);
             }
             catch (Exception ex)
             {
                 Finish(job, JobState.Failed, ex.Message);
             }
         }, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// A run hit a usage limit. Switch to the other subscription and run the same job again only if: the job allows
+    /// switching (not NeverDowngrade), it has not switched mid-job before, the other CLI is installed and not cooling
+    /// down, and no side-effecting call can have taken effect. The grant, tool allow-list, roots and approval policy
+    /// are unchanged. Every outcome is audited and shown.
+    /// </summary>
+    private async Task<bool> TrySwitchAfterRateLimitAsync(RunningJob job, AiProvider failed)
+    {
+        var other = failed == AiProvider.ClaudeCode ? AiProvider.GeminiCli : AiProvider.ClaudeCode;
+        string limit = job.LastResult?.RateLimit?.Message ?? "usage limit";
+        async Task<bool> Refuse(FailoverDecision d, string why)
+        {
+            job._routing.Add($"after start: stayed on {ProviderRouter.DisplayName(failed)}: {why}");
+            await AuditRouteAsync(job.JobId, d, failed, other, why).ConfigureAwait(false);
+            RaiseNotice(job.JobId, $"{ProviderRouter.DisplayName(failed)} hit its limit; not switching: {why}");
+            return false;
+        }
+        if (job.Spec.NeverDowngrade) return await Refuse(FailoverDecision.RefusedNeverDowngrade, "the job is set to never switch subscriptions").ConfigureAwait(false);
+        if (job.SwitchedMidJob) return await Refuse(FailoverDecision.RefusedAlreadySwitched, "the job already switched once").ConfigureAwait(false);
+        var (none, count) = await SideEffectsAsync(job.JobId).ConfigureAwait(false);
+        if (!none) return await Refuse(FailoverDecision.RefusedSideEffects,
+            $"{count} side-effecting call(s) may already have taken effect; re-running on another subscription could repeat or contradict them").ConfigureAwait(false);
+        RouteDecision next;
+        try { next = await RouteAsync(job.Spec.Category, other, neverDowngrade: true).ConfigureAwait(false); }
+        catch (ProviderUnavailableException ex) { return await Refuse(FailoverDecision.RefusedBothUnavailable, ex.Message).ConfigureAwait(false); }
+
+        string why = $"{ProviderRouter.DisplayName(failed)} hit a usage limit ({limit}) before any side effect";
+        job.SwitchedMidJob = true;
+        job.Provider = next.Provider;
+        job.RoutingNotice = $"{why}; continuing on {ProviderRouter.DisplayName(next.Provider)}.";
+        job._routing.Add("after start: " + job.RoutingNotice);
+        job.Outcome = null;
+        job.LastResult = null;
+        await AuditRouteAsync(job.JobId, FailoverDecision.SwitchedAfterRateLimit, failed, next.Provider, why).ConfigureAwait(false);
+        RaiseNotice(job.JobId, job.RoutingNotice);
+        Changed(job);
+        await LaunchHeadlessAsync(job, CancellationToken.None).ConfigureAwait(false);
+        return true;
     }
 
     private void LaunchInteractive(RunningJob job)

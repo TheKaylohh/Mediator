@@ -171,7 +171,7 @@ public static class Commands
                 string cost = r.TotalCostUsd is double c
                     ? string.Create(CultureInfo.InvariantCulture, $", API-equivalent ${c:0.000} (not charged on a subscription)") : "";
                 Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"Usage: {r.NumTurns} turns, {r.Usage.InputTokens} in / {r.Usage.OutputTokens} out / {r.Usage.CacheReadInputTokens} cache-read tokens{cost}"));
+                    $"Usage: {r.NumTurns?.ToString(CultureInfo.InvariantCulture) ?? "?"} turns, {r.Usage?.Describe() ?? "token usage not reported by the CLI (unknown)"}{cost}"));
             }
             Console.WriteLine($"Undo file changes with: cockpit rollback {job.JobId}");
             return state switch { JobState.Succeeded or JobState.Ended => 0, JobState.Killed => 130, _ => 1 };

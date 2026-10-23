@@ -66,15 +66,31 @@ sealed class FakeSldWorks : SldWorks
     public readonly Dictionary<string, Action<FakePart>> StepFiles = new(StringComparer.OrdinalIgnoreCase);
     public readonly List<string> ImportDataRequested = new();
     public object GetImportFileData(string FileName) { ImportDataRequested.Add(FileName); return new object(); }
+    /// <summary>
+    /// When LoadFile4 is asked for one of these STEP files it returns the user's already-open document instead of a new
+    /// one (what SolidWorks does when a document with the same name is already open in the session).
+    /// </summary>
+    public readonly Dictionary<string, FakePart> ReturnsExisting = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Documents created by LoadFile4 and not yet closed.</summary>
+    public readonly List<FakePart> Imported = new();
     public ModelDoc2 LoadFile4(string FileName, string ArgString, object ImportData, ref int Errors)
     {
+        if (ReturnsExisting.TryGetValue(FileName, out var existing)) return existing;
         if (ImportData is null || !StepFiles.TryGetValue(FileName, out var shape)) { Errors = 1; return null!; }
         var doc = new FakePart(this, FileName) { IsImported = true };
         shape(doc);
+        Imported.Add(doc);
         return doc;
     }
-    public void CloseDoc(string Name) { Closed.Add(Name); Open.Remove(Name); }
-    public int GetDocumentCount() => Open.Count;
+    public void CloseDoc(string Name)
+    {
+        Closed.Add(Name);
+        Open.Remove(Name);
+        Imported.RemoveAll(d => d.GetTitle() == Name);
+        foreach (var p in Parts.Values.Where(p => p.GetTitle() == Name)) Open.Remove(p.Path);
+    }
+    public int GetDocumentCount() => Open.Count + Imported.Count;
+    public object GetDocuments() => Open.Where(Parts.ContainsKey).Select(p => (object)Parts[p]).Concat(Imported).ToArray();
     public void ExitApp() { }
 }
 
@@ -211,7 +227,10 @@ sealed class FakePart : ModelDoc2, PartDoc, ModelDocExtension
     public bool IsImported { get; init; }
 
     // PartDoc
-    public object GetBodies2(int BodyType, bool BVisibleOnly) => new object[] { new FakeBody(Faces) };
+    /// <summary>Imported STEP that yields only surface bodies (no solid).</summary>
+    public bool SurfaceOnly { get; set; }
+    public object GetBodies2(int BodyType, bool BVisibleOnly) =>
+        (BodyType == (int)swBodyType_e.swSolidBody) == !SurfaceOnly ? new object[] { new FakeBody(Faces) } : Array.Empty<object>();
     public object GetPartBox(bool Precise) => new[] { -0.01, -0.01, 0.0, 0.01, 0.01, 0.02 };
     public bool SetEntityName(object Entity, string Name) { _names[Entity] = Name; Dirty = true; return true; }
     public string GetEntityName(object Entity) => _names.TryGetValue(Entity, out var n) ? n : "";

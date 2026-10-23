@@ -235,6 +235,10 @@
                               <TextBlock Style="{StaticResource MutedText}" Text="  ·  " />
                               <TextBlock Style="{StaticResource MutedText}" Text="{Binding Launch}" />
                             </StackPanel>
+                            <TextBlock Style="{StaticResource MutedText}" Text="{Binding OutcomeText}"
+                                       Visibility="{Binding OutcomeText, Converter={StaticResource EmptyToCollapsed}}" />
+                            <TextBlock Style="{StaticResource MutedText}" Text="{Binding RoutingText}" TextWrapping="Wrap" MaxHeight="48" Foreground="{StaticResource WarningBrush}"
+                                       Visibility="{Binding RoutingText, Converter={StaticResource EmptyToCollapsed}}" />
                             <TextBlock Style="{StaticResource MutedText}" Text="{Binding Detail}" TextWrapping="Wrap" MaxHeight="48"
                                        Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
                             <TextBlock Style="{StaticResource MutedText}" FontSize="10" Text="{Binding JobId}" />
@@ -277,6 +281,9 @@
                             <Style.Triggers>
                               <DataTrigger Binding="{Binding IsProblem}" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding IsUncertain}" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
                               </DataTrigger>
                             </Style.Triggers>
                           </Style>

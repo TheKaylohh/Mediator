@@ -17,10 +17,15 @@ sealed class FakeLauncher(string testsDll) : ICliLauncher
     public string? EmitFile { get; set; }
     public int LauncherExitCode { get; private set; } = -1;
 
+    /// <summary>Per-launch scripts, used in order before falling back to <see cref="EmitFile"/>: stdout file plus options (exit=, gate=, stderr=).</summary>
+    public readonly Queue<string[]> Script = new();
+
     public Process StartHeadless(ProcessStartInfo psi)
     {
         Headless.Add(psi);
-        var stand = Child("--emit", EmitFile ?? throw new InvalidOperationException("EmitFile not set"));
+        string[] emit;
+        lock (Script) emit = Script.Count > 0 ? Script.Dequeue() : [EmitFile ?? throw new InvalidOperationException("EmitFile not set")];
+        var stand = Child(["--emit", .. emit]);
         stand.RedirectStandardInput = stand.RedirectStandardOutput = stand.RedirectStandardError = true;
         stand.StandardOutputEncoding = Utf8.NoBom;
         return Process.Start(stand)!;
@@ -203,7 +208,7 @@ static class LaunchTests
         Check.Equal("gemini-2.5-pro", ((SessionInitEvent)whole[0]).Model, "BOM stripped, model read");
         Check.True(((ToolResultEvent)whole[4]).IsError && ((ToolResultEvent)whole[4]).Text == "The user denied this action.", "tool error status and message");
         var result = (RunResultEvent)whole[^1];
-        Check.True(!result.IsError && result.Usage == new UsageTotals(1500, 400, 0, 0) && result.NumTurns == 2, "result stats");
+        Check.True(!result.IsError && result.Usage == new UsageTotals(1500, 400, null, null) && result.NumTurns == 2, "result stats (V6: cache fields Gemini did not report are unknown, not 0)");
 
         var now = DateTimeOffset.Parse("2026-10-22T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
         var quota = Parse(GeminiQuota, 7, new FixedTime(now));
@@ -216,7 +221,7 @@ static class LaunchTests
             "daily quota → next midnight Pacific (PDT in October = 07:00 UTC)");
 
         var json = Parse(GeminiJsonMode, 9);
-        Check.True(json[0] is AssistantTextEvent { Text: "Done." } && ((RunResultEvent)json[1]).Usage == new UsageTotals(800, 120, 300, 0), "--output-format json single object");
+        Check.True(json[0] is AssistantTextEvent { Text: "Done." } && ((RunResultEvent)json[1]).Usage == new UsageTotals(800, 120, 300, null), "--output-format json single object");
         return Task.CompletedTask;
     }
 

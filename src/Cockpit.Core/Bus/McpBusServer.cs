@@ -30,6 +30,10 @@ public sealed record BusOptions
     public string ServerVersion { get; init; } = "4.0.0";
     /// <summary>Reject a pipe client whose OS-reported PID differs from the PID it claims in its hello.</summary>
     public bool VerifyClientPid { get; init; } = true;
+    /// <summary>Largest hello frame accepted from a peer that has not authenticated yet (V6; was the 16 MiB frame limit).</summary>
+    public int MaxHelloBytes { get; init; } = 8 * 1024;
+    /// <summary>Requests one connection may have running at once; more are answered with an error, not queued (V6).</summary>
+    public int MaxInFlightPerConnection { get; init; } = 32;
 }
 
 /// <summary>Raised for the overlay's live activity panel.</summary>
@@ -63,6 +67,7 @@ public sealed class McpBusServer : IAsyncDisposable
     internal OperationStore Operations { get; }
     internal ICockpitLog Log { get; }
     internal string ServerVersion => _options.ServerVersion;
+    internal int MaxInFlight => _options.MaxInFlightPerConnection;
 
     public event Action<ToolCallEvent>? ToolCallActivity;
 
@@ -279,7 +284,7 @@ public sealed class McpBusServer : IAsyncDisposable
             {
                 using var helloCts = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
                 helloCts.CancelAfter(helloTimeout);
-                var frame = await FrameIO.ReadFrameAsync(stream, helloCts.Token).ConfigureAwait(false);
+                var frame = await FrameIO.ReadFrameAsync(stream, _options.MaxHelloBytes, helloCts.Token).ConfigureAwait(false);
                 if (frame is null) return;
                 hello = BusHello.Parse(frame);
             }
@@ -444,6 +449,13 @@ internal sealed class BusConnection : IDisposable
 
     private void Dispatch(byte[] frame, CancellationToken ct)
     {
+        // V6: System.Text.Json does not validate UTF-8 inside strings it has not decoded yet, so a frame with invalid
+        // bytes in, say, the method name parsed and then threw later on the read loop. Validate up front.
+        if (!System.Text.Unicode.Utf8.IsValid(frame))
+        {
+            _ = SendRawAsync(JsonRpc.ErrorResponse(NullId, JsonRpc.ParseError, "Parse error: the frame is not valid UTF-8."));
+            return;
+        }
         JsonDocument doc;
         try { doc = JsonDocument.Parse(frame); }
         catch (JsonException)
@@ -463,6 +475,12 @@ internal sealed class BusConnection : IDisposable
                     string method = root.GetProperty("method").GetString()!;
                     var @params = root.TryGetProperty("params", out var p) ? p.Clone() : EmptyObject;
                     string key = JsonRpc.IdKey(id);
+                    if (_inflight.Count >= _server.MaxInFlight)
+                    {
+                        _ = SendRawAsync(JsonRpc.ErrorResponse(id, JsonRpc.InvalidRequest,
+                            $"Too many requests in progress on this connection (limit {_server.MaxInFlight}). Wait for earlier calls to finish."));
+                        return;
+                    }
                     var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     if (!_inflight.TryAdd(key, cts))
                     {
@@ -686,6 +704,14 @@ internal sealed class BusConnection : IDisposable
             ["rows"] = outcome.ApprovedRows is null ? null : new JsonArray(outcome.ApprovedRows.Order(StringComparer.Ordinal).Select(r => (JsonNode)r).ToArray()),
             ["binding"] = outcome.Preview?["binding"]?.DeepClone(),
         }.ToJsonString()).ConfigureAwait(false);
+
+        // Revocation is final: a grant revoked while the call waited for approval (job killed, expired, ended) never
+        // executes, even if the approval arrived a moment later.
+        if (!_server.Jobs.IsCurrent(Job))
+        {
+            await Move(OperationState.Cancelled, "the job's access was revoked before the call ran; not run").ConfigureAwait(false);
+            return await Finish(approvedAs, "not_run", ToolResult.Fail("This job's access was revoked; the action was not run.")).ConfigureAwait(false);
+        }
 
         // Durable BEFORE the side effect: from here on, a crash means "may have happened".
         await Move(OperationState.Executing).ConfigureAwait(false);

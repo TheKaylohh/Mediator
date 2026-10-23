@@ -98,6 +98,10 @@ public sealed class JobRegistry
 
     public bool TryGet(string jobId, out JobGrant? grant) => _jobs.TryGetValue(jobId, out grant);
 
+    /// <summary>True while this exact grant is still issued and unexpired (a re-issued job id with a new grant does not count).</summary>
+    public bool IsCurrent(JobGrant grant) =>
+        _jobs.TryGetValue(grant.JobId, out var g) && ReferenceEquals(g, grant) && _time.GetUtcNow() < grant.ExpiresAt;
+
     public IReadOnlyList<JobGrant> Active => _jobs.Values.ToList();
 
     public bool HasActive(BusTransport transport) => _jobs.Values.Any(g => g.Transport == transport && _time.GetUtcNow() < g.ExpiresAt);

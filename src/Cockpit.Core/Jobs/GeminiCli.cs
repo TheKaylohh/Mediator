@@ -48,8 +48,17 @@ public sealed class GeminiLaunchBuilder
         psi.StandardOutputEncoding = Utf8.NoBom;
         psi.StandardErrorEncoding = Utf8.NoBom;
         foreach (var v in VariablesToScrub(allowMeteredBilling)) psi.Environment.Remove(v);
+        // Real capture (Gemini CLI 0.65.0, verify/fixtures/real): headless runs in an untrusted folder exit 55 before
+        // doing anything. The job workspace is the Cockpit's own folder holding only its generated settings, so it is
+        // trusted for this process only; the user's folders are never marked trusted.
+        psi.Environment[TrustWorkspaceVariable] = "true";
         return psi;
     }
+
+    public const string TrustWorkspaceVariable = "GEMINI_CLI_TRUST_WORKSPACE";
+
+    /// <summary>Gemini CLI exit codes observed in real captures (0.65.0): 41 = no auth configured, 55 = untrusted folder.</summary>
+    public const int ExitNoAuth = 41, ExitUntrustedFolder = 55;
 
     /// <param name="hasBrief">The job's task is served by cockpit_job_brief; the command line only says to fetch it.</param>
     public ProcessStartInfo Interactive(JobWorkspace ws, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false)
@@ -57,7 +66,7 @@ public sealed class GeminiLaunchBuilder
         string command = $"& {InteractiveSession.Ps(_geminiExecutable)} --allowed-mcp-server-names {JobWorkspaceFactory.ServerName}" + (_skipTrust ? " --skip-trust" : "")
             + (hasBrief ? " -i " + InteractiveSession.Ps(JobBriefToolProvider.Instruction) : "");
         string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-gemini.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling),
-            allowMeteredBilling, new Dictionary<string, string>(), ws.Root, command, session.Nonce);
+            allowMeteredBilling, new Dictionary<string, string> { [TrustWorkspaceVariable] = "true" }, ws.Root, command, session.Nonce);
         return CliLaunchBuilder.TerminalStartInfo(script, $"Cockpit {ws.JobId} (Gemini)", ws.Root);
     }
 }
@@ -111,7 +120,7 @@ public sealed partial class GeminiStreamParser : ICliStreamParser
         if (!_sawResult && (_limit is not null || _lastError is not null))
         {
             _sawResult = true;
-            events.Add(new RunResultEvent(_session, "error", true, _limit?.Message ?? _lastError, null, null, null, UsageTotals.Zero, _limit));
+            events.Add(new RunResultEvent(_session, "error", true, _limit?.Message ?? _lastError, null, null, null, null, _limit));
         }
         return events;
     }
@@ -219,21 +228,24 @@ public sealed partial class GeminiStreamParser : ICliStreamParser
         return midnight.ToUniversalTime();
     }
 
-    private static UsageTotals Usage(JsonElement root)
+    /// <summary>Null when the result has no stats; a field Gemini did not report stays null (unknown).</summary>
+    private static UsageTotals? Usage(JsonElement root)
     {
-        if (!root.TryGetProperty("stats", out var s) || s.ValueKind != JsonValueKind.Object) return UsageTotals.Zero;
-        long input = Long(s, "input_tokens") ?? 0, output = Long(s, "output_tokens") ?? 0, cached = Long(s, "cached") ?? Long(s, "cached_tokens") ?? 0;
+        if (!root.TryGetProperty("stats", out var s) || s.ValueKind != JsonValueKind.Object) return null;
+        long? input = Long(s, "input_tokens"), output = Long(s, "output_tokens"), cached = Long(s, "cached") ?? Long(s, "cached_tokens");
         // json mode nests per-model token counts: stats.models.<model>.tokens.{prompt,candidates,cached}
-        if (input == 0 && output == 0 && s.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object)
+        if (input is null && output is null && s.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object)
             foreach (var model in models.EnumerateObject())
                 if (model.Value.TryGetProperty("tokens", out var t) && t.ValueKind == JsonValueKind.Object)
                 {
-                    input += Long(t, "prompt") ?? 0;
-                    output += Long(t, "candidates") ?? 0;
-                    cached += Long(t, "cached") ?? 0;
+                    input = Add(input, Long(t, "prompt"));
+                    output = Add(output, Long(t, "candidates"));
+                    cached = Add(cached, Long(t, "cached"));
                 }
-        return new UsageTotals(input, output, cached, 0);
+        return input is null && output is null && cached is null ? null : new UsageTotals(input, output, cached, null);
     }
+
+    private static long? Add(long? a, long? b) => a is null ? b : b is null ? a : a + b;
 
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

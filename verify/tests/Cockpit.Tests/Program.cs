@@ -10,12 +10,15 @@ using Cockpit.Protocol;
 
 // Helper modes used by tests that need a stand-in child process (a "terminal" that stays up, or a CLI that prints a stream).
 if (args.Length == 2 && args[0] == "--sleep") { await Task.Delay(TimeSpan.FromSeconds(int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture))); return 0; }
-if (args.Length == 2 && args[0] == "--emit")
+if (args.Length >= 2 && args[0] == "--emit")
 {
+    // --emit <stdout file> [exit=<code>] [gate=<path: wait until it exists>] [stderr=<file>]
     await Console.In.ReadToEndAsync(); // consume the prompt like a real CLI
-    using var stdout = Console.OpenStandardOutput();
-    await stdout.WriteAsync(File.ReadAllBytes(args[1]));
-    return 0;
+    string? Opt(string k) => args.Skip(2).FirstOrDefault(x => x.StartsWith(k + "=", StringComparison.Ordinal))?[(k.Length + 1)..];
+    if (Opt("gate") is string gate) while (!File.Exists(gate)) await Task.Delay(20);
+    if (Opt("stderr") is string err) { using var e = Console.OpenStandardError(); await e.WriteAsync(File.ReadAllBytes(err)); }
+    using (var stdout = Console.OpenStandardOutput()) await stdout.WriteAsync(File.ReadAllBytes(args[1]));
+    return Opt("exit") is string code ? int.Parse(code, System.Globalization.CultureInfo.InvariantCulture) : 0;
 }
 
 if (args.Length == 2 && args[0] == "--write-fcpxml")
@@ -69,6 +72,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("#13 swx: layouts, mapped entities with mark 1, undo group; strict mock rejects raw faces and mark 0", Cockpit.Tests.SwxTests.MateSelectionAndLayouts),
     ("swx: modal dialog 2 s into a stalled call returns MODAL_DIALOG_BLOCKING at the 3 s probe; queue survives", Cockpit.Tests.SwxTests.ModalDialogWatchdog),
     ("swx: STEP import via LoadFile4 + SaveAs3 into new parts, never overwriting; result feeds part_cards", Cockpit.Tests.SwxTests.StepImport),
+    ("swx: STEP import ownership (fake COM): user's document returned by LoadFile4 left untouched; surface-only, duplicate target, already-open refused", Cockpit.Tests.SwxTests.StepImportOwnership),
     ("swx: geometric fallback when persist references no longer resolve", Cockpit.Tests.SwxTests.FaceFallbackAfterReopen),
     ("tcp: listener runs only while WSL jobs exist, on an ephemeral loopback port", Cockpit.Tests.TransportTests.ListenerOnlyWhileWslJobsExist),
     ("tcp: a valid pipe-bound token over TCP is rejected and audited", Cockpit.Tests.TransportTests.PipeTokenOverTcpRejectedAndAudited),
@@ -108,6 +112,17 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("journal faults: permission failure as uid 65534 (real): one op fails, rest commit, rollback restores", Cockpit.Tests.JournalFaultTests.PermissionFailure),
     ("journal faults: disk full under the journal (real 1 MiB tmpfs): stops consistently, reconciles, finishes", Cockpit.Tests.JournalFaultTests.DiskFullJournal),
     ("journal faults (Windows): locked file (sharing violation)", Cockpit.Tests.JournalFaultTests.LockedFileWindows),
+    // V6 Phase 3: providers, failover, usage
+    ("providers: pre-launch routing matrix (each unavailable, both unavailable, both cooling, NeverDowngrade) with original + reason", Cockpit.Tests.FailoverTests.RouterMatrix),
+    ("providers: REAL captures (Claude Code 2.1.309 invalid key, Gemini 0.65.0 no-auth/untrusted/no-result) classified; result-then-abnormal-exit", Cockpit.Tests.FailoverTests.RealCapturesClassified),
+    ("usage: unknown stays unknown (never 0), duplicate results counted once, no-result runs recorded, V5 ledger migrated", Cockpit.Tests.FailoverTests.UsageUnknownNotZero),
+    ("failover: mid-job switch only before side effects, same grant; side effect / NeverDowngrade / second limit refuse; all audited", () => Cockpit.Tests.FailoverTests.MidJobFailover(bridgeDll, testsDll)),
+    ("failover: real invalid-key capture killed by billing guard, AuthFailed when metered allowed; Gemini exit 41; trust env; abnormal exit", () => Cockpit.Tests.FailoverTests.RealAuthFailures(bridgeDll, testsDll)),
+    ("overlay: an uncertain call is amber 'outcome unknown', kill says it may still finish, a late result clears it", () => Cockpit.Tests.OverlayStateTests.UncertainCallsAreNotShownAsStopped(bridgeDll)),
+    ("bus: hostile frames (oversized/negative/partial hello, invalid UTF-8, non-object, duplicate id by value, >16 MiB) handled; bus keeps serving", Cockpit.Tests.BusHardeningTests.HostileFrames),
+    ("bus: per-connection in-flight cap refuses excess requests with an error", Cockpit.Tests.BusHardeningTests.InFlightCap),
+    ("bus: a grant revoked while a Write waits for approval never executes, even if approval arrives after", Cockpit.Tests.BusHardeningTests.RevokedWhileAwaitingApproval),
+    ("bus: 4 jobs x 40 concurrent calls with a mid-run revocation; every response to the right id and job; no deadlock", Cockpit.Tests.BusHardeningTests.ConcurrencyStress),
     // V6 Phase 2d: durable operation store
     ("operations: state machine refuses illegal transitions; canonical request keys; full history", Cockpit.Tests.OperationTests.StateMachineRules),
     ("operations: replay after commit returns the stored result; concurrent duplicate refused; one side effect", () => Cockpit.Tests.OperationTests.ReplayAndDuplicates(bridgeDll)),
@@ -139,7 +154,7 @@ int failed = 0, skipped = 0, passed = 0;
 var skips = new List<string>();
 foreach (var (name, run) in tests)
 {
-    if (only is not null && !name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
+    if (only is not null && !only.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(o => name.Contains(o, StringComparison.OrdinalIgnoreCase))) continue; // COCKPIT_ONLY=a,b,c
     var sw = Stopwatch.StartNew();
     try
     {
