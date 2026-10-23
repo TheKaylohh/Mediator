@@ -40,17 +40,47 @@ public sealed class AttachmentStore
 
     private readonly string _root;
     private readonly TimeProvider _time;
+    private readonly IReadOnlyList<string> _sensitive;
+    private readonly string _home;
     private readonly long _maxFileBytes;
 
-    public AttachmentStore(string root, TimeProvider? time = null, long maxFileBytes = MaxFileBytes)
+    /// <param name="sensitive">
+    /// Folders never attached, nor any folder that contains one (the Cockpit's own data folder and the usual credential
+    /// folders by default): a model reading attachments must not be able to read sign-in tokens or keys by accident.
+    /// </param>
+    public AttachmentStore(string root, TimeProvider? time = null, long maxFileBytes = MaxFileBytes, IEnumerable<string>? sensitive = null, string? home = null)
     {
         _root = System.IO.Path.GetFullPath(root);
         _time = time ?? TimeProvider.System;
         _maxFileBytes = maxFileBytes;
+        _home = System.IO.Path.TrimEndingDirectorySeparator(home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        _sensitive = (sensitive ?? DefaultSensitive(_home).Append(System.IO.Path.GetDirectoryName(_root)!))
+            .Select(p => System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(p))).ToArray();
         Directory.CreateDirectory(_root);
     }
 
     public string Root => _root;
+
+    /// <summary>Credential folders of the CLIs and common tools under the user's home.</summary>
+    public static IEnumerable<string> DefaultSensitive(string home) =>
+        new[] { ".claude", ".gemini", ".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", System.IO.Path.Combine(".config", "gcloud"), ".claude.json" }
+            .Select(n => System.IO.Path.Combine(home, n));
+
+    /// <summary>Why a path may not be attached (secrets, the whole home folder, a drive root), or null.</summary>
+    private string? SensitiveReason(string full, bool isFolder)
+    {
+        var syntax = PathSyntax.Current;
+        if (System.IO.Path.GetPathRoot(full) is { } r && syntax.Comparer.Equals(System.IO.Path.TrimEndingDirectorySeparator(r), full) || full == "/")
+            return "a whole drive cannot be attached; attach the folder you mean";
+        if (isFolder && _home.Length > 0 && syntax.Comparer.Equals(full, _home))
+            return "your whole user folder cannot be attached (it holds sign-in tokens and keys); attach the folder you mean";
+        foreach (var s in _sensitive)
+        {
+            if (syntax.IsSameOrInside(full, s)) return $"it is inside {s}, which holds credentials or the Cockpit's own data";
+            if (isFolder && syntax.IsSameOrInside(s, full)) return $"it contains {s}, which holds credentials or the Cockpit's own data; attach a narrower folder";
+        }
+        return null;
+    }
 
     /// <summary>Removes attachment folders older than <see cref="Retention"/>. Returns how many were removed.</summary>
     public int Prune()
@@ -74,6 +104,8 @@ public sealed class AttachmentStore
             throw new AttachmentException($"'{full}' is a system folder; attach your own files instead.");
         if (syntax.IsSameOrInside(full, _root))
             throw new AttachmentException("That is already an attachment.");
+        if (SensitiveReason(full, Directory.Exists(full)) is { } sensitive)
+            throw new AttachmentException($"'{full}' cannot be attached: {sensitive}.");
         var info = new FileInfo(full);
         if (info.LinkTarget is not null || new DirectoryInfo(full).LinkTarget is not null)
             throw new AttachmentException($"'{full}' is a link; attach what it points to instead, so you can see what is shared.");
@@ -81,9 +113,15 @@ public sealed class AttachmentStore
         {
             var verdictRoot = new PathAuthorizer([], [full]); // resolves the real path and refuses what a root may not be
             string real = verdictRoot.ReadOnlyRoots.Single();
+            if (SensitiveReason(real, isFolder: true) is { } realSensitive) // a link higher up may hide where it really is
+                throw new AttachmentException($"'{full}' cannot be attached: {realSensitive}.");
             return new Attachment(NewId(), AttachmentKind.Folder, Name(full), full, real, real, 0, null);
         }
         if (!info.Exists) throw new AttachmentException($"'{full}' does not exist.");
+        // The same secret check on the real location: a linked folder higher up must not lead into a credential folder.
+        if (System.IO.Path.GetDirectoryName(full) is { } parent && PathAuthorizer.ResolveRootFinalPath(parent) is { } realParent
+            && SensitiveReason(System.IO.Path.Combine(realParent, info.Name), isFolder: false) is { } fileSensitive)
+            throw new AttachmentException($"'{full}' cannot be attached: {fileSensitive}.");
 
         string id = NewId();
         string dir = System.IO.Path.Combine(_root, id);

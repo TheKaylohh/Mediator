@@ -98,6 +98,28 @@ static class AttachmentTests
         Throws<AttachmentException>(() => store.AddPath(Path.Combine(user, "missing.txt")), "a missing file is refused", "does not exist");
         Throws<AttachmentException>(() => store.AddPath(a.Path), "an attachment cannot be attached again", "already");
 
+        // Secrets and whole folders: a fake home with credential folders, the data folder and a drive root.
+        string home = TempDir("home");
+        Directory.CreateDirectory(Path.Combine(home, ".claude"));
+        File.WriteAllText(Path.Combine(home, ".claude", ".credentials.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(home, ".ssh"));
+        File.WriteAllText(Path.Combine(home, ".ssh", "id_ed25519"), "key");
+        string projects = Directory.CreateDirectory(Path.Combine(home, "projects", "bracket")).FullName;
+        var guarded = new AttachmentStore(Path.Combine(data, "attachments"), home: home);
+        Throws<AttachmentException>(() => guarded.AddPath(Path.Combine(home, ".claude", ".credentials.json")), "a CLI credential file is refused", "credentials");
+        Throws<AttachmentException>(() => guarded.AddPath(Path.Combine(home, ".ssh")), "the .ssh folder is refused", "credentials");
+        Throws<AttachmentException>(() => guarded.AddPath(home), "the whole home folder is refused", "whole user folder");
+        Throws<AttachmentException>(() => guarded.AddPath(Path.Combine(home, "projects") + "/../"), "a '..' path is refused before it can normalize to the home folder", "relative segments");
+        Throws<AttachmentException>(() => guarded.AddPath(data), "the folder holding the Cockpit's data is refused", "Cockpit's own data");
+        Throws<AttachmentException>(() => guarded.AddPath(Path.GetPathRoot(data)!), "a drive root is refused", "whole drive");
+        Check.Equal(AttachmentKind.Folder, guarded.AddPath(projects).Kind, "an ordinary project folder under home is fine");
+        if (OperatingSystem.IsLinux())
+        {
+            Directory.CreateSymbolicLink(Path.Combine(user, "tmp-alias"), home);
+            Throws<AttachmentException>(() => guarded.AddPath(Path.Combine(user, "tmp-alias", ".ssh")), "a credential folder reached through a linked parent is refused", "credentials");
+            Throws<AttachmentException>(() => guarded.AddPath(Path.Combine(user, "tmp-alias", ".ssh", "id_ed25519")), "a key file reached through a linked parent is refused", "credentials");
+        }
+
         // Pasted images: PNG only, header checked.
         var pasted = store.AddPng(TinyPng);
         Check.True(Path.GetFileName(pasted.Path).StartsWith("pasted-", StringComparison.Ordinal) && pasted.Path.EndsWith(".png", StringComparison.Ordinal), "timestamped pasted-*.png");
@@ -213,30 +235,41 @@ static class AttachmentTests
             Check.True(File.Exists(text.Path), "attachment still in place");
         }
 
-        // A second job sees none of it; attaching a folder to it while it runs is audited and read-only.
+        // A second job (headless, no attachments) gets no attachment tools and cannot be attached to.
         var job2 = await rt.StartJobAsync(spec with { JobId = "attach-2", Attachments = [], Prompt = "" });
+        Check.True(!job2.Grant.AllowedTools.Contains(AttachmentToolProvider.ReadTool), "no attachment tools without attachments (V6 tool lists unchanged)");
         string drawings = Directory.CreateDirectory(Path.Combine(user, "drawings")).FullName;
         File.WriteAllText(Path.Combine(drawings, "rev-b.txt"), "rev B");
         var folder = rt.StageAttachment(drawings);
+        Check.True(!await rt.AttachToJobAsync("attach-2", folder), "a job without the attachment tools cannot be attached to");
         await using (var client2 = await rt.ConnectClientAsync(job2))
         {
-            var foreign = await client2.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = text.Id }, TimeSpan.FromSeconds(20));
-            Check.True(foreign.IsError && foreign.Text.Contains("No attachment", StringComparison.Ordinal), "another job cannot read this job's attachment");
-            Check.True(await rt.AttachToJobAsync("attach-2", folder), "attach to a running job");
-            var listing = await client2.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id }, TimeSpan.FromSeconds(20));
-            Check.True(listing.Text.Contains("rev-b.txt", StringComparison.Ordinal), "folder listed");
-            var inner = await client2.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id, ["path"] = "rev-b.txt" }, TimeSpan.FromSeconds(20));
-            Check.Equal("rev B", inner.Text, "file inside an attached folder read");
-            var up = await client2.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id, ["path"] = "../brief.md" }, TimeSpan.FromSeconds(20));
-            Check.True(up.IsError, "'..' out of an attached folder is refused");
-            Check.Equal("read_only", job2.Grant.Paths.Check(Path.Combine(drawings, "x.txt"), PathAccess.CreateFile).Code, "attached folder is read-only for the job");
+            var foreign = await client2.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = text.Id }, TimeSpan.FromSeconds(20))
+                .ContinueWith(t => t.Exception is null ? t.Result : null);
+            Check.True(foreign is null || foreign.IsError, "another job cannot read this job's attachment");
         }
-        var audit = await rt.Audit.ListAsync("attach-2");
-        Check.True(audit.Any(r => r.Tool == "cockpit/attach" && r.ArgumentsJson.Contains("read_only", StringComparison.Ordinal)), "attaching is audited");
-        Check.True(job2.Grant.AllowedTools.SetEquals(job.Grant.AllowedTools), "attaching never changes the tool list");
 
-        await rt.EndJobAsync("attach-2");
-        Check.True(!await rt.AttachToJobAsync("attach-2", folder), "a finished job cannot be attached to");
+        // Attaching a folder to the running job that has the tools: read-only, audited.
+        var toolsBefore = job.Grant.AllowedTools.ToHashSet();
+        Check.True(await rt.AttachToJobAsync("attach-1", folder), "attach to a running job");
+        await using (var client1 = await rt.ConnectClientAsync(job))
+        {
+            var listing = await client1.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id }, TimeSpan.FromSeconds(20));
+            Check.True(listing.Text.Contains("rev-b.txt", StringComparison.Ordinal), "folder listed");
+            var inner = await client1.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id, ["path"] = "rev-b.txt" }, TimeSpan.FromSeconds(20));
+            Check.Equal("rev B", inner.Text, "file inside an attached folder read");
+            var up = await client1.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id, ["path"] = "../brief.md" }, TimeSpan.FromSeconds(20));
+            Check.True(up.IsError, "'..' out of an attached folder is refused");
+            var sideways = await client1.CallToolAsync(AttachmentToolProvider.ReadTool, new JsonObject { ["id"] = folder.Id, ["path"] = text.Path }, TimeSpan.FromSeconds(20));
+            Check.True(sideways.IsError && sideways.Text.Contains("outside the attached folder", StringComparison.Ordinal), "an absolute path to another attachment is refused under this id");
+            Check.Equal("read_only", job.Grant.Paths.Check(Path.Combine(drawings, "x.txt"), PathAccess.CreateFile).Code, "attached folder is read-only for the job");
+        }
+        var audit = await rt.Audit.ListAsync("attach-1");
+        Check.True(audit.Any(r => r.Tool == "cockpit/attach" && r.ArgumentsJson.Contains("read_only", StringComparison.Ordinal)), "attaching is audited");
+        Check.True(job.Grant.AllowedTools.SetEquals(toolsBefore), "attaching never changes the tool list");
+
+        await rt.EndJobAsync("attach-1");
+        Check.True(!await rt.AttachToJobAsync("attach-1", folder), "a finished job cannot be attached to");
         Check.True(Directory.Exists(drawings) && File.Exists(Path.Combine(drawings, "rev-b.txt")), "the user's folder is untouched");
     }
 }

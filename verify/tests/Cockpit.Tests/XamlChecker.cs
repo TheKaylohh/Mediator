@@ -8,17 +8,26 @@ namespace Cockpit.Tests;
 
 /// <summary>
 /// Static checks for the WPF overlay's XAML, standing in for the compiler and the binding engine on Linux:
-///  • every file is well-formed XML with declared namespaces;
-///  • every {StaticResource K} is defined (in App.xaml, earlier in document order, or in the same file);
-///  • every {Binding path} resolves to public properties of the ViewModel type in scope, where scope follows
-///    the root d:DataContext, DataContext="{Binding X}", and ItemsSource item types for item templates/columns;
+///  • every .xaml file (recursively) is well-formed XML; no element sets a property both as an attribute and as a
+///    property element (a XAML load error);
+///  • themes (V7): Themes/&lt;name&gt;.xaml exists for every CockpitTheme value; all of them define exactly the same keys,
+///    with the same kind of value per key (Color, a Brush, FontFamily, …); inside a theme a StaticResource refers to
+///    a key defined earlier in that theme;
+///  • every {DynamicResource K} is defined by every theme (or by App.xaml);
+///  • every {StaticResource K} is defined (App.xaml, earlier in document order, or in the same file), and never
+///    refers to a theme key outside Themes/ (a StaticResource would not follow a theme switch);
+///  • no colour literal (#AARRGGBB or a named colour other than Transparent) outside Themes/;
+///  • every {Binding path} resolves to public properties of the ViewModel type in scope, where scope follows the
+///    root d:DataContext, DataContext="{Binding X}", and ItemsSource item types for item templates/columns;
 ///    RelativeSource AncestorType=Window bindings resolve against the root type after "DataContext.";
+///    ElementName bindings resolve to a named element, and on a UserControl's own root to a dependency property
+///    declared in its code-behind;
 ///  • *Command paths are ICommand; two-way-by-default targets (TextBox.Text, IsChecked, SelectedIndex) have setters;
-///  • local:Converters used in XAML exist as classes, and x:Name elements used from code-behind exist.
+///  • local and controls: elements exist as classes, and x:Name elements used from code-behind exist.
 /// </summary>
 static partial class XamlChecker
 {
-    public sealed record Report(List<string> Errors, int BindingsChecked, int ResourcesChecked);
+    public sealed record Report(List<string> Errors, int BindingsChecked, int ResourcesChecked, int ThemeKeys, int Files);
 
     static readonly XNamespace X = "http://schemas.microsoft.com/winfx/2006/xaml";
     static readonly XNamespace D = "http://schemas.microsoft.com/expression/blend/2008";
@@ -33,22 +42,105 @@ static partial class XamlChecker
     [GeneratedRegex(@"\{StaticResource\s+([^}\s]+)\s*\}")]
     private static partial Regex StaticResource();
 
+    [GeneratedRegex(@"\{DynamicResource\s+([^}\s]+)\s*\}")]
+    private static partial Regex DynamicResource();
+
     [GeneratedRegex(@"\bclass\s+(\w+)")]
     private static partial Regex ClassDecl();
+
+    [GeneratedRegex(@"^#[0-9A-Fa-f]{3,8}$")]
+    private static partial Regex HexColor();
+
+    static readonly HashSet<string> NamedColours = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Black", "White", "Red", "Green", "Blue", "Yellow", "Orange", "Gray", "Grey", "DarkGray", "LightGray", "Cyan", "Magenta",
+        "Purple", "Pink", "Brown", "Navy", "Teal", "Lime", "Silver", "Gold", "Crimson", "Aqua", "Maroon", "Olive",
+    };
+    static readonly HashSet<string> ColourProperties = new(StringComparer.Ordinal)
+    {
+        "Foreground", "Background", "BorderBrush", "Fill", "Stroke", "Color", "CaretBrush", "SelectionBrush", "RowBackground", "OpacityMask",
+    };
+
+    static IEnumerable<string> XamlFiles(string folder) => Directory.EnumerateFiles(folder, "*.xaml", SearchOption.AllDirectories)
+        .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj")).OrderBy(f => f, StringComparer.Ordinal);
+
+    static IEnumerable<string> CodeFiles(string folder) => Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories)
+        .Where(f => !f.Split(Path.DirectorySeparatorChar).Any(p => p is "bin" or "obj"));
+
+    /// <summary>The kind of value a key holds, for theme parity: brushes of any type are interchangeable.</summary>
+    static string KindOf(XElement el) => el.Name.LocalName.EndsWith("Brush", StringComparison.Ordinal) ? "Brush" : el.Name.LocalName;
 
     public static Report Check(string wpfFolder, Assembly viewModels)
     {
         var errors = new List<string>();
-        int bindings = 0, resources = 0;
+        int bindings = 0, resources = 0, files = 0;
+        string Rel(string f) => Path.GetRelativePath(wpfFolder, f).Replace('\\', '/');
 
-        var app = XDocument.Load(Path.Combine(wpfFolder, "App.xaml"), LoadOptions.SetLineInfo);
-        var appKeys = new List<(string Key, XElement El)>();
-        foreach (var el in app.Descendants()) if (el.Attribute(X + "Key") is { } k) appKeys.Add((k.Value, el));
-
-        string code = string.Join("\n", Directory.GetFiles(wpfFolder, "*.cs").Select(File.ReadAllText));
+        string code = string.Join("\n", CodeFiles(wpfFolder).Select(File.ReadAllText));
         var classes = ClassDecl().Matches(code).Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
 
-        // App.xaml: StaticResource must be defined before use (the XAML loader resolves them in order).
+        // ── Load everything once ──
+        var docs = new Dictionary<string, XDocument>(StringComparer.Ordinal);
+        foreach (var f in XamlFiles(wpfFolder))
+        {
+            files++;
+            try { docs[f] = XDocument.Load(f, LoadOptions.SetLineInfo); }
+            catch (System.Xml.XmlException ex) { errors.Add($"{Rel(f)}: not well-formed: {ex.Message}"); }
+        }
+        foreach (var (f, doc) in docs) DuplicateProperties(doc, Rel(f), errors);
+
+        // ── Themes ──
+        var themeEnum = viewModels.GetTypes().FirstOrDefault(t => t.IsEnum && t.Name == "CockpitTheme");
+        var themeNames = themeEnum is null ? [] : Enum.GetNames(themeEnum);
+        if (themeEnum is null) errors.Add("CockpitTheme enum not found in the ViewModel assembly");
+        var themes = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal); // theme → key → kind
+        foreach (var name in themeNames)
+        {
+            string path = Path.Combine(wpfFolder, "Themes", name + ".xaml");
+            if (!docs.TryGetValue(path, out var doc)) { errors.Add($"Themes/{name}.xaml is missing (CockpitTheme.{name})"); continue; }
+            if (doc.Root!.Name.LocalName != "ResourceDictionary") { errors.Add($"Themes/{name}.xaml: root must be a ResourceDictionary"); continue; }
+            var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+            var defined = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var el in doc.Root.Descendants())
+            {
+                foreach (var attr in el.Attributes())
+                    foreach (Match m in StaticResource().Matches(attr.Value))
+                    {
+                        resources++;
+                        if (!defined.Contains(m.Groups[1].Value)) errors.Add($"Themes/{name}.xaml:{Line(el)} StaticResource '{m.Groups[1].Value}' is not defined earlier in the theme");
+                    }
+                if (el.Parent == doc.Root && el.Attribute(X + "Key") is { } k)
+                {
+                    if (!keys.TryAdd(k.Value, KindOf(el))) errors.Add($"Themes/{name}.xaml:{Line(el)} key '{k.Value}' is defined twice");
+                    defined.Add(k.Value);
+                }
+            }
+            themes[name] = keys;
+        }
+        var themeKeys = themes.Values.SelectMany(k => k.Keys).ToHashSet(StringComparer.Ordinal);
+        foreach (var (name, keys) in themes)
+        {
+            foreach (var missing in themeKeys.Where(k => !keys.ContainsKey(k)).OrderBy(k => k, StringComparer.Ordinal))
+                errors.Add($"Themes/{name}.xaml does not define '{missing}' (another theme does)");
+            foreach (var (key, kind) in keys)
+                foreach (var (other, otherKeys) in themes)
+                    if (string.CompareOrdinal(name, other) < 0 && otherKeys.TryGetValue(key, out var otherKind) && otherKind != kind)
+                        errors.Add($"'{key}' is a {kind} in {name} but a {otherKind} in {other}");
+        }
+        // ThemeManager must load Themes/<name>.xaml by the enum name.
+        if (!code.Contains("Themes/{theme}.xaml", StringComparison.Ordinal)) errors.Add("ThemeManager does not build the theme URI from the CockpitTheme name");
+
+        // ── App.xaml: StaticResource before use; merged default theme ──
+        string appPath = Path.Combine(wpfFolder, "App.xaml");
+        if (!docs.TryGetValue(appPath, out var app)) { errors.Add("App.xaml missing or malformed"); return new Report(errors, bindings, resources, themeKeys.Count, files); }
+        var appKeys = new List<(string Key, XElement El)>();
+        foreach (var el in app.Descendants()) if (el.Attribute(X + "Key") is { } k) appKeys.Add((k.Value, el));
+        var merged = app.Descendants().Where(e => e.Name.LocalName == "ResourceDictionary" && e.Attribute("Source") is not null).ToList();
+        if (merged.Count != 1 || !Regex.IsMatch(merged[0].Attribute("Source")!.Value, @"^Themes/\w+\.xaml$"))
+            errors.Add("App.xaml must merge exactly one theme dictionary (Themes/<name>.xaml) as MergedDictionaries[0]");
+        foreach (var dup in appKeys.Where(k => themeKeys.Contains(k.Key)))
+            errors.Add($"App.xaml:{Line(dup.El)} defines theme key '{dup.Key}' (it would shadow every theme)");
+
         var order = app.Descendants().Select((e, i) => (e, i)).ToDictionary(t => t.e, t => t.i);
         foreach (var el in app.Descendants())
         {
@@ -57,37 +149,64 @@ static partial class XamlChecker
                 foreach (Match m in StaticResource().Matches(value))
                 {
                     resources++;
-                    var def = appKeys.FirstOrDefault(k => k.Key == m.Groups[1].Value);
-                    if (def.El is null) errors.Add($"App.xaml:{Line(el)} StaticResource '{m.Groups[1].Value}' is not defined");
-                    else if (order[def.El] >= order[el] && !el.AncestorsAndSelf().Contains(def.El)) errors.Add($"App.xaml:{Line(el)} StaticResource '{m.Groups[1].Value}' is used before it is defined");
+                    string key = m.Groups[1].Value;
+                    if (themeKeys.Contains(key)) { errors.Add($"App.xaml:{Line(el)} StaticResource '{key}' is a theme key: use DynamicResource so theme switches apply"); continue; }
+                    var def = appKeys.FirstOrDefault(k => k.Key == key);
+                    if (def.El is null) errors.Add($"App.xaml:{Line(el)} StaticResource '{key}' is not defined");
+                    else if (order[def.El] >= order[el] && !el.AncestorsAndSelf().Contains(def.El)) errors.Add($"App.xaml:{Line(el)} StaticResource '{key}' is used before it is defined");
+                }
+                foreach (Match m in DynamicResource().Matches(value))
+                {
+                    resources++;
+                    if (!themeKeys.Contains(m.Groups[1].Value) && !appKeys.Any(k => k.Key == m.Groups[1].Value))
+                        errors.Add($"App.xaml:{Line(el)} DynamicResource '{m.Groups[1].Value}' is not defined by the themes");
                 }
             }
             if (el.Name.NamespaceName.StartsWith("clr-namespace:Cockpit.Wpf", StringComparison.Ordinal) && !classes.Contains(el.Name.LocalName))
                 errors.Add($"App.xaml:{Line(el)} local:{el.Name.LocalName} has no class in Cockpit.Wpf");
         }
+        ColourLiterals(app, "App.xaml", errors);
 
-        foreach (var file in Directory.GetFiles(wpfFolder, "*.xaml").Where(f => !f.EndsWith("App.xaml", StringComparison.Ordinal)))
+        // ── Windows and controls ──
+        foreach (var (file, doc) in docs)
         {
-            string name = Path.GetFileName(file);
-            XDocument doc;
-            try { doc = XDocument.Load(file, LoadOptions.SetLineInfo); }
-            catch (System.Xml.XmlException ex) { errors.Add($"{name}: not well-formed: {ex.Message}"); continue; }
+            string name = Rel(file);
+            if (file == appPath || name.StartsWith("Themes/", StringComparison.Ordinal)) continue;
+            var root = doc.Root!;
+            if (root.Name.LocalName == "ResourceDictionary") { errors.Add($"{name}: stray ResourceDictionary outside Themes/"); continue; }
+            ColourLiterals(doc, name, errors);
 
             var localKeys = doc.Descendants().Select(e => e.Attribute(X + "Key")?.Value).Where(k => k is not null).ToHashSet();
             foreach (var el in doc.Descendants())
                 foreach (var attr in el.Attributes())
+                {
                     foreach (Match m in StaticResource().Matches(attr.Value))
                     {
                         resources++;
-                        if (!appKeys.Any(k => k.Key == m.Groups[1].Value) && !localKeys.Contains(m.Groups[1].Value))
-                            errors.Add($"{name}:{Line(el)} StaticResource '{m.Groups[1].Value}' is not defined");
+                        string key = m.Groups[1].Value;
+                        if (themeKeys.Contains(key)) errors.Add($"{name}:{Line(el)} StaticResource '{key}' is a theme key: use DynamicResource so theme switches apply");
+                        else if (!appKeys.Any(k => k.Key == key) && !localKeys.Contains(key))
+                            errors.Add($"{name}:{Line(el)} StaticResource '{key}' is not defined");
                     }
+                    foreach (Match m in DynamicResource().Matches(attr.Value))
+                    {
+                        resources++;
+                        string key = m.Groups[1].Value;
+                        foreach (var (theme, keys) in themes)
+                            if (!keys.ContainsKey(key) && !appKeys.Any(k => k.Key == key) && !localKeys.Contains(key))
+                                errors.Add($"{name}:{Line(el)} DynamicResource '{key}' is not defined by theme {theme}");
+                    }
+                }
 
-            var root = doc.Root!;
+            // Code-behind: dependency properties (for ElementName bindings to the root) and named elements it uses.
+            string behind = File.Exists(file + ".cs") ? File.ReadAllText(file + ".cs") : "";
+            var names = doc.Descendants().Select(e => e.Attribute(X + "Name")?.Value ?? e.Attribute("Name")?.Value).Where(n => n is not null).ToHashSet();
+            string? rootName = root.Attribute(X + "Name")?.Value;
+
             string? design = root.Attribute(D + "DataContext")?.Value;
             var typeName = design is null ? null : Regex.Match(design, @"Type=\w+:(\w+)").Groups[1].Value;
             var rootType = typeName is null ? null : viewModels.GetTypes().FirstOrDefault(t => t.Name == typeName);
-            if (rootType is null) { errors.Add($"{name}: root d:DataContext DesignInstance type not found"); continue; }
+            if (design is not null && rootType is null) { errors.Add($"{name}: root d:DataContext DesignInstance type not found"); continue; }
 
             void Walk(XElement el, Type? context)
             {
@@ -103,6 +222,17 @@ static partial class XamlChecker
                     if (ParseBinding(attr.Value) is not { } b) continue;
                     bindings++;
                     string where = $"{name}:{Line(el)} {el.Name.LocalName}.{attr.Name.LocalName}";
+                    if (b.ElementName is { } target)
+                    {
+                        if (!names.Contains(target)) errors.Add($"{where}: ElementName '{target}' has no x:Name");
+                        else if (target == rootName && root.Attribute(X + "Class") is not null)
+                        {
+                            string first = b.Path.Split('.')[0];
+                            if (first.Length == 0 || !Regex.IsMatch(behind, $@"DependencyProperty\.Register\(\s*nameof\({first}\)|DependencyProperty\.Register\(\s*""{first}"""))
+                                errors.Add($"{where}: '{first}' is not a dependency property registered in {Path.GetFileName(file)}.cs");
+                        }
+                        continue;
+                    }
                     var resolved = Resolve(b, context, rootType, where, errors, out var prop);
                     if (prop is not null && attr.Name.LocalName.EndsWith("Command", StringComparison.Ordinal) && !typeof(ICommand).IsAssignableFrom(prop.PropertyType))
                         errors.Add($"{where}: {b.Path} is not an ICommand");
@@ -111,23 +241,49 @@ static partial class XamlChecker
                         errors.Add($"{where}: two-way binding to read-only {b.Path}");
                     if (attr.Name.LocalName == "ItemsSource") itemType = ElementType(resolved);
                 }
-                if (el.Name.NamespaceName.StartsWith("clr-namespace:Cockpit.Wpf", StringComparison.Ordinal) && !classes.Contains(el.Name.LocalName))
-                    errors.Add($"{name}:{Line(el)} local:{el.Name.LocalName} has no class");
+                if (el.Name.NamespaceName.StartsWith("clr-namespace:Cockpit.Wpf", StringComparison.Ordinal) && !el.Name.LocalName.Contains('.') && !classes.Contains(el.Name.LocalName))
+                    errors.Add($"{name}:{Line(el)} {el.Name.LocalName} has no class in Cockpit.Wpf");
                 foreach (var child in el.Elements()) Walk(child, itemType ?? context);
             }
             Walk(root, rootType);
 
-            // Named elements the code-behind uses.
-            string behind = File.Exists(file + ".cs") ? File.ReadAllText(file + ".cs") : "";
-            var names = doc.Descendants().Select(e => e.Attribute(X + "Name")?.Value).Where(n => n is not null).ToHashSet();
-            foreach (Match m in Regex.Matches(behind, @"\b([A-Z]\w*Box|[A-Z]\w*Grid|[A-Z]\w*List)\.(?:Focus|SelectAll|ScrollIntoView)\("))
-                if (!names.Contains(m.Groups[1].Value)) errors.Add($"{name}.cs uses {m.Groups[1].Value}, which has no x:Name");
-            if (!behind.Contains("InitializeComponent()", StringComparison.Ordinal)) errors.Add($"{name}.cs does not call InitializeComponent()");
+            foreach (Match m in Regex.Matches(behind, @"\b([A-Z]\w*)\.(?:Focus|SelectAll|ScrollIntoView|BeginAnimation|Opacity\b|Angle\b|ScaleX\b|ScaleY\b)"))
+                if (!names.Contains(m.Groups[1].Value) && !IsKnownType(m.Groups[1].Value)) errors.Add($"{name}.cs uses {m.Groups[1].Value}, which has no x:Name");
+            if (root.Attribute(X + "Class") is not null && !behind.Contains("InitializeComponent()", StringComparison.Ordinal)) errors.Add($"{name}.cs does not call InitializeComponent()");
         }
-        return new Report(errors, bindings, resources);
+        return new Report(errors, bindings, resources, themeKeys.Count, files);
     }
 
-    sealed record BindingInfo(string Path, bool AncestorWindow, bool OneWay);
+    /// <summary>Type names that legitimately appear before .BeginAnimation and friends in code-behind.</summary>
+    static bool IsKnownType(string s) => s is "RotateTransform" or "ScaleTransform" or "UIElement" or "Keyboard" or "FocusManager";
+
+    /// <summary>Attribute Style="…" together with &lt;X.Style&gt; (or any property set twice) is a XAML load error.</summary>
+    static void DuplicateProperties(XDocument doc, string name, List<string> errors)
+    {
+        foreach (var el in doc.Descendants())
+        {
+            string local = el.Name.LocalName;
+            if (local.Contains('.')) continue;
+            foreach (var child in el.Elements().Where(c => c.Name.LocalName.StartsWith(local + ".", StringComparison.Ordinal)))
+            {
+                string prop = child.Name.LocalName[(local.Length + 1)..];
+                if (el.Attribute(prop) is not null) errors.Add($"{name}:{Line(el)} {local}.{prop} is set both as an attribute and as a property element");
+            }
+        }
+    }
+
+    static void ColourLiterals(XDocument doc, string name, List<string> errors)
+    {
+        foreach (var el in doc.Descendants())
+            foreach (var attr in el.Attributes())
+            {
+                string v = attr.Value.Trim();
+                if (HexColor().IsMatch(v) || (ColourProperties.Contains(attr.Name.LocalName) && NamedColours.Contains(v)))
+                    errors.Add($"{name}:{Line(el)} colour literal {attr.Name.LocalName}=\"{v}\": use a theme brush (DynamicResource)");
+            }
+    }
+
+    sealed record BindingInfo(string Path, bool AncestorWindow, bool OneWay, string? ElementName);
 
     /// <summary>Parses {Binding ...}; nested markup extensions (Converter={StaticResource X}) are skipped as units.</summary>
     static BindingInfo? ParseBinding(string value)
@@ -146,17 +302,19 @@ static partial class XamlChecker
         if (inner.Length > 0) parts.Add(inner[start..].Trim());
         string path = "";
         bool ancestor = false, oneWay = false;
+        string? element = null;
         foreach (var p in parts)
         {
             if (!p.Contains('=', StringComparison.Ordinal) && path.Length == 0) path = p;
             else if (p.StartsWith("Path=", StringComparison.Ordinal)) path = p[5..];
+            else if (p.StartsWith("ElementName=", StringComparison.Ordinal)) element = p[12..].Trim();
             else if (p.StartsWith("RelativeSource=", StringComparison.Ordinal)) ancestor = p.Contains("AncestorType=Window", StringComparison.Ordinal);
             else if (p is "Mode=OneWay" or "Mode=OneTime") oneWay = true;
         }
-        return new BindingInfo(path, ancestor, oneWay);
+        return new BindingInfo(path, ancestor, oneWay, element);
     }
 
-    static Type? Resolve(BindingInfo b, Type? context, Type rootType, string where, List<string> errors, out PropertyInfo? last)
+    static Type? Resolve(BindingInfo b, Type? context, Type? rootType, string where, List<string> errors, out PropertyInfo? last)
     {
         last = null;
         string path = b.Path;

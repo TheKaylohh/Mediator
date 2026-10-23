@@ -246,7 +246,7 @@ public interface ICockpitRuntime
     Attachment StagePastedImage(byte[] png);
     /// <summary>Forgets a staged attachment that was removed before use (deletes its snapshot).</summary>
     void DiscardAttachment(Attachment attachment);
-    /// <summary>Gives a running job read-only access to an attachment. Audited as "cockpit/attach". False when the job is not running.</summary>
+    /// <summary>Gives a running job read-only access to an attachment. Audited as "cockpit/attach". False when the job is not running or cannot read attachments.</summary>
     Task<bool> AttachToJobAsync(string jobId, Attachment attachment);
 }
 
@@ -293,6 +293,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     public AttachmentStore AttachmentStore { get; }
     internal AttachmentToolProvider Attachments { get; } = new();
 
+    /// <summary>Custom MCP servers from the Connectors tab (V7): every tool Destructive, proxied through the gate.</summary>
+    public Connectors.CustomMcpService CustomMcp { get; }
+
     /// <summary>What restart reconciliation found when this runtime started.</summary>
     public (int NotRun, int Settled, int NeedsUser) Recovery { get; private set; }
 
@@ -337,6 +340,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Tools.Register(Attachments);
         AttachmentStore = new AttachmentStore(options.Paths.AttachmentsDirectory);
         try { AttachmentStore.Prune(); } catch (IOException ex) { options.Log.Warn("Old attachments could not be pruned: " + ex.Message); }
+        CustomMcp = new Connectors.CustomMcpService(options.Paths.CustomMcpFile, Tools, _workerGroup);
+        if (CustomMcp.LoadError is { } mcpError) options.Log.Warn($"{options.Paths.CustomMcpFile} was not loaded ({mcpError}); no custom MCP tools are available.");
         Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log, operations);
         Bus.ToolCallActivity += e =>
         {
@@ -392,10 +397,13 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         }
         if (spec.Attachments.Count > 0) spec = spec with { Prompt = spec.Prompt + AttachmentPromptSuffix(spec.Attachments) };
         bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
-        // Attachment tools are always granted: they are read-only and only see what the user attached to this job,
-        // so a file dropped onto a running job is readable without restarting it.
+        // Attachment tools (read-only, and they only see what the user attached to this job) are granted when the job
+        // starts with attachments, or runs interactively, where the user can drop more while talking to the model.
+        // A headless run cannot take new input, and every other job keeps exactly its action's tool list.
         var builtIns = new List<string> { OperationsToolProvider.StatusTool };
-        builtIns.AddRange(AttachmentToolProvider.Names);
+        if (spec.Attachments.Count > 0 || spec.Launch == LaunchMode.Interactive) builtIns.AddRange(AttachmentToolProvider.Names);
+        // Enabled custom MCP tools (V7). They are Destructive: every call still needs the user's approval.
+        builtIns.AddRange(CustomMcp.EnabledToolNames);
         if (brief) builtIns.Add(JobBriefToolProvider.BriefTool);
         var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes,
             allowMeteredBilling: spec.AllowMeteredBilling, readOnlyRoots: spec.Attachments.Select(a => a.GrantedRoot));
@@ -446,12 +454,14 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     /// <summary>
     /// Adds a read-only root to a running job's grant and lists the attachment for it. Only read access is ever
-    /// added, the grant's tools and approval rules are unchanged, and the change is audited.
+    /// added, the grant's tools and approval rules are unchanged, and the change is audited. False when the job is
+    /// not running, or was not granted the attachment tools (a headless job started without attachments).
     /// </summary>
     public async Task<bool> AttachToJobAsync(string jobId, Attachment attachment)
     {
         if (!_jobs.TryGetValue(jobId, out var job) || job.State is not (JobState.Starting or JobState.Running) || !Registry.TryGet(jobId, out var grant) || grant is null || !Registry.IsCurrent(grant))
             return false;
+        if (!grant.AllowedTools.Contains(AttachmentToolProvider.ReadTool)) return false;
         string root = grant.Paths.AddReadOnlyRoot(attachment.GrantedRoot);
         Attachments.Add(jobId, attachment);
         await Audit.RecordAsync(new AuditEntry(jobId, "cockpit/attach", attachment.Id, ToolRisk.ReadOnly,

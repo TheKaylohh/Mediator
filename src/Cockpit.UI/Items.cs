@@ -124,12 +124,16 @@ public sealed record ActivityItemViewModel(DateTimeOffset At, string JobId, stri
     public string TimeText => At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 }
 
-public enum ContextKind { Folder, File, App }
+public enum ContextKind { Folder, File, App, Attachment, Image }
 
-/// <summary>A context chip under the prompt (Explorer folder, selected files, foreground app). Click to include or exclude.</summary>
+/// <summary>
+/// A context chip under the prompt: Explorer folder, selected files and foreground app (click to include or exclude),
+/// or (V7) something the user dropped, pasted or picked, which has an × to remove it.
+/// </summary>
 public sealed class ContextChipViewModel : ObservableObject
 {
     private bool _isIncluded = true;
+    private string? _sharedWith;
 
     public ContextChipViewModel(ContextKind kind, string label, string value)
     {
@@ -139,12 +143,38 @@ public sealed class ContextChipViewModel : ObservableObject
         ToggleCommand = new RelayCommand(() => IsIncluded = !IsIncluded);
     }
 
+    public ContextChipViewModel(Cockpit.Core.Attachments.Attachment attachment)
+        : this(attachment.Kind == Cockpit.Core.Attachments.AttachmentKind.Image ? ContextKind.Image : ContextKind.Attachment, attachment.Name, attachment.Path)
+    {
+        Attachment = attachment;
+    }
+
     public ContextKind Kind { get; }
     public string Label { get; }
     public string Value { get; }
-    public string KindGlyph => Kind switch { ContextKind.Folder => "", ContextKind.File => "", _ => "" }; // Segoe Fluent Icons
+    /// <summary>Set for dropped, pasted or picked items: staged by the Core, granted read-only to the job.</summary>
+    public Cockpit.Core.Attachments.Attachment? Attachment { get; }
+    public bool IsRemovable => Attachment is not null;
+    public string KindGlyph => Kind switch
+    {
+        ContextKind.Folder => "\uE8B7",
+        ContextKind.File => "\uE8A5",
+        ContextKind.Attachment => Attachment?.Kind == Cockpit.Core.Attachments.AttachmentKind.Folder ? "\uE8B7" : "\uE723",
+        ContextKind.Image => "\uEB9F",
+        _ => "\uE737",
+    }; // Segoe Fluent Icons
     public bool IsIncluded { get => _isIncluded; set => SetProperty(ref _isIncluded, value); }
+    /// <summary>The running job this attachment was also given to (read-only), or null.</summary>
+    public string? SharedWith
+    {
+        get => _sharedWith;
+        internal set { if (SetProperty(ref _sharedWith, value)) OnPropertyChanged(nameof(ToolTipText)); }
+    }
+    public string ToolTipText => Attachment is null ? Value
+        : $"{Attachment.Source}\nRead-only for the job{(SharedWith is null ? "" : $"; also shared with {SharedWith}")}";
     public RelayCommand ToggleCommand { get; }
+    /// <summary>Set by the overlay for removable chips.</summary>
+    public RelayCommand? RemoveCommand { get; internal set; }
 }
 
 /// <summary>

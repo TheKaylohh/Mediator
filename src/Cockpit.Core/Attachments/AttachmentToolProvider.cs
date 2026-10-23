@@ -84,6 +84,8 @@ public sealed class AttachmentToolProvider : IToolProvider
         {
             string target = string.IsNullOrEmpty(rel) ? a.Path : Path.Combine(a.Path, rel);
             var verdict = job.Paths.Check(target, PathAccess.List);
+            if (!job.Paths.Syntax.IsSameOrInside(verdict.FullPath, a.GrantedRoot))
+                return ToolResult.Fail($"'{rel}' is outside the attached folder {a.Name}.");
             if (Directory.Exists(verdict.FullPath))
             {
                 var listed = job.Paths.VerifyExisting(target, PathAccess.List);

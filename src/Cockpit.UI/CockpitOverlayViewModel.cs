@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Cockpit.Core.Attachments;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Context;
 using Cockpit.Core.Jobs;
@@ -37,11 +38,20 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     private readonly Dictionary<string, AiProvider> _jobProviders = new(StringComparer.Ordinal);
     private ApprovalViewModel? _pendingApproval;
     private ActionTileViewModel? _suggestedAction;
+    private readonly ISettingsStore _settingsStore;
+    private CockpitSettings _settings;
+    private string? _fault;
+    private ReactorState _reactorState;
+    private bool _isDragOver;
 
-    public CockpitOverlayViewModel(ICockpitRuntime runtime, IUiDispatcher ui)
+    public const int MaxAttachments = 20;
+
+    public CockpitOverlayViewModel(ICockpitRuntime runtime, IUiDispatcher ui, ISettingsStore? settings = null)
     {
         _runtime = runtime;
         _ui = ui;
+        _settingsStore = settings ?? new MemorySettingsStore();
+        _settings = _settingsStore.Load();
 
         Actions = new ObservableCollection<ActionTileViewModel>(DefaultActions());
         FilteredActions = new ObservableCollection<ActionTileViewModel>(Actions);
@@ -54,6 +64,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         RunActionCommand = new RelayCommand(p => { if (p is ActionTileViewModel tile) _ = RunActionAsync(tile, PromptText); }, p => p is ActionTileViewModel { IsEnabled: true });
         KillAllCommand = new RelayCommand(KillAll, () => Jobs.Any(j => j.IsActive));
         DismissBannerCommand = new RelayCommand(() => BillingBanner = null);
+        CycleThemeCommand = new RelayCommand(CycleTheme);
+        AcknowledgeFaultCommand = new RelayCommand(() => SetFault(null), () => _fault is not null);
+        AttachCommand = new RelayCommand(() => BrowseForAttachmentsRequested?.Invoke());
 
         _runtime.JobChanged += job => _ui.Post(() => OnJobChanged(job));
         _runtime.ToolCallActivity += e => _ui.Post(() =>
@@ -67,7 +80,10 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         });
         _runtime.StreamEvent += (jobId, e) => _ui.Post(() => OnStreamEvent(jobId, e));
         _runtime.BillingAlarm += (jobId, source) => _ui.Post(() =>
-            BillingBanner = $"Job {jobId} authenticated with {source} — that bills per token, not your subscription. It was stopped unless you opted in.");
+        {
+            BillingBanner = $"Job {jobId} authenticated with {source} — that bills per token, not your subscription. It was stopped unless you opted in.";
+            SetFault($"billing: {source}");
+        });
         _runtime.Notice += (_, message) => _ui.Post(() => StatusText = message);
         UpdateSuggestion();
     }
@@ -99,8 +115,21 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         private set { if (SetProperty(ref _isVisible, value) && value) FocusPromptRequested?.Invoke(); }
     }
 
-    /// <summary>0 Actions, 1 Jobs, 2 Activity.</summary>
-    public int SelectedTab { get => _selectedTab; set => SetProperty(ref _selectedTab, value); }
+    /// <summary>0 Actions, 1 Jobs, 2 Activity, 3 Connectors.</summary>
+    public int SelectedTab
+    {
+        get => _selectedTab;
+        set
+        {
+            if (SetProperty(ref _selectedTab, value) && value == ConnectorsTab && Connectors is { IsBusy: false } c) _ = c.RefreshAsync();
+        }
+    }
+    public const int ConnectorsTab = 3;
+
+    /// <summary>The Connectors tab (V7). Set by the host after construction; null in hosts without one.</summary>
+    public ConnectorsViewModel? Connectors { get; set; }
+    /// <summary>The first-run card (V7). Set by the host after construction.</summary>
+    public OnboardingViewModel? Onboarding { get; set; }
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
 
     public string? BillingBanner
@@ -131,6 +160,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             if (!SetProperty(ref _pendingApproval, value)) return;
             OnPropertyChanged(nameof(HasPendingApproval));
             OnPropertyChanged(nameof(QueuedApprovalsText));
+            UpdateReactor();
         }
     }
     public bool HasPendingApproval => PendingApproval is not null;
@@ -152,6 +182,193 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     public RelayCommand RunActionCommand { get; }
     public RelayCommand KillAllCommand { get; }
     public RelayCommand DismissBannerCommand { get; }
+    public RelayCommand CycleThemeCommand { get; }
+    /// <summary>Clicking the orb in the Error state clears it.</summary>
+    public RelayCommand AcknowledgeFaultCommand { get; }
+    /// <summary>The [ + Attach ] button: the view opens a file picker and calls <see cref="AttachPaths"/>.</summary>
+    public RelayCommand AttachCommand { get; }
+
+    // ── Theme (V7) ───────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>The look of the overlay; saved in settings.json. The view swaps its theme dictionary on <see cref="ThemeChanged"/>.</summary>
+    public CockpitTheme CurrentTheme
+    {
+        get => _settings.Theme;
+        set
+        {
+            if (_settings.Theme == value || !Enum.IsDefined(value)) return;
+            UpdateSettings(_settings with { Theme = value });
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ThemeDisplayName));
+            ThemeChanged?.Invoke(value);
+        }
+    }
+
+    public string ThemeDisplayName => ThemeName(CurrentTheme);
+    public static string ThemeName(CockpitTheme t) => t switch
+    {
+        CockpitTheme.HoloHud => "Holo HUD",
+        CockpitTheme.ProDark => "Pro Dark",
+        CockpitTheme.CleanLight => "Clean Light",
+        _ => t.ToString(),
+    };
+    public static IReadOnlyList<CockpitTheme> Themes { get; } = Enum.GetValues<CockpitTheme>();
+
+    public event Action<CockpitTheme>? ThemeChanged;
+
+    /// <summary>The header button: Holo HUD → Pro Dark → Clean Light → Holo HUD.</summary>
+    public void CycleTheme() => CurrentTheme = (CockpitTheme)(((int)CurrentTheme + 1) % Themes.Count);
+
+    public CockpitSettings Settings => _settings;
+
+    /// <summary>Saves settings (theme, hotkey, first run). A save failure is reported, never thrown at the UI.</summary>
+    public void UpdateSettings(CockpitSettings settings)
+    {
+        _settings = settings;
+        try { _settingsStore.Save(settings); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { StatusText = "Settings could not be saved: " + ex.Message; }
+    }
+
+    // ── Reactor orb (V7) ─────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// AwaitingApproval wins (the user must act), then Active (any job running), then Error (the last failure,
+    /// usage limit or billing alarm, until acknowledged or a new job starts), else Idle.
+    /// </summary>
+    public ReactorState ReactorState
+    {
+        get => _reactorState;
+        private set
+        {
+            if (!SetProperty(ref _reactorState, value)) return;
+            OnPropertyChanged(nameof(ReactorCaption));
+        }
+    }
+
+    public string ReactorCaption => ReactorState switch
+    {
+        ReactorState.AwaitingApproval => "AWAITING APPROVAL",
+        ReactorState.Active => ActiveJobCount == 1 ? "ACTIVE · 1 JOB" : $"ACTIVE · {ActiveJobCount} JOBS",
+        ReactorState.Error => "FAULT",
+        _ => "STANDBY",
+    };
+
+    /// <summary>Tooltip: what the orb is showing and why.</summary>
+    public string ReactorDetail => ReactorState switch
+    {
+        ReactorState.AwaitingApproval => "A job is waiting for your approval.",
+        ReactorState.Active => $"{ActiveJobCount} job(s) running.",
+        ReactorState.Error => $"{_fault} — click to clear.",
+        _ => "Ready.",
+    };
+
+    public string? Fault => _fault;
+
+    private void SetFault(string? fault)
+    {
+        _fault = fault;
+        OnPropertyChanged(nameof(Fault));
+        AcknowledgeFaultCommand.Refresh();
+        UpdateReactor();
+    }
+
+    private void UpdateReactor()
+    {
+        ReactorState = HasPendingApproval ? ReactorState.AwaitingApproval
+            : ActiveJobCount > 0 ? ReactorState.Active
+            : _fault is not null ? ReactorState.Error
+            : ReactorState.Idle;
+        OnPropertyChanged(nameof(ReactorCaption));
+        OnPropertyChanged(nameof(ReactorDetail));
+    }
+
+    // ── Attachments (V7): drag-drop, Ctrl+V, [ + Attach ] ─────────────────────────────────────────────
+
+    /// <summary>The view sets this while files are dragged over the window (shows the drop overlay).</summary>
+    public bool IsDragOver { get => _isDragOver; set => SetProperty(ref _isDragOver, value); }
+
+    public event Action? BrowseForAttachmentsRequested;
+
+    public IEnumerable<ContextChipViewModel> AttachmentChips => ContextChips.Where(c => c.Attachment is not null);
+
+    /// <summary>
+    /// Dropped, pasted or picked paths. Each is checked and staged by the Core (files are copied, folders granted
+    /// read-only; links, devices and system folders refused), becomes a removable chip, and is given read-only to
+    /// the next job, and to the running job when exactly one is running. Returns how many were attached.
+    /// </summary>
+    public async Task<int> AttachPathsAsync(IEnumerable<string> paths)
+    {
+        int added = 0;
+        var problems = new List<string>();
+        var notes = new List<string>();
+        foreach (var path in paths.Distinct(StringComparer.Ordinal))
+        {
+            if (AttachmentChips.Count() >= MaxAttachments) { problems.Add($"at most {MaxAttachments} attachments"); break; }
+            if (AttachmentChips.Any(c => string.Equals(c.Attachment!.Source, Path.GetFullPath(path), StringComparison.Ordinal))) continue;
+            try
+            {
+                var a = _runtime.StageAttachment(path);
+                if (await AddAttachmentChipAsync(a).ConfigureAwait(true) is { } note) notes.Add(note);
+                added++;
+            }
+            catch (Exception ex) when (ex is AttachmentException or ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                problems.Add(ex.Message);
+            }
+        }
+        StatusText = problems.Count > 0
+            ? (added > 0 ? $"Attached {added}; " : "") + "not attached: " + string.Join("; ", problems.Take(3))
+            : added > 0 ? $"Attached {added} item(s), read-only." + (notes.Count > 0 ? " " + notes[0] : "") : StatusText;
+        return added;
+    }
+
+    /// <summary>Synchronous wrapper for the view's drop handler.</summary>
+    public void AttachPaths(IEnumerable<string> paths) => _ = AttachPathsAsync(paths.ToList());
+
+    /// <summary>A screenshot from the clipboard (PNG bytes, encoded by the view). Becomes an image chip a vision model can read.</summary>
+    public async Task<bool> PasteImageAsync(byte[] png)
+    {
+        if (AttachmentChips.Count() >= MaxAttachments) { StatusText = $"At most {MaxAttachments} attachments."; return false; }
+        try
+        {
+            var a = _runtime.StagePastedImage(png);
+            string? note = await AddAttachmentChipAsync(a).ConfigureAwait(true);
+            StatusText = $"Pasted image attached ({png.Length / 1024} KiB)." + (note is null ? "" : " " + note);
+            return true;
+        }
+        catch (Exception ex) when (ex is AttachmentException or IOException or UnauthorizedAccessException)
+        {
+            StatusText = "Image not attached: " + ex.Message;
+            return false;
+        }
+    }
+
+    public void PasteImage(byte[] png) => _ = PasteImageAsync(png);
+
+    /// <summary>Adds the chip and offers it to the one running job. Returns a note for the status line, or null.</summary>
+    private async Task<string?> AddAttachmentChipAsync(Attachment a)
+    {
+        var chip = new ContextChipViewModel(a);
+        chip.RemoveCommand = new RelayCommand(() => RemoveAttachment(chip));
+        ContextChips.Add(chip);
+        OnPropertyChanged(nameof(AttachmentChips));
+        var active = Jobs.Where(j => j.IsActive).ToList();
+        if (active.Count != 1) return null;
+        if (await _runtime.AttachToJobAsync(active[0].JobId, a).ConfigureAwait(true))
+        {
+            chip.SharedWith = active[0].Title;
+            return $"Also shared with {active[0].Title}.";
+        }
+        return $"{active[0].Title} cannot take new attachments (it runs headless); it goes to the next job.";
+    }
+
+    /// <summary>The chip's ×. A snapshot nobody received is deleted; one a job received stays until pruned (the job may be reading it).</summary>
+    public void RemoveAttachment(ContextChipViewModel chip)
+    {
+        if (chip.Attachment is null || !ContextChips.Remove(chip)) return;
+        if (chip.SharedWith is null) _runtime.DiscardAttachment(chip.Attachment);
+        OnPropertyChanged(nameof(AttachmentChips));
+    }
 
     /// <summary>The view focuses and selects the prompt box.</summary>
     public event Action? FocusPromptRequested;
@@ -172,6 +389,35 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     {
         IsVisible = true;
         _ = RefreshProvidersAsync();
+    }
+
+    private bool _isPinned;
+    private int _modalDepth;
+
+    /// <summary>
+    /// Pinned: the panel stays up when another window is clicked, so files can be dragged in from Explorer.
+    /// Esc and the hide button still hide it.
+    /// </summary>
+    public bool IsPinned { get => _isPinned; set => SetProperty(ref _isPinned, value); }
+
+    /// <summary>The view calls this around its own dialogs (file picker), which deactivate the panel without meaning "hide".</summary>
+    public IDisposable BeginModal()
+    {
+        _modalDepth++;
+        return new ModalScope(this);
+    }
+
+    private sealed class ModalScope(CockpitOverlayViewModel vm) : IDisposable
+    {
+        private bool _done;
+        public void Dispose() { if (!_done) { _done = true; vm._modalDepth--; } }
+    }
+
+    /// <summary>Another window was activated: hide unless pinned, a dialog of ours is open, or an approval is pending.</summary>
+    public void OnDeactivated()
+    {
+        if (IsPinned || _modalDepth > 0) return;
+        Hide();
     }
 
     /// <summary>Deactivation or Esc. An open approval keeps the panel up: it must be answered, denied or time out.</summary>
@@ -307,12 +553,16 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             return null;
         }
         var launch = UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless;
-        JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription };
+        var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
+        JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList() };
         try
         {
             var job = await _runtime.StartJobAsync(spec).ConfigureAwait(true);
             _ui.Post(() =>
             {
+                // The job owns these now: the chips go, the staged copies stay for it to read.
+                foreach (var c in attached) ContextChips.Remove(c);
+                OnPropertyChanged(nameof(AttachmentChips));
                 OnJobChanged(job);
                 StatusText = $"Started: {spec.Title}";
                 PromptText = "";
@@ -383,6 +633,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         {
             item = new JobItemViewModel(job, j => _runtime.KillJob(j.JobId, "killed from the overlay"));
             Jobs.Insert(0, item);
+            if (item.IsActive) SetFault(null); // a new job clears the last fault
         }
         item.Update(job);
         if (!item.IsActive)
@@ -390,10 +641,18 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             // Any approval still showing for an ended job can no longer matter.
             foreach (var card in _approvalQueue.Where(c => c.JobId == job.JobId).ToList()) card.Cancel();
             if (job.State == JobState.Failed) StatusText = $"{job.Spec.Title} failed: {job.Detail}";
+            if (job.State == JobState.Failed || job.Outcome is RunOutcome.AuthFailed or RunOutcome.RateLimited)
+                SetFault(job.Outcome switch
+                {
+                    RunOutcome.RateLimited => $"{job.Spec.Title}: usage limit reached",
+                    RunOutcome.AuthFailed => $"{job.Spec.Title}: the CLI is not signed in",
+                    _ => $"{job.Spec.Title} failed: {job.Detail}",
+                });
         }
         OnPropertyChanged(nameof(ActiveJobCount));
         OnPropertyChanged(nameof(JobsTabHeader));
         KillAllCommand.Refresh();
+        UpdateReactor();
     }
 
     /// <summary>The red button: kills every active job. Returns at once; processes die and grants are revoked synchronously.</summary>
@@ -430,6 +689,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
                 var pill = Providers.First(p => p.Id == limited);
                 pill.IsCoolingDown = true;
                 pill.Status = limit.ResetsAt is { } at ? "limit until " + at.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture) : "rate limited";
+                SetFault($"{pill.Name}: {pill.Status}");
                 break;
         }
     }

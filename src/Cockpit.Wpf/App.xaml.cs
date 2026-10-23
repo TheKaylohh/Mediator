@@ -1,15 +1,19 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
+using Cockpit.Core.Connectors;
 using Cockpit.Core.Context;
 using Cockpit.Core.Diagnostics;
 using Cockpit.Core.Runtime;
+using Cockpit.Core.Tools;
 using Cockpit.UI;
 
 namespace Cockpit.Wpf;
 
 /// <summary>
 /// Composition root for the overlay: one CockpitRuntime (bus on \\.\pipe\ai-cockpit-bus), the ViewModel as its
-/// approval prompt, the panel, the tray icon and the global hotkey. Single instance per user session.
+/// approval prompt, the panel, the tray icon, the global hotkey, the theme, the Connectors tab and the first-run
+/// card. Single instance per user session.
 /// </summary>
 public partial class App : Application
 {
@@ -43,8 +47,20 @@ public partial class App : Application
             return;
         }
 
-        var vm = new CockpitOverlayViewModel(_runtime, new WpfDispatcher(Dispatcher));
+        var dispatcher = new WpfDispatcher(Dispatcher);
+        var settings = new JsonSettingsStore(_runtime.Paths.SettingsFile);
+        var vm = new CockpitOverlayViewModel(_runtime, dispatcher, settings);
         _runtime.Approvals.Target = vm;
+
+        // Theme before the first frame; later changes come from the header button or the first-run card.
+        ThemeManager.Apply(vm.CurrentTheme);
+        vm.ThemeChanged += ThemeManager.Apply;
+
+        var probe = new ConnectorProbe(DefaultProcessRunner.Instance);
+        vm.Connectors = new ConnectorsViewModel(probe, _runtime, _runtime.CustomMcp, dispatcher);
+        var onboarding = new OnboardingViewModel(probe, new StartupRegistration(), vm);
+        vm.Onboarding = onboarding;
+
         var window = new MainWindow(vm);
         MainWindow = window;
 
@@ -60,16 +76,27 @@ public partial class App : Application
         {
             if (!window.IsActive) _tray?.Notify("Approval needed", vm.PendingApproval?.Title ?? "A job is waiting for you.");
         };
+        if (settings.LoadError is { } settingsError)
+            _tray.Notify("Settings reset", $"settings.json could not be read ({settingsError}); defaults are used and the old file was kept as settings.json.bad.");
 
         _hotkey = new HotkeyManager();
         _hotkey.Pressed += () => vm.OnHotkey(CaptureContext());
+        RegisterHotkey(HotkeyGesture.TryParse(vm.Settings.Hotkey, out var gesture, out _) ? gesture : HotkeyGesture.Default);
+        onboarding.HotkeyChanged += RegisterHotkey;
+
+        // First launch, or neither CLI found: open the setup card.
+        if (await onboarding.StartAsync()) vm.Show();
+    }
+
+    private void RegisterHotkey(HotkeyGesture gesture)
+    {
         try
         {
-            _hotkey.Register();
+            _hotkey?.Register((uint)gesture.Modifiers, gesture.VirtualKey);
         }
         catch (Win32Exception)
         {
-            _tray.Notify("Hotkey unavailable", "Another program owns Ctrl+Shift+Space. Use the tray icon to open the Cockpit.");
+            _tray?.Notify("Hotkey unavailable", $"Another program owns {gesture}. Pick another in the setup card, or use the tray icon.");
         }
     }
 

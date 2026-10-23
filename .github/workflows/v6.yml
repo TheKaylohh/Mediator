@@ -74,6 +74,23 @@ jobs:
           dotnet publish src/Cockpit.Bridge -c Release -o dist
           ./dist/cockpit.exe doctor --json
 
+  windows-release-package:
+    # V7: the first real WPF compile (themes, orb, Connectors tab, first-run card) and the full package, with the
+    # bridge as Native AOT (windows-latest has the MSVC tools). The XAML is otherwise only checked offline.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - name: Release package (dist/AiCockpit)
+        shell: pwsh
+        run: ./scripts/publish-release.ps1 -SkipDoctor
+      - name: Package smoke test
+        shell: pwsh
+        run: ./dist/AiCockpit/cockpit.exe doctor --json
+      - uses: actions/upload-artifact@v4
+        with: { name: AiCockpit-win-x64, path: dist/AiCockpit }
+
   solidworks-integration:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.licensed }}
     runs-on: [self-hosted, windows, solidworks]

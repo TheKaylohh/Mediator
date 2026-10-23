@@ -38,21 +38,30 @@ public sealed class BridgeMcpClient : IAsyncDisposable
     {
         _process = process;
         _stdin = process.StandardInput.BaseStream;
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (_stderr) _stderr.AppendLine(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (_stderr) if (_stderr.Length < 64 * 1024) _stderr.AppendLine(e.Data); };
         process.BeginErrorReadLine();
         _reader = Task.Run(ReadLoopAsync);
     }
 
-    public static async Task<BridgeMcpClient> StartAsync(ComponentCommand bridge, IEnumerable<string> bridgeArguments, ChildProcessJob? job,
+    public static Task<BridgeMcpClient> StartAsync(ComponentCommand bridge, IEnumerable<string> bridgeArguments, ChildProcessJob? job,
         string clientName = "cockpit-cli", CancellationToken ct = default, IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = bridge.ToStartInfo(bridgeArguments);
         foreach (var (k, v) in environment ?? new Dictionary<string, string>()) psi.Environment[k] = v;
+        return StartAsync(psi, job, clientName, TimeSpan.FromSeconds(20), ct);
+    }
+
+    /// <summary>Starts any stdio MCP server (V7: custom servers from the Connectors tab) and initializes it.</summary>
+    public static async Task<BridgeMcpClient> StartAsync(ProcessStartInfo psi, ChildProcessJob? job, string clientName, TimeSpan initializeTimeout, CancellationToken ct = default)
+    {
+        psi.UseShellExecute = false;
         psi.RedirectStandardInput = psi.RedirectStandardOutput = psi.RedirectStandardError = true;
         psi.StandardOutputEncoding = Utf8.NoBom;
         psi.StandardErrorEncoding = Utf8.NoBom;
         psi.CreateNoWindow = true;
-        var process = Process.Start(psi) ?? throw new McpClientException($"Could not start {bridge.Display}.");
+        Process process;
+        try { process = Process.Start(psi) ?? throw new McpClientException($"Could not start {psi.FileName}."); }
+        catch (System.ComponentModel.Win32Exception ex) { throw new McpClientException($"Could not start {psi.FileName}: {ex.Message}"); }
         job?.Assign(process);
         var client = new BridgeMcpClient(process);
         try
@@ -62,7 +71,7 @@ public sealed class BridgeMcpClient : IAsyncDisposable
                 ["protocolVersion"] = "2025-06-18",
                 ["capabilities"] = new JsonObject(),
                 ["clientInfo"] = new JsonObject { ["name"] = clientName, ["version"] = "4.0.0" },
-            }, TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
+            }, initializeTimeout, ct).ConfigureAwait(false);
             if (init["error"] is JsonObject err) throw new McpClientException($"initialize failed: {err["message"]}");
             await client.NotifyAsync("notifications/initialized").ConfigureAwait(false);
             return client;
@@ -72,6 +81,14 @@ public sealed class BridgeMcpClient : IAsyncDisposable
             await client.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>The full tools/list entries (name, description, inputSchema).</summary>
+    public async Task<JsonArray> ListToolDefinitionsAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        var reply = await RequestAsync("tools/list", new JsonObject(), timeout, ct).ConfigureAwait(false);
+        if (reply["error"] is JsonObject err) throw new McpClientException($"tools/list failed: {err["message"]}");
+        return reply["result"]?["tools"]?.DeepClone() as JsonArray ?? [];
     }
 
     public async Task<IReadOnlyList<string>> ListToolsAsync(CancellationToken ct = default)
