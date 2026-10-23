@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using Cockpit.Core.Security;
 using Microsoft.Data.Sqlite;
 
 namespace Cockpit.Core.Files;
@@ -21,6 +23,17 @@ public sealed record BatchStatus(string BatchId, string JobId, string Status, st
 public sealed class JournalException : Exception
 {
     public JournalException(string message) : base(message) { }
+    public JournalException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>
+/// Test-only hooks. <see cref="FaultPoint"/> is called at each crash boundary of the state machine with the
+/// boundary name (see <see cref="FileJournalService.Boundaries"/>); a test makes it kill the process. Never set
+/// in production code.
+/// </summary>
+public sealed class JournalOptions
+{
+    public Action<string>? FaultPoint { get; init; }
 }
 
 /// <summary>
@@ -35,14 +48,33 @@ public sealed class JournalException : Exception
 ///  - Rollback undoes completed operations in reverse order and refuses to overwrite: if a file changed or its
 ///    original path is now occupied, that operation is reported as a conflict and left alone.
 /// A batch as a whole cannot be atomic on a file system; it is per-file atomic, resumable and idempotent.
+///
+/// V6 additions:
+///  - Every path is authorized by a <see cref="PathAuthorizer"/> built from the roots recorded with the batch, at
+///    plan time and again for every file at execute and rollback time. Renames are kernel-checked on Linux
+///    (renameat2 RENAME_NOREPLACE beneath the root) and handle-verified on Windows.
+///  - A file whose size or timestamp changed between approval and execution is skipped, not moved.
+///  - One process at a time: the journal holds an exclusive lock file next to the database.
+///  - A batch left 'executing' or 'rolling_back' (crash, or a journal write that failed) is reconciled before it
+///    is touched again; it is never resumed blindly.
+/// State machine and crash boundaries: docs/v6/OPERATION_RECOVERY.md.
 /// </summary>
 public sealed class FileJournalService : IAsyncDisposable
 {
     public const int MaxOpsPerBatch = 50_000;
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
+    /// <summary>Crash boundaries, in execution order. Fault-injection tests kill the process at each one.</summary>
+    public static readonly IReadOnlyList<string> Boundaries =
+    [
+        "plan.before_commit", "execute.after_status", "mkdir.after_create", "move.after_fingerprint",
+        "move.after_rename", "execute.before_final_status", "rollback.after_status", "undo.after_rename",
+    ];
+
     private readonly SqliteConnection _conn;
     private readonly ProtectedPathPolicy _policy;
+    private readonly JournalOptions _options;
+    private readonly FileStream _lock;
     private readonly SemaphoreSlim _gate = new(1, 1); // one batch operation at a time per journal
 
     public const string Schema = """
@@ -81,59 +113,113 @@ public sealed class FileJournalService : IAsyncDisposable
         CREATE INDEX IF NOT EXISTS ix_op_state    ON op(batch_id, state);
         """;
 
-    private FileJournalService(SqliteConnection conn, ProtectedPathPolicy policy)
+    private FileJournalService(SqliteConnection conn, ProtectedPathPolicy policy, JournalOptions options, FileStream lockFile)
     {
         _conn = conn;
         _policy = policy;
+        _options = options;
+        _lock = lockFile;
     }
 
-    public static async Task<FileJournalService> OpenAsync(string databasePath, ProtectedPathPolicy policy, CancellationToken ct = default)
+    private void Fault(string boundary) => _options.FaultPoint?.Invoke(boundary);
+
+    public static async Task<FileJournalService> OpenAsync(string databasePath, ProtectedPathPolicy policy, CancellationToken ct = default) =>
+        await OpenAsync(databasePath, policy, new JournalOptions(), ct).ConfigureAwait(false);
+
+    public static async Task<FileJournalService> OpenAsync(string databasePath, ProtectedPathPolicy policy, JournalOptions options, CancellationToken ct = default)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(databasePath))!);
-        var conn = new SqliteConnection($"Data Source={databasePath}");
-        await conn.OpenAsync(ct).ConfigureAwait(false);
-        using (var cmd = conn.CreateCommand())
+        string full = Path.GetFullPath(databasePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        FileStream lockFile;
+        try
         {
-            cmd.CommandText = Schema;
+            // Exclusive for the life of the service: a second Cockpit process (the CLI while the overlay runs, say)
+            // must not interleave its own state transitions with ours.
+            lockFile = new FileStream(full + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException ex)
+        {
+            throw new JournalException($"The file journal {full} is in use by another Cockpit process. Close it and try again.", ex);
+        }
+        try
+        {
+            var conn = new SqliteConnection($"Data Source={full}");
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = Schema;
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+            await MigrateAsync(conn, ct).ConfigureAwait(false);
+            var journal = new FileJournalService(conn, policy, options, lockFile);
+            await journal.RecoverAsync(ct).ConfigureAwait(false);
+            return journal;
+        }
+        catch
+        {
+            await lockFile.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>V6 columns, added in place to a V5 database.</summary>
+    private static async Task MigrateAsync(SqliteConnection conn, CancellationToken ct)
+    {
+        async Task<bool> HasColumn(string table, string column)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $c;";
+            cmd.Parameters.AddWithValue("$c", column);
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture) > 0;
+        }
+        async Task Exec(string sql)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
-        var journal = new FileJournalService(conn, policy);
-        await journal.RecoverAsync(ct).ConfigureAwait(false);
-        return journal;
+        if (!await HasColumn("batch", "roots_json").ConfigureAwait(false)) await Exec("ALTER TABLE batch ADD COLUMN roots_json TEXT;").ConfigureAwait(false);
+        if (!await HasColumn("op", "plan_mtime_ticks").ConfigureAwait(false)) await Exec("ALTER TABLE op ADD COLUMN plan_mtime_ticks INTEGER;").ConfigureAwait(false);
+    }
+
+    /// <summary>The authorizer for a batch, rebuilt from the roots recorded when it was planned (fail-closed if they are gone).</summary>
+    private async Task<PathAuthorizer> AuthorizerForAsync(string batchId, CancellationToken ct)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT roots_json FROM batch WHERE batch_id = $b;";
+        cmd.Parameters.AddWithValue("$b", batchId);
+        var json = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+        if (json is null) throw new JournalException($"Batch {batchId} was planned by an older version without recorded folder roots; plan it again.");
+        var roots = JsonSerializer.Deserialize<string[]>(json) ?? [];
+        try { return new PathAuthorizer(roots); }
+        catch (ArgumentException ex) { throw new JournalException($"A folder this batch was planned for is no longer usable: {ex.Message}"); }
     }
 
     // ── Plan ──────────────────────────────────────────────────────────────────────────────────────────
 
-    /// <param name="allowedRoots">The job's folder roots (full paths ending in a separator). Source and destination must be inside.</param>
-    public async Task<PlanResult> PlanAsync(string jobId, IReadOnlyList<MoveRequest> moves, IReadOnlyList<string> allowedRoots,
+    /// <param name="paths">The job's path authorizer. Source and destination must both pass it.</param>
+    public async Task<PlanResult> PlanAsync(string jobId, IReadOnlyList<MoveRequest> moves, PathAuthorizer paths,
         string? note, CancellationToken ct)
     {
         if (moves.Count > MaxOpsPerBatch) throw new JournalException($"A batch may hold at most {MaxOpsPerBatch} moves.");
         _policy.ClearCache();
 
         var rejected = new List<RejectedMove>();
-        var accepted = new List<(string Src, string Dst, long Size)>();
+        var accepted = new List<(string Src, string Dst, long Size, long Mtime)>();
         var dstSeen = new HashSet<string>(PathComparer);
         var srcSeen = new HashSet<string>(PathComparer);
 
         foreach (var m in moves)
         {
             ct.ThrowIfCancellationRequested();
-            string src, dst;
-            try
-            {
-                src = Path.GetFullPath(m.From);
-                dst = Path.GetFullPath(m.To);
-            }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-            {
-                rejected.Add(new RejectedMove(m.From, m.To, $"invalid path: {ex.Message}"));
-                continue;
-            }
+            var sv = paths.Check(m.From, PathAccess.Modify);
+            var dv = paths.Check(m.To, PathAccess.CreateFile);
+            string src = sv.FullPath, dst = dv.FullPath;
 
             string? reason =
-                !InsideRoots(src, allowedRoots) ? "source is outside the job's allowed folders" :
-                !InsideRoots(dst, allowedRoots) ? "destination is outside the job's allowed folders" :
+                !sv.Allowed ? "source: " + sv.Message :
+                !dv.Allowed ? "destination: " + (dv.Code == "exists" ? "destination already exists (the journal never overwrites)" : dv.Message) :
+                !File.Exists(src) ? "source is not a file" :
                 PathComparer.Equals(src, dst) ? "source and destination are the same" :
                 !SameVolume(src, dst) ? "different drive: cross-volume moves are copy+delete and are refused" :
                 File.Exists(dst) || Directory.Exists(dst) ? "destination already exists (the journal never overwrites)" :
@@ -148,7 +234,8 @@ public sealed class FileJournalService : IAsyncDisposable
                 rejected.Add(new RejectedMove(src, dst, reason));
                 continue;
             }
-            accepted.Add((src, dst, new FileInfo(src).Length));
+            var fi = new FileInfo(src);
+            accepted.Add((src, dst, fi.Length, fi.LastWriteTimeUtc.Ticks));
         }
 
         // A destination that is also some source in the batch would make order matter; refuse such chains.
@@ -162,6 +249,7 @@ public sealed class FileJournalService : IAsyncDisposable
 
         // Folders to create, parent first, each recorded so rollback can remove it if it is still empty.
         var ops = new List<PlannedOp>();
+        var mtimes = new Dictionary<int, long>();
         var created = new HashSet<string>(PathComparer);
         int seq = 0;
         foreach (var a in accepted)
@@ -169,6 +257,7 @@ public sealed class FileJournalService : IAsyncDisposable
             foreach (var dir in MissingAncestors(Path.GetDirectoryName(a.Dst)!))
                 if (created.Add(dir)) ops.Add(new PlannedOp(++seq, "mkdir", null, dir, null));
             ops.Add(new PlannedOp(++seq, "move", a.Src, a.Dst, a.Size));
+            mtimes[seq] = a.Mtime;
         }
 
         string batchId = $"b{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..28];
@@ -181,7 +270,8 @@ public sealed class FileJournalService : IAsyncDisposable
             using (var cmd = _conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "INSERT INTO batch (batch_id, job_id, created_utc, status, note, op_count, total_bytes) VALUES ($b, $j, $t, 'planned', $n, $c, $bytes);";
+                cmd.CommandText = "INSERT INTO batch (batch_id, job_id, created_utc, status, note, op_count, total_bytes, roots_json) VALUES ($b, $j, $t, 'planned', $n, $c, $bytes, $roots);";
+                cmd.Parameters.AddWithValue("$roots", JsonSerializer.Serialize(paths.Roots));
                 cmd.Parameters.AddWithValue("$b", batchId);
                 cmd.Parameters.AddWithValue("$j", jobId);
                 cmd.Parameters.AddWithValue("$t", Now());
@@ -194,7 +284,8 @@ public sealed class FileJournalService : IAsyncDisposable
             {
                 using var cmd = _conn.CreateCommand();
                 cmd.Transaction = tx;
-                cmd.CommandText = "INSERT INTO op (batch_id, seq, kind, src_path, dst_path, size_bytes, state) VALUES ($b, $s, $k, $src, $dst, $size, 'pending');";
+                cmd.CommandText = "INSERT INTO op (batch_id, seq, kind, src_path, dst_path, size_bytes, plan_mtime_ticks, state) VALUES ($b, $s, $k, $src, $dst, $size, $pmt, 'pending');";
+                cmd.Parameters.AddWithValue("$pmt", mtimes.TryGetValue(op.Seq, out long pm) ? pm : DBNull.Value);
                 cmd.Parameters.AddWithValue("$b", batchId);
                 cmd.Parameters.AddWithValue("$s", op.Seq);
                 cmd.Parameters.AddWithValue("$k", op.Kind);
@@ -203,6 +294,7 @@ public sealed class FileJournalService : IAsyncDisposable
                 cmd.Parameters.AddWithValue("$size", (object?)op.SizeBytes ?? DBNull.Value);
                 await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
+            Fault("plan.before_commit");
             tx.Commit();
         }
         finally
@@ -221,44 +313,70 @@ public sealed class FileJournalService : IAsyncDisposable
         try
         {
             string status = await GetOwnedStatusAsync(batchId, jobId, ct).ConfigureAwait(false);
+            if (status is "executing" or "rolling_back")
+            {
+                // We hold the gate and the process lock, so nothing is running this batch: the state is stale
+                // (a crash, or a journal write that failed). Reconcile from the file system before going on.
+                status = await ReconcileBatchAsync(batchId, status, ct).ConfigureAwait(false);
+            }
             if (status is not ("planned" or "partially_committed"))
                 throw new JournalException($"Batch {batchId} is '{status}' and cannot be executed.");
+            var paths = await AuthorizerForAsync(batchId, ct).ConfigureAwait(false);
             await SetStatusAsync(batchId, "executing").ConfigureAwait(false);
+            Fault("execute.after_status");
             _policy.ClearCache();
 
             var errors = new List<string>();
             int processed = 0;
-            foreach (var op in await LoadOpsAsync(batchId, "pending", descending: false, ct).ConfigureAwait(false))
+            try
             {
-                if (ct.IsCancellationRequested) break; // stop between files, never inside one
-                try
+                foreach (var op in await LoadOpsAsync(batchId, "pending", descending: false, ct).ConfigureAwait(false))
                 {
-                    if (op.Kind == "mkdir")
+                    if (ct.IsCancellationRequested) break; // stop between files, never inside one
+                    try
                     {
-                        if (Directory.Exists(op.Dst))
+                        if (op.Kind == "mkdir")
                         {
-                            // Someone else created it since planning: not ours, so rollback must not remove it.
-                            await SetOpStateAsync(batchId, op.Seq, "skipped", "folder already existed").ConfigureAwait(false);
+                            if (Directory.Exists(op.Dst))
+                            {
+                                // Someone else created it since planning: not ours, so rollback must not remove it.
+                                await SetOpStateAsync(batchId, op.Seq, "skipped", "folder already existed").ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                paths.EnsureDirectory(op.Dst);
+                                Fault("mkdir.after_create");
+                                await SetOpStateAsync(batchId, op.Seq, "done", null).ConfigureAwait(false);
+                            }
                         }
                         else
                         {
-                            Directory.CreateDirectory(op.Dst);
-                            await SetOpStateAsync(batchId, op.Seq, "done", null).ConfigureAwait(false);
+                            await ExecuteMoveAsync(batchId, op, paths, ct).ConfigureAwait(false);
                         }
                     }
-                    else
+                    catch (SkipException skip)
                     {
-                        await ExecuteMoveAsync(batchId, op, ct).ConfigureAwait(false);
+                        errors.Add($"{op.Src}: {skip.Message}");
+                        await SetOpStateAsync(batchId, op.Seq, "skipped", skip.Message).ConfigureAwait(false);
                     }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JournalException)
+                    {
+                        errors.Add($"{op.Src ?? op.Dst}: {ex.Message}");
+                        await SetOpStateAsync(batchId, op.Seq, "failed", ex.Message).ConfigureAwait(false);
+                    }
+                    progress?.Report(++processed);
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JournalException)
-                {
-                    errors.Add($"{op.Src ?? op.Dst}: {ex.Message}");
-                    await SetOpStateAsync(batchId, op.Seq, "failed", ex.Message).ConfigureAwait(false);
-                }
-                progress?.Report(++processed);
+            }
+            catch (SqliteException ex)
+            {
+                // The journal itself cannot be written (disk full, I/O error). Stop at once: continuing would move
+                // files the journal cannot record. The batch stays 'executing' on disk and is reconciled from the
+                // file system on the next attempt or the next start.
+                throw new JournalException($"The file journal could not record progress ({ex.Message}). No further files were moved; " +
+                    "the batch will be reconciled from the disk before it is touched again.", ex);
             }
 
+            Fault("execute.before_final_status");
             var counts = await CountStatesAsync(batchId).ConfigureAwait(false);
             string final = counts.GetValueOrDefault("pending") == 0 && counts.GetValueOrDefault("failed") == 0 ? "committed" : "partially_committed";
             await SetStatusAsync(batchId, final).ConfigureAwait(false);
@@ -271,13 +389,24 @@ public sealed class FileJournalService : IAsyncDisposable
         }
     }
 
-    private async Task ExecuteMoveAsync(string batchId, OpRow op, CancellationToken ct)
+    private sealed class SkipException(string message) : Exception(message);
+
+    private async Task ExecuteMoveAsync(string batchId, OpRow op, PathAuthorizer paths, CancellationToken ct)
     {
         string src = op.Src!;
         // Re-validate at execution time: the file system may have changed since planning.
+        var sv = paths.Check(src, PathAccess.Modify);
+        if (!sv.Allowed) throw new JournalException("no longer movable: " + sv.Message);
+        var dv = paths.Check(op.Dst, PathAccess.CreateFile);
+        if (!dv.Allowed) throw new JournalException(dv.Code == "exists" ? "destination now exists" : "destination: " + dv.Message);
         if (_policy.CheckSource(src) is string reason) throw new JournalException($"no longer movable: {reason}");
-        if (File.Exists(op.Dst) || Directory.Exists(op.Dst)) throw new JournalException("destination now exists");
         if (!SameVolume(src, op.Dst)) throw new JournalException("cross-volume move refused");
+
+        // The user approved moving the file as it was when planned. If it changed since, it is not the approved file.
+        var info = new FileInfo(src);
+        if (op.SizeBytes is long plannedSize && op.PlanMtimeTicks is long plannedMtime
+            && (info.Length != plannedSize || info.LastWriteTimeUtc.Ticks != plannedMtime))
+            throw new SkipException("changed since the move was approved (size or timestamp differs); not moved");
 
         var fp = await FileFingerprint.ComputeAsync(src, ct).ConfigureAwait(false);
 
@@ -292,8 +421,10 @@ public sealed class FileJournalService : IAsyncDisposable
             cmd.Parameters.AddWithValue("$s", op.Seq);
             await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
         }
+        Fault("move.after_fingerprint");
 
-        File.Move(src, op.Dst, overwrite: false); // same volume: an atomic rename
+        paths.MoveNoReplace(src, op.Dst); // same volume: an atomic, no-overwrite rename
+        Fault("move.after_rename");
         await SetOpStateAsync(batchId, op.Seq, "done", null).ConfigureAwait(false);
     }
 
@@ -305,16 +436,20 @@ public sealed class FileJournalService : IAsyncDisposable
         try
         {
             string status = await GetOwnedStatusAsync(batchId, jobId, ct).ConfigureAwait(false);
+            if (status is "executing" or "rolling_back") status = await ReconcileBatchAsync(batchId, status, ct).ConfigureAwait(false);
             if (status is not ("committed" or "partially_committed" or "partially_rolled_back"))
                 throw new JournalException($"Batch {batchId} is '{status}'; only executed batches can be rolled back.");
+            var paths = await AuthorizerForAsync(batchId, ct).ConfigureAwait(false);
             await SetStatusAsync(batchId, "rolling_back").ConfigureAwait(false);
+            Fault("rollback.after_status");
 
             var conflicts = new List<string>();
             int undone = 0;
             foreach (var op in await LoadOpsAsync(batchId, "done", descending: true, ct).ConfigureAwait(false))
             {
                 if (ct.IsCancellationRequested) break;
-                string? conflict = op.Kind == "mkdir" ? UndoMkdir(op) : await UndoMoveAsync(op, ct).ConfigureAwait(false);
+                string? conflict = op.Kind == "mkdir" ? UndoMkdir(op, paths) : await UndoMoveAsync(op, paths, ct).ConfigureAwait(false);
+                if (conflict is null && op.Kind == "move") Fault("undo.after_rename");
                 if (conflict is null)
                 {
                     await SetOpStateAsync(batchId, op.Seq, "undone", null, undone: true).ConfigureAwait(false);
@@ -338,14 +473,12 @@ public sealed class FileJournalService : IAsyncDisposable
         }
     }
 
-    private static string? UndoMkdir(OpRow op)
+    private static string? UndoMkdir(OpRow op, PathAuthorizer paths)
     {
-        if (!Directory.Exists(op.Dst)) return null; // already gone
-        if (Directory.EnumerateFileSystemEntries(op.Dst).Any()) return "folder is not empty (new files were added); left in place";
+        if (!Directory.Exists(op.Dst) && !File.Exists(op.Dst)) return null; // already gone
         try
         {
-            Directory.Delete(op.Dst, recursive: false);
-            return null;
+            return paths.RemoveEmptyDirectory(op.Dst) ? null : "folder is not empty (new files were added); left in place";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -353,7 +486,7 @@ public sealed class FileJournalService : IAsyncDisposable
         }
     }
 
-    private static async Task<string?> UndoMoveAsync(OpRow op, CancellationToken ct)
+    private static async Task<string?> UndoMoveAsync(OpRow op, PathAuthorizer paths, CancellationToken ct)
     {
         string src = op.Src!;
         var current = new FileInfo(op.Dst);
@@ -368,8 +501,9 @@ public sealed class FileJournalService : IAsyncDisposable
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(src)!); // the original folder may have been removed
-            File.Move(op.Dst, src, overwrite: false);
+            string parent = Path.GetDirectoryName(src)!;
+            if (!Directory.Exists(parent)) paths.EnsureDirectory(parent); // the original folder may have been removed
+            paths.MoveNoReplace(op.Dst, src);
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -395,7 +529,13 @@ public sealed class FileJournalService : IAsyncDisposable
             while (await r.ReadAsync(ct).ConfigureAwait(false)) interrupted.Add((r.GetString(0), r.GetString(1)));
         }
 
-        foreach (var (id, status) in interrupted)
+        foreach (var (id, status) in interrupted) await ReconcileBatchAsync(id, status, ct).ConfigureAwait(false);
+        return interrupted.Count;
+    }
+
+    /// <summary>Reconciles one interrupted batch from the file system and returns its new status.</summary>
+    private async Task<string> ReconcileBatchAsync(string id, string status, CancellationToken ct)
+    {
         {
             if (status == "executing")
             {
@@ -408,6 +548,7 @@ public sealed class FileJournalService : IAsyncDisposable
                     if (happened) await SetOpStateAsync(id, op.Seq, "done", "reconciled after interruption").ConfigureAwait(false);
                 }
                 await SetStatusAsync(id, "partially_committed").ConfigureAwait(false);
+                return "partially_committed";
             }
             else
             {
@@ -417,9 +558,9 @@ public sealed class FileJournalService : IAsyncDisposable
                     if (undone) await SetOpStateAsync(id, op.Seq, "undone", "reconciled after interruption", undone: true).ConfigureAwait(false);
                 }
                 await SetStatusAsync(id, "partially_rolled_back").ConfigureAwait(false);
+                return "partially_rolled_back";
             }
         }
-        return interrupted.Count;
     }
 
     public async Task<BatchStatus> GetStatusAsync(string batchId, string jobId, CancellationToken ct)
@@ -495,7 +636,7 @@ public sealed class FileJournalService : IAsyncDisposable
 
     // ── Data access helpers (callers hold _gate, except RecoverAsync which runs before any caller) ──────
 
-    private sealed record OpRow(int Seq, string Kind, string? Src, string Dst, long? SizeBytes, long? MtimeTicks, string? Fingerprint);
+    private sealed record OpRow(int Seq, string Kind, string? Src, string Dst, long? SizeBytes, long? MtimeTicks, string? Fingerprint, long? PlanMtimeTicks);
 
     private async Task<string> GetOwnedStatusAsync(string batchId, string jobId, CancellationToken ct)
     {
@@ -512,7 +653,7 @@ public sealed class FileJournalService : IAsyncDisposable
     private async Task<List<OpRow>> LoadOpsAsync(string batchId, string state, bool descending, CancellationToken ct)
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = $"SELECT seq, kind, src_path, dst_path, size_bytes, mtime_ticks, fingerprint FROM op WHERE batch_id = $b AND state = $st ORDER BY seq {(descending ? "DESC" : "ASC")};";
+        cmd.CommandText = $"SELECT seq, kind, src_path, dst_path, size_bytes, mtime_ticks, fingerprint, plan_mtime_ticks FROM op WHERE batch_id = $b AND state = $st ORDER BY seq {(descending ? "DESC" : "ASC")};";
         cmd.Parameters.AddWithValue("$b", batchId);
         cmd.Parameters.AddWithValue("$st", state);
         using var r = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -520,7 +661,8 @@ public sealed class FileJournalService : IAsyncDisposable
         while (await r.ReadAsync(ct).ConfigureAwait(false))
         {
             rows.Add(new OpRow(r.GetInt32(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3),
-                r.IsDBNull(4) ? null : r.GetInt64(4), r.IsDBNull(5) ? null : r.GetInt64(5), r.IsDBNull(6) ? null : r.GetString(6)));
+                r.IsDBNull(4) ? null : r.GetInt64(4), r.IsDBNull(5) ? null : r.GetInt64(5), r.IsDBNull(6) ? null : r.GetString(6),
+                r.IsDBNull(7) ? null : r.GetInt64(7)));
         }
         return rows;
     }
@@ -567,13 +709,6 @@ public sealed class FileJournalService : IAsyncDisposable
         return stack; // parent first
     }
 
-    private static bool InsideRoots(string fullPath, IReadOnlyList<string> roots)
-    {
-        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        string withSep = fullPath + Path.DirectorySeparatorChar;
-        return roots.Any(r => withSep.StartsWith(Path.EndsInDirectorySeparator(r) ? r : r + Path.DirectorySeparatorChar, cmp));
-    }
-
     /// <summary>
     /// True only if both paths are on the same volume, so File.Move is a rename. On Windows this compares
     /// real volume mount paths (GetVolumePathNameW), because a folder like D:\Archive can be a mount point
@@ -604,6 +739,10 @@ public sealed class FileJournalService : IAsyncDisposable
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try { await _conn.DisposeAsync().ConfigureAwait(false); }
-        finally { _gate.Release(); }
+        finally
+        {
+            await _lock.DisposeAsync().ConfigureAwait(false);
+            _gate.Release();
+        }
     }
 }

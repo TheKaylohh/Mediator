@@ -22,9 +22,32 @@ public static partial class PdfTextExtractor
     private sealed record PdfStream(Dictionary<string, object?> Dict, byte[] Raw);
     private sealed record PdfOperator(string Op);
 
+    /// <summary>Largest PDF the built-in reader accepts.</summary>
+    public const long MaxFileBytes = 256L * 1024 * 1024;
+
     public static PdfDocumentText Extract(string path, int firstPage, int lastPage)
     {
-        byte[] data = File.ReadAllBytes(path);
+        using var fs = File.OpenRead(path);
+        return Extract(ReadBounded(fs), firstPage, lastPage);
+    }
+
+    /// <summary>Reads a stream fully, refusing anything over <see cref="MaxFileBytes"/> before allocating it.</summary>
+    public static byte[] ReadBounded(Stream stream)
+    {
+        if (stream.CanSeek && stream.Length > MaxFileBytes) throw new FormatException($"The PDF is larger than {MaxFileBytes / (1024 * 1024)} MiB.");
+        using var ms = new MemoryStream();
+        var buffer = new byte[81920];
+        int n;
+        while ((n = stream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            if (ms.Length + n > MaxFileBytes) throw new FormatException($"The PDF is larger than {MaxFileBytes / (1024 * 1024)} MiB.");
+            ms.Write(buffer, 0, n);
+        }
+        return ms.ToArray();
+    }
+
+    public static PdfDocumentText Extract(byte[] data, int firstPage, int lastPage)
+    {
         if (data.Length < 8 || Encoding.ASCII.GetString(data, 0, 5) != "%PDF-") throw new FormatException("Not a PDF file.");
         var objects = ReadObjects(data);
         if (objects.Values.OfType<Dictionary<string, object?>>().Any(d => d.ContainsKey("Filter") && Name(d, "Filter") == "Standard")

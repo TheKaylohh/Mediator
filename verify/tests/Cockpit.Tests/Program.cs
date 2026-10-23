@@ -91,25 +91,45 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("tutor: exact det, inverse, RREF, charpoly, eigenpairs and graded claims on 3×3 matrices", () => Cockpit.Tests.ProviderTests.MatrixVerifier(bridgeDll)),
     ("tutor: built-in PDF reader (ObjStm, Flate, Type0 + ToUnicode) → study pack for pages 2–3", () => Cockpit.Tests.ProviderTests.PdfChapter(bridgeDll)),
     ("cli host process: doctor self-test, organize --rules --yes, rollback, usage errors", () => Cockpit.Tests.RuntimeTests.CliHostProcess(bridgeDll, cliDll)),
+    // V6 Phase 2a: filesystem authorization
+    ("fs-auth: Windows and POSIX lexical rules (device, UNC, ADS, dots/spaces, reserved, 8.3, ..) and component containment", Cockpit.Tests.SecurityTests.PathSyntaxRules),
+    ("fs-auth: real symlinks (final, intermediate, relative, dangling), root protection, alias roots, no overwrite; openat2 and fallback", Cockpit.Tests.SecurityTests.SymlinkEscapes),
+    ("fs-auth: a bind mount inside a root is refused", Cockpit.Tests.SecurityTests.BindMountInsideRoot),
+    ("fs-auth: TOCTOU swap race (folder ↔ symlink) never writes or reads outside; openat2 and fallback", Cockpit.Tests.SecurityTests.SwapRace),
+    ("fs-auth: providers refuse a PDF behind a link and timeline media outside the roots; audited with the rule", () => Cockpit.Tests.SecurityTests.ProvidersRefuseLinks(bridgeDll)),
+    ("fs-auth (Windows): junctions, junction swap race, real ADS", Cockpit.Tests.SecurityTests.WindowsJunctions),
+    ("fs-auth: journal rejects link moves at plan time and stops a move whose destination was swapped after approval", Cockpit.Tests.SecurityTests.JournalRefusesLinks),
 };
 
-if (Cockpit.Tests.LiveTests.Python is not null)
-{
-    tests.Add(("live: build123d builds all 7 templates to STEP within their envelopes", () => Cockpit.Tests.LiveTests.Build123dTemplates(bridgeDll)));
-    tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", () => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll)));
-    tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", () => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll)));
-    tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Cockpit.Tests.LiveTests.MediaProbes));
-}
-else Console.WriteLine("(live tests skipped: set COCKPIT_LIVE_PYTHON to a Python with build123d, bpy, pymupdf and sympy)");
+// Live tests are always listed; without COCKPIT_LIVE_PYTHON each one reports SKIP (never PASS).
+Func<Task> Live(Func<Task> body) => () => Cockpit.Tests.LiveTests.Python is null
+    ? throw new SkipException("COCKPIT_LIVE_PYTHON is not set (a Python with build123d, bpy, pymupdf and sympy)")
+    : body();
+tests.Add(("live: build123d builds all 7 templates to STEP within their envelopes", Live(() => Cockpit.Tests.LiveTests.Build123dTemplates(bridgeDll))));
+tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", Live(() => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll))));
+tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", Live(() => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll))));
+tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Live(Cockpit.Tests.LiveTests.MediaProbes)));
 
-int failed = 0;
+// A skip is never a pass: it is printed as SKIP, counted separately, and with COCKPIT_REQUIRE_ALL=1 it fails the run.
+bool requireAll = Environment.GetEnvironmentVariable("COCKPIT_REQUIRE_ALL") == "1";
+string? only = Environment.GetEnvironmentVariable("COCKPIT_ONLY");
+int failed = 0, skipped = 0, passed = 0;
+var skips = new List<string>();
 foreach (var (name, run) in tests)
 {
+    if (only is not null && !name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
     var sw = Stopwatch.StartNew();
     try
     {
-        await run().WaitAsync(TimeSpan.FromSeconds(name.StartsWith("live:", StringComparison.Ordinal) ? 900 : 60));
+        await run().WaitAsync(TimeSpan.FromSeconds(name.StartsWith("live:", StringComparison.Ordinal) ? 900 : 120));
+        passed++;
         Console.WriteLine($"PASS  {name} ({sw.ElapsedMilliseconds} ms)");
+    }
+    catch (SkipException skip)
+    {
+        skipped++;
+        skips.Add($"{name}: {skip.Message}");
+        Console.WriteLine($"SKIP  {name}: {skip.Message}");
     }
     catch (Exception ex)
     {
@@ -117,8 +137,16 @@ foreach (var (name, run) in tests)
         Console.WriteLine($"FAIL  {name}: {ex}");
     }
 }
-Console.WriteLine(failed == 0 ? $"\nAll {tests.Count} tests passed." : $"\n{failed} of {tests.Count} tests FAILED.");
-return failed == 0 ? 0 : 1;
+int total = passed + failed + skipped;
+Console.WriteLine($"\n{passed} passed, {failed} failed, {skipped} skipped ({total} total).");
+foreach (var s in skips) Console.WriteLine($"  skipped: {s}");
+if (failed > 0) { Console.WriteLine($"{failed} of {total} tests FAILED."); return 1; }
+if (skipped > 0 && requireAll) { Console.WriteLine("COCKPIT_REQUIRE_ALL=1: skipped tests count as failures."); return 2; }
+Console.WriteLine(skipped == 0 ? $"All {total} tests passed." : $"All {passed} tests that ran passed; {skipped} did not run.");
+return 0;
+
+/// <summary>Thrown by a test that cannot run here (missing tool or privilege). Reported as SKIP, never as PASS.</summary>
+sealed class SkipException(string reason) : Exception(reason);
 
 static class Check
 {
@@ -200,7 +228,7 @@ static class Tests
         File.WriteAllText(Path.Combine(outside, "o.pdf"), "o");
 
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var roots = new[] { JobRegistry.NormalizeRoot(root) };
+        var roots = new Cockpit.Core.Security.PathAuthorizer([root]);
         var moves = Enumerable.Range(0, 5).Select(i => new MoveRequest(Path.Combine(src, $"doc{i}.pdf"), Path.Combine(root, "sorted", "pdf", "2026", $"doc{i}.pdf"))).ToList();
         moves.Add(new MoveRequest(Path.Combine(repo, "code.cs"), Path.Combine(root, "sorted", "code.cs")));        // protected
         moves.Add(new MoveRequest(Path.Combine(outside, "o.pdf"), Path.Combine(root, "sorted", "o.pdf")));         // outside roots
@@ -233,7 +261,7 @@ static class Tests
         File.WriteAllText(Path.Combine(root, "a.txt"), "original");
         File.WriteAllText(Path.Combine(root, "b.txt"), "original b");
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var roots = new[] { JobRegistry.NormalizeRoot(root) };
+        var roots = new Cockpit.Core.Security.PathAuthorizer([root]);
         var plan = await journal.PlanAsync("job1",
             [new(Path.Combine(root, "a.txt"), Path.Combine(root, "out", "a.txt")), new(Path.Combine(root, "b.txt"), Path.Combine(root, "out", "b.txt"))],
             roots, null, CancellationToken.None);
@@ -260,7 +288,7 @@ static class Tests
         {
             var plan = await journal.PlanAsync("job1",
                 [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt")), new(Path.Combine(root, "b.txt"), Path.Combine(root, "b2.txt"))],
-                [JobRegistry.NormalizeRoot(root)], null, CancellationToken.None);
+                new Cockpit.Core.Security.PathAuthorizer([root]), null, CancellationToken.None);
             batch = plan.BatchId;
         }
 
@@ -300,7 +328,7 @@ static class Tests
         string root = TempDir();
         File.WriteAllText(Path.Combine(root, "a.txt"), "a");
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var plan = await journal.PlanAsync("job1", [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt"))], [JobRegistry.NormalizeRoot(root)], null, CancellationToken.None);
+        var plan = await journal.PlanAsync("job1", [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt"))], new Cockpit.Core.Security.PathAuthorizer([root]), null, CancellationToken.None);
         bool refused = false;
         try { await journal.ExecuteAsync(plan.BatchId, "job2", null, CancellationToken.None); }
         catch (JournalException ex) { refused = ex.Message.Contains("No batch"); }
@@ -340,7 +368,7 @@ static class Tests
     {
         var grant = new JobGrant
         {
-            JobId = "j", Token = "t", AllowedTools = new HashSet<string>(), FileRoots = [], ExpiresAt = DateTimeOffset.MaxValue,
+            JobId = "j", Token = "t", AllowedTools = new HashSet<string>(), FileRoots = [], Paths = new Cockpit.Core.Security.PathAuthorizer([]), ExpiresAt = DateTimeOffset.MaxValue,
             ToolModes = new Dictionary<string, ApprovalMode> { ["wipe"] = ApprovalMode.Auto, ["read"] = ApprovalMode.Deny },
         };
         var schema = new JsonObject();

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 using Cockpit.Core.Swx;
 using Cockpit.Core.Tools;
 
@@ -195,9 +196,9 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
         if (call.Tool.Name == GenerateTool && call.ApprovedRows is { } keep) parts = parts.Where(p => keep.Contains(p.Key)).ToList();
         if (parts.Count == 0) return ToolResult.Fail("No parts were approved.");
 
-        string folder = Path.GetFullPath(call.Arguments.GetProperty("outputFolder").GetString()!);
-        if (!call.Job.IsInsideRoots(folder)) return ToolResult.Fail($"{folder} is outside this job's allowed folders.");
-        if (!Directory.Exists(folder)) return ToolResult.Fail($"{folder} does not exist.");
+        var folderVerdict = call.Job.Paths.Check(call.Arguments.GetProperty("outputFolder").GetString(), PathAccess.List);
+        if (!folderVerdict.Allowed) return ToolResult.Fail(folderVerdict.Message);
+        string folder = folderVerdict.FullPath;
         if (!python.IsAvailable) return ToolResult.Fail($"Cannot run build123d: {python.Describe}. Install it with: pip install build123d");
         if (python.MapPath(folder) is not string runnerFolder) return ToolResult.Fail($"{folder} is not visible to {python.Describe}; use a folder under the WSL exchange folder.");
 
@@ -215,7 +216,7 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
                 ["script"] = p.Script,
             }).ToArray()),
         };
-        SafeFiles.WriteNew(script, Build123dScript.Render(config));
+        call.Job.Paths.WriteNewText(script, Build123dScript.Render(config));
 
         var run = await python.RunScriptAsync(script, [], null, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
         JsonNode? report = null;
@@ -237,10 +238,12 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
         foreach (var r in results.OfType<JsonObject>())
         {
             string key = (string)r["key"]!;
-            if ((bool?)r["ok"] == true && File.Exists(outputs[key]))
+            // The generator wrote this file: re-authorize it (a link or a file outside the root is not accepted as output).
+            var produced = call.Job.Paths.Check(outputs[key], PathAccess.Read);
+            if ((bool?)r["ok"] == true && produced.Allowed)
                 made.Add(new JsonObject { ["key"] = key, ["step"] = outputs[key], ["bboxMm"] = r["bbox"]?.DeepClone(), ["volumeMm3"] = r["volume"]?.DeepClone() });
             else
-                failed.Add(new JsonObject { ["key"] = key, ["error"] = (string?)r["error"] ?? "no file written" });
+                failed.Add(new JsonObject { ["key"] = key, ["error"] = (string?)r["error"] ?? (produced.Code == "not_found" ? "no file written" : produced.Message) });
         }
         var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture, $"Generated {made.Count} of {parts.Count} part(s) in {folder}."));
         if (parts.Count < proposed) sb.Append(CultureInfo.InvariantCulture, $" {proposed - parts.Count} part(s) were excluded by the user; do not generate them.");

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 
 namespace Cockpit.Core.Files;
 
@@ -165,9 +166,9 @@ public sealed class FilesToolProvider : IToolProvider
     private async Task<ToolResult> PlanByRulesAsync(ToolCallContext call, CancellationToken ct)
     {
         var a = call.Arguments;
-        string source = Path.GetFullPath(a.GetProperty("sourceFolder").GetString()!);
-        if (!call.Job.IsInsideRoots(source)) return ToolResult.Fail($"{source} is outside this job's allowed folders.");
-        if (!Directory.Exists(source)) return ToolResult.Fail($"{source} does not exist.");
+        var sourceVerdict = call.Job.Paths.Check(a.GetProperty("sourceFolder").GetString(), PathAccess.List);
+        if (!sourceVerdict.Allowed) return ToolResult.Fail(sourceVerdict.Message);
+        string source = sourceVerdict.FullPath;
         bool recursive = a.TryGetProperty("recursive", out var rec) && rec.ValueKind == JsonValueKind.True;
         var rules = FileRules.Parse(a.GetProperty("rules"));
         if (rules.Count == 0) return ToolResult.Fail("Give at least one rule.");
@@ -175,7 +176,7 @@ public sealed class FilesToolProvider : IToolProvider
         var expansion = await Task.Run(() => FileRules.Expand(source, recursive, rules, FileJournalService.MaxOpsPerBatch,
             _time.GetUtcNow().UtcDateTime, ct), ct).ConfigureAwait(false);
         string? note = a.TryGetProperty("note", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
-        var plan = await _journal.PlanAsync(call.Job.JobId, expansion.Moves, call.Job.FileRoots, note, ct).ConfigureAwait(false);
+        var plan = await _journal.PlanAsync(call.Job.JobId, expansion.Moves, call.Job.Paths, note, ct).ConfigureAwait(false);
 
         var summary = Summarize(plan);
         summary["scanned"] = expansion.Scanned;
@@ -192,7 +193,7 @@ public sealed class FilesToolProvider : IToolProvider
             .Select(m => new MoveRequest(m.GetProperty("from").GetString() ?? "", m.GetProperty("to").GetString() ?? ""))
             .ToList();
         string? note = call.Arguments.TryGetProperty("note", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
-        var plan = await _journal.PlanAsync(call.Job.JobId, moves, call.Job.FileRoots, note, ct).ConfigureAwait(false);
+        var plan = await _journal.PlanAsync(call.Job.JobId, moves, call.Job.Paths, note, ct).ConfigureAwait(false);
         var summary = Summarize(plan);
         return ToolResult.Ok(summary.ToJsonString(), summary);
     }

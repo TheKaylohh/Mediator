@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 using Cockpit.Core.Tools;
 
 namespace Cockpit.Core.Tutor;
@@ -104,9 +105,10 @@ print(json.dumps({"ok": True, "pageCount": doc.page_count, "title": (doc.metadat
     private async Task<ToolResult> ExtractAsync(ToolCallContext call, CancellationToken ct)
     {
         var a = call.Arguments;
-        string pdf = Path.GetFullPath(a.GetProperty("pdfPath").GetString()!);
-        if (!call.Job.IsInsideRoots(pdf)) return ToolResult.Fail($"{pdf} is outside this job's allowed folders.");
-        if (!File.Exists(pdf) || !pdf.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) return ToolResult.Fail($"{pdf} is not an existing PDF.");
+        var pdfVerdict = call.Job.Paths.Check(a.GetProperty("pdfPath").GetString(), PathAccess.Read);
+        if (!pdfVerdict.Allowed) return ToolResult.Fail(pdfVerdict.Message);
+        string pdf = pdfVerdict.FullPath;
+        if (!pdf.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) return ToolResult.Fail($"{pdf} is not a PDF.");
         int first = a.GetProperty("firstPage").GetInt32(), last = a.GetProperty("lastPage").GetInt32();
         if (first < 1 || last < first) return ToolResult.Fail("firstPage must be ≥ 1 and lastPage ≥ firstPage.");
         if (last - first + 1 > MaxPages) return ToolResult.Fail($"At most {MaxPages} pages per call; split the chapter.");
@@ -117,7 +119,7 @@ print(json.dumps({"ok": True, "pageCount": doc.page_count, "title": (doc.metadat
         List<(int Number, string Text)> pages;
         List<(int Level, string Title, int Page)> toc = [];
         JsonNode? report = null;
-        if (python.IsAvailable && python.MapPath(pdf) is string mapped)
+        if (python.IsAvailable && python.MapPath(pdf) is string mapped && call.Job.Paths.VerifyExisting(pdf, PathAccess.Read).Allowed)
         {
             string script = Path.Combine(ArtifactsFor(call.Job.JobId), "extract_pdf.py");
             if (!File.Exists(script)) await File.WriteAllTextAsync(script, PyMuPdfScript, ct).ConfigureAwait(false);
@@ -135,7 +137,10 @@ print(json.dumps({"ok": True, "pageCount": doc.page_count, "title": (doc.metadat
         else
         {
             if ((string?)report?["error"] == "encrypted") return ToolResult.Fail("The PDF is password-protected.");
-            var doc = PdfTextExtractor.Extract(pdf, first, last);
+            byte[] bytes;
+            using (var stream = call.Job.Paths.OpenRead(pdf)) // read through the verified handle, not the path
+                bytes = PdfTextExtractor.ReadBounded(stream);
+            var doc = PdfTextExtractor.Extract(bytes, first, last);
             engine = "built-in reader" + (python.IsAvailable ? " (PyMuPDF not installed: pip install pymupdf for better results)" : "");
             pageCount = doc.PageCount;
             title = doc.Title;

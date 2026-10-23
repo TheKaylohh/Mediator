@@ -44,6 +44,44 @@ internal static partial class Win32
         return new string(buffer, 0, len < 0 ? buffer.Length : len);
     }
 
+    // ── Handle-based path verification (PathAuthorizer) ──────────────────────────────────────────────
+    internal const uint GENERIC_READ = 0x80000000, GENERIC_WRITE = 0x40000000, DELETE = 0x00010000, FILE_READ_ATTRIBUTES = 0x80;
+    internal const uint FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, FILE_SHARE_DELETE = 4;
+    internal const uint OPEN_EXISTING = 3, CREATE_NEW = 1;
+    internal const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000, FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    internal const uint FILE_NAME_NORMALIZED = 0, VOLUME_NAME_DOS = 0;
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint GetFinalPathNameByHandle(SafeFileHandle file, [Out] char[] path, uint length, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FILE_DISPOSITION_INFO { public byte DeleteFile; }
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetFileInformationByHandle(SafeFileHandle file, int infoClass, ref FILE_DISPOSITION_INFO info, uint size);
+
+    /// <summary>The normalized DOS path of an open handle, without the \\?\ prefix. Null on failure.</summary>
+    internal static string? FinalPathOf(SafeFileHandle handle)
+    {
+        var buffer = new char[32768];
+        uint n = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        if (n == 0 || n >= buffer.Length) return null;
+        string p = new(buffer, 0, (int)n);
+        if (p.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) return @"\\" + p[8..];
+        return p.StartsWith(@"\\?\", StringComparison.Ordinal) ? p[4..] : p;
+    }
+
+    /// <summary>Marks the file behind an open handle (opened with DELETE access) for deletion: race-free, by identity not name.</summary>
+    internal static bool DeleteByHandle(SafeFileHandle handle)
+    {
+        var info = new FILE_DISPOSITION_INFO { DeleteFile = 1 };
+        return SetFileInformationByHandle(handle, 4 /* FileDispositionInfo */, ref info, 1);
+    }
+
     internal const int JobObjectExtendedLimitInformation = 9;
     internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 

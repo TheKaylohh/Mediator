@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 using Cockpit.Core.Tools;
 
 namespace Cockpit.Core.Resolve;
@@ -111,13 +112,17 @@ public sealed class ResolveToolProvider : IToolProvider
 
     private async Task<ToolResult> ProbeAsync(ToolCallContext call, CancellationToken ct)
     {
-        string folder = Path.GetFullPath(Str(call.Arguments, "folder"));
-        if (!call.Job.IsInsideRoots(folder)) return ToolResult.Fail($"{folder} is outside this job's allowed folders.");
-        if (!Directory.Exists(folder)) return ToolResult.Fail($"{folder} does not exist.");
+        var folderVerdict = call.Job.Paths.Check(Str(call.Arguments, "folder"), PathAccess.List);
+        if (!folderVerdict.Allowed) return ToolResult.Fail(folderVerdict.Message);
+        string folder = folderVerdict.FullPath;
         bool recursive = call.Arguments.TryGetProperty("recursive", out var rec) && rec.ValueKind == JsonValueKind.True;
         var files = Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = recursive, IgnoreInaccessible = true })
             .Where(f => MediaExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !f.Contains($"{Path.DirectorySeparatorChar}edits{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).Take(MaxClips + 1).ToList();
+        // Every file is authorized on its own: a link inside the folder (or a linked subfolder) is skipped and reported.
+        var refused = files.Select(f => call.Job.Paths.Check(f, PathAccess.Read)).Where(v => !v.Allowed).ToList();
+        files = files.Except(refused.Select(v => v.FullPath)).ToList();
+        if (files.Count == 0 && refused.Count > 0) return ToolResult.Fail("Every media file was refused: " + string.Join("; ", refused.Take(5).Select(v => v.Message)));
         if (files.Count == 0) return ToolResult.Fail($"No video or audio files ({string.Join(" ", MediaExtensions)}) in {folder}.");
         if (files.Count > MaxClips) return ToolResult.Fail($"More than {MaxClips} media files; pick a smaller folder.");
 
@@ -141,6 +146,7 @@ public sealed class ResolveToolProvider : IToolProvider
         {
             ["folder"] = folder, ["probedWith"] = _probe.Describe, ["clips"] = clips,
             ["unreadable"] = unreadable.Count == 0 ? null : unreadable,
+            ["refused"] = refused.Count == 0 ? null : new JsonArray(refused.Select(v => (JsonNode)v.Message).ToArray()),
         };
         return clips.Count == 0 ? ToolResult.Fail("No clip could be read: " + result.ToJsonString()) : ToolResult.Ok(result.ToJsonString(), result);
     }
@@ -168,7 +174,8 @@ public sealed class ResolveToolProvider : IToolProvider
         var firstVideo = cuts.Select(c => c.Clip).FirstOrDefault(c => c.HasVideo);
         var fps = a.TryGetProperty("fps", out var f) && f.ValueKind == JsonValueKind.String ? FrameRate.Parse(f.GetString()!) : firstVideo?.Fps ?? new FrameRate(25, 1);
         string folder = Path.Combine(Path.GetDirectoryName(cuts[0].Clip.Path)!, "edits");
-        if (!call.Job.IsInsideRoots(folder)) throw new FormatException($"{folder} is outside this job's allowed folders.");
+        var verdict = call.Job.Paths.Check(folder, Directory.Exists(folder) ? PathAccess.List : PathAccess.CreateDirectory);
+        if (!verdict.Allowed) throw new FormatException(verdict.Message);
         return (new TimelinePlan(Str(a, "name"), fps, firstVideo?.Width ?? 1920, firstVideo?.Height ?? 1080, cuts), folder);
     }
 
@@ -206,12 +213,12 @@ public sealed class ResolveToolProvider : IToolProvider
         int proposed = call.Arguments.GetProperty("cuts").GetArrayLength();
         string xml = TimelineWriter.Fcpxml(plan);
         string edl = TimelineWriter.Edl(plan);
-        Directory.CreateDirectory(folder);
+        if (!Directory.Exists(folder)) call.Job.Paths.EnsureDirectory(folder);
         string stem = SafeFiles.Slug(plan.Name, "timeline");
         string xmlPath = SafeFiles.Unique(folder, stem + ".fcpxml");
-        SafeFiles.WriteNew(xmlPath, xml);
+        call.Job.Paths.WriteNewText(xmlPath, xml);
         string edlPath = SafeFiles.Unique(folder, Path.GetFileNameWithoutExtension(xmlPath) + ".edl");
-        SafeFiles.WriteNew(edlPath, edl);
+        call.Job.Paths.WriteNewText(edlPath, edl);
         var (_, _, total) = TimelineWriter.Layout(plan);
         string text = string.Create(CultureInfo.InvariantCulture,
             $"Wrote {xmlPath} and {edlPath}: {plan.Cuts.Count} cuts, {total / plan.Fps.Fps:0.0} s at {plan.Fps} fps.")
@@ -224,16 +231,27 @@ public sealed class ResolveToolProvider : IToolProvider
 
     private async Task<ToolResult> ApplyAsync(ToolCallContext call, CancellationToken ct)
     {
-        string xmlPath = Path.GetFullPath(Str(call.Arguments, "fcpxmlPath"));
-        if (!call.Job.IsInsideRoots(xmlPath) || !File.Exists(xmlPath) || !xmlPath.EndsWith(".fcpxml", StringComparison.OrdinalIgnoreCase))
-            return ToolResult.Fail($"{xmlPath} is not an existing .fcpxml inside this job's folders.");
-        // Media comes from the timeline itself (written by resolve_export_timeline), not from the model.
-        var media = XDocument.Load(xmlPath).Descendants("media-rep").Select(m => (string?)m.Attribute("src"))
-            .Where(s => s is not null).Select(s => new Uri(s!).LocalPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var xmlVerdict = call.Job.Paths.Check(Str(call.Arguments, "fcpxmlPath"), PathAccess.Read);
+        if (!xmlVerdict.Allowed) return ToolResult.Fail(xmlVerdict.Message);
+        string xmlPath = xmlVerdict.FullPath;
+        if (!xmlPath.EndsWith(".fcpxml", StringComparison.OrdinalIgnoreCase)) return ToolResult.Fail($"{xmlPath} is not an .fcpxml file.");
+        // Media comes from the timeline file. The file may have been edited since export, so every media path is
+        // authorized again: a timeline cannot make Resolve import files from outside the job's folders.
+        XDocument timeline;
+        using (var xs = call.Job.Paths.OpenRead(xmlPath))
+            timeline = XDocument.Load(System.Xml.XmlReader.Create(xs, new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore, XmlResolver = null }));
+        var media = new List<string>();
+        foreach (var src in timeline.Descendants("media-rep").Select(m => (string?)m.Attribute("src")).Where(s => s is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Uri.TryCreate(src, UriKind.Absolute, out var uri) || !uri.IsFile) return ToolResult.Fail($"The timeline references '{src}', which is not a local file URL.");
+            var mv = call.Job.Paths.Check(uri.LocalPath, PathAccess.Read);
+            if (!mv.Allowed) return ToolResult.Fail("The timeline references media that is not allowed: " + mv.Message);
+            media.Add(mv.FullPath);
+        }
         if (media.Count == 0) return ToolResult.Fail("The timeline lists no media.");
         string project = Str(call.Arguments, "projectName");
         string script = SafeFiles.Unique(Path.GetDirectoryName(xmlPath)!, "apply_resolve.py");
-        SafeFiles.WriteNew(script, ResolveScript.Render(project, xmlPath, media));
+        call.Job.Paths.WriteNewText(script, ResolveScript.Render(project, xmlPath, media));
 
         bool run = call.Arguments.TryGetProperty("run", out var r) && r.ValueKind == JsonValueKind.True;
         if (!run) return ToolResult.Ok($"Wrote {script}. Run it with Resolve Studio open (python \"{script}\"), or import {Path.GetFileName(xmlPath)} by hand (File > Import > Timeline).",

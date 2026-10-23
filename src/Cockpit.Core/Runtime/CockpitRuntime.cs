@@ -659,7 +659,8 @@ public static class JobSpecFactory
         string output = Path.GetFullPath(outputPath ?? DefaultAssemblyPath(full));
         var roots = new List<string> { full };
         string outDir = Path.GetDirectoryName(output)!;
-        if (!JobRegistry.NormalizeRoot(outDir).StartsWith(JobRegistry.NormalizeRoot(full), StringComparison.OrdinalIgnoreCase)) roots.Add(outDir);
+        // The user chose the output folder; it becomes a second root unless it already lies inside the first.
+        if (!Cockpit.Core.Security.PathSyntax.Current.IsSameOrInside(outDir, full)) roots.Add(outDir);
         return new JobSpec
         {
             Kind = "assemble",

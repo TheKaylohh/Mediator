@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 using Cockpit.Core.Tools;
 
 namespace Cockpit.Core.Blender;
@@ -130,13 +131,13 @@ public sealed class BlenderToolProvider(IBlenderRunner blender, IProcessRunner r
 
     private async Task<ToolResult> BuildAsync(ToolCallContext call, CancellationToken ct)
     {
-        string folder = Path.GetFullPath(call.Arguments.GetProperty("outputFolder").GetString()!);
-        if (!call.Job.IsInsideRoots(folder)) return ToolResult.Fail($"{folder} is outside this job's allowed folders.");
-        if (!Directory.Exists(folder)) return ToolResult.Fail($"{folder} does not exist.");
+        var folderVerdict = call.Job.Paths.Check(call.Arguments.GetProperty("outputFolder").GetString(), PathAccess.List);
+        if (!folderVerdict.Allowed) return ToolResult.Fail(folderVerdict.Message);
+        string folder = folderVerdict.FullPath;
         var p = CarSceneParameters.From(call.Arguments);
         string blend = SafeFiles.Unique(folder, "car_scene.blend");
         string script = SafeFiles.Unique(folder, Path.GetFileNameWithoutExtension(blend) + "_build.py");
-        SafeFiles.WriteNew(script, CarSceneScript.Render(p, blend));
+        call.Job.Paths.WriteNewText(script, CarSceneScript.Render(p, blend));
 
         bool run = !call.Arguments.TryGetProperty("run", out var r) || r.ValueKind != JsonValueKind.False;
         if (!run || !blender.IsAvailable)
@@ -145,7 +146,7 @@ public sealed class BlenderToolProvider(IBlenderRunner blender, IProcessRunner r
 
         var result = await blender.RunAsync(["-b", "--factory-startup", "-P", script, "--python-exit-code", "1"], TimeSpan.FromMinutes(10), ct).ConfigureAwait(false);
         var report = LastJsonLine(result.Stdout);
-        bool ok = result.Ok && (bool?)report?["ok"] == true && File.Exists(blend);
+        bool ok = result.Ok && (bool?)report?["ok"] == true && call.Job.Paths.Check(blend, PathAccess.Read).Allowed;
         return new ToolResult(!ok, ok
             ? $"Saved {blend} ({report?["frames"]} frames, road {report?["roadLengthM"]} m, car travels {report?["carDistanceM"]} m, {report?["buildings"]} buildings, {report?["engine"]}, Blender {report?["blender"]}). Next: blender_render_preview."
             : $"Blender failed: {(string?)report?["error"] ?? result.Tail()}",
@@ -155,9 +156,11 @@ public sealed class BlenderToolProvider(IBlenderRunner blender, IProcessRunner r
     private static (string Blend, int Start, int End, int Step, int Percent, bool Video) RenderArgs(ToolCallContext call)
     {
         var a = call.Arguments;
-        string blend = Path.GetFullPath(a.GetProperty("blendFile").GetString()!);
-        if (!call.Job.IsInsideRoots(blend) || !File.Exists(blend) || !blend.EndsWith(".blend", StringComparison.OrdinalIgnoreCase))
-            throw new FormatException($"{blend} is not an existing .blend inside this job's folders.");
+        var blendVerdict = call.Job.Paths.Check(a.GetProperty("blendFile").GetString(), PathAccess.Read);
+        if (!blendVerdict.Allowed) throw new FormatException(blendVerdict.Message);
+        string blend = blendVerdict.FullPath;
+        if (!blend.EndsWith(".blend", StringComparison.OrdinalIgnoreCase))
+            throw new FormatException($"{blend} is not a .blend file.");
         int Int(string name, int fallback, int min, int max)
         {
             if (!a.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.Number) return fallback;
@@ -173,8 +176,8 @@ public sealed class BlenderToolProvider(IBlenderRunner blender, IProcessRunner r
     {
         var (blend, start, end, step, pct, video) = RenderArgs(call);
         if (!blender.IsAvailable) return ToolResult.Fail($"Blender not found ({blender.Describe}).");
-        string outDir = SafeFiles.Unique(Path.GetDirectoryName(blend)!, Path.GetFileNameWithoutExtension(blend) + "_preview");
-        Directory.CreateDirectory(outDir);
+        string outDir = call.Job.Paths.EnsureDirectory(SafeFiles.Unique(Path.GetDirectoryName(blend)!, Path.GetFileNameWithoutExtension(blend) + "_preview"));
+        if (call.Job.Paths.VerifyExisting(blend, PathAccess.Read) is { Allowed: false }) return ToolResult.Fail($"{blend} changed before the render started.");
         // Argument order matters: settings first, -a (render animation) last. The .blend keeps its own engine.
         var args = new List<string>
         {
@@ -184,7 +187,8 @@ public sealed class BlenderToolProvider(IBlenderRunner blender, IProcessRunner r
             "-j", step.ToString(CultureInfo.InvariantCulture), "-a",
         };
         var result = await blender.RunAsync(args, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
-        var frames = Directory.GetFiles(outDir, "frame_*.png").OrderBy(f => f, StringComparer.Ordinal).ToList();
+        // Only plain files that Blender wrote count; a link planted in the output folder is ignored.
+        var frames = Directory.GetFiles(outDir, "frame_*.png").Where(f => call.Job.Paths.Check(f, PathAccess.Read).Allowed).OrderBy(f => f, StringComparer.Ordinal).ToList();
         if (!result.Ok || frames.Count == 0) return ToolResult.Fail($"Render failed ({frames.Count} frames): {result.Tail()}");
 
         string? mp4 = null;
