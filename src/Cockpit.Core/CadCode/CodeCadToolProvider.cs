@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Isolation;
 using Cockpit.Core.Security;
 using Cockpit.Core.Swx;
 using Cockpit.Core.Tools;
@@ -16,10 +18,13 @@ public sealed record CadParam(string Name, double Default, double Min, double Ma
 /// Parametric parts as code (build123d on OpenCascade), exported to STEP for SolidWorks (swx_import_step). Built-in
 /// templates only take numbers, so the model never writes code for them; a custom build123d script is a separate,
 /// Destructive tool that always asks and shows the code. Each part's bounding box is checked against its declared
-/// envelope before it is exported, and nothing is overwritten. Recommended: run the generator in the restricted WSL
-/// distro (a <see cref="WslPythonRunner"/>), where it cannot see your Windows files.
+/// envelope before it is exported, and nothing is overwritten.
+/// V6: the generator writes into a private staging folder; outputs are accepted only if they are plain files with the
+/// expected names, pass <see cref="StepValidator"/> and a separate re-import (solids, volume, size), and are then
+/// copied into the user's folder through the job's path authorizer. Custom (model-written) code runs only in the
+/// sandbox, bound to the exact approved script, arguments and policy; see docs/v6/ISOLATION.md.
 /// </summary>
-public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
+public sealed class CodeCadToolProvider(IPythonRunner python, ISandboxRunner sandbox, SandboxPython? sandboxPython, string stagingRoot) : IToolProvider
 {
     public const string GenerateTool = "cad_generate_parametric_step";
     public const string CustomTool = "cad_generate_custom_step";
@@ -67,7 +72,7 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
 
         new(CustomTool,
             "Run a custom build123d script for one part the templates cannot express. The script must assign the final solid to " +
-            "a variable named result (millimetres). It executes as Python on this machine, so the user always reviews the code first.",
+            "a variable named result (millimetres). It runs only inside the sandbox (no network, no access to your files); the user always reviews the code first.",
             Schema("""
             {
               "type": "object",
@@ -155,6 +160,36 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
         }
     }
 
+    // ── Isolation policy ────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Policy id recorded in approvals and the audit. Bump it when what the sandbox enforces changes.</summary>
+    public const string CustomPolicy = "cad-custom-v1";
+    public const long MaxStepBytes = StepValidator.MaxBytes;
+
+    private SandboxLimits LimitsFor(ToolCallContext call) => new() { Wall = call.Tool.ExecutionTimeout < TimeSpan.FromMinutes(10) ? call.Tool.ExecutionTimeout : TimeSpan.FromMinutes(10) };
+
+    private bool SandboxUsable => sandbox.Unavailable is null && sandboxPython is not null;
+    private string SandboxProblem => sandbox.Unavailable ?? (sandboxPython is null ? "no Python for the sandbox is configured" : "");
+
+    /// <summary>
+    /// What a custom-code approval is bound to: the exact script, the exact arguments, the output folder, the policy,
+    /// the sandbox and its limits. Execution recomputes this and refuses if it differs from what the user approved.
+    /// </summary>
+    private JsonObject Binding(ToolCallContext call, PartRequest part, string folder) => new()
+    {
+        ["scriptSha256"] = Sha256(part.Script ?? ""),
+        ["argumentsSha256"] = Sha256(call.Arguments.GetRawText()),
+        ["outputFolder"] = folder,
+        ["policy"] = CustomPolicy,
+        ["runner"] = sandbox.Id,
+        ["limits"] = Describe(LimitsFor(call)),
+    };
+
+    private static string Describe(SandboxLimits l) => string.Create(CultureInfo.InvariantCulture,
+        $"as={l.AddressSpaceBytes >> 20}MiB cpu={l.CpuSeconds}s nproc={l.Processes} fsize={l.FileSizeBytes >> 20}MiB nofile={l.OpenFiles} wall={l.Wall.TotalSeconds:0}s net=none");
+
+    private static string Sha256(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+
     public Task<JsonNode?> BuildPreviewAsync(ToolCallContext call, CancellationToken ct)
     {
         JsonObject preview;
@@ -162,15 +197,19 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
         {
             var parts = ParseParts(call.Arguments);
             bool custom = call.Tool.Name == CustomTool;
+            var fv = call.Job.Paths.Check(call.Arguments.GetProperty("outputFolder").GetString(), PathAccess.List);
+            string where = custom
+                ? (SandboxUsable ? $"Runs model-written Python inside the sandbox ({sandbox.Describe}). Read it before approving."
+                                 : $"CANNOT RUN: custom code needs the sandbox and none is available ({SandboxProblem}). It will not run on this machine's Python.")
+                : $"{parts.Count} part(s) · runner: {(SandboxUsable ? sandbox.Describe : python.Describe)}";
             preview = new JsonObject
             {
                 ["kind"] = "cad_parts",
                 ["title"] = custom ? $"Run a custom build123d script ({parts[0].Key})" : "Generate parametric STEP parts",
-                ["summary"] = (custom ? "This executes model-written Python on this machine. Read it before approving." : $"{parts.Count} part(s)")
-                    + $" → {call.Arguments.GetProperty("outputFolder").GetString()} · runner: {python.Describe}",
+                ["summary"] = where + $" → {(fv.Allowed ? fv.FullPath : fv.Message)}",
                 ["selectable"] = !custom,
                 ["rows"] = custom
-                    ? new JsonArray(parts[0].Script!.Split('\n').Take(60).Select((l, i) => (JsonNode)new JsonObject { ["key"] = $"line{i + 1}", ["primary"] = l.TrimEnd() }).ToArray())
+                    ? new JsonArray(parts[0].Script!.Split('\n').Take(400).Select((l, i) => (JsonNode)new JsonObject { ["key"] = $"line{i + 1}", ["primary"] = l.TrimEnd() }).ToArray())
                     : new JsonArray(parts.Select(p => (JsonNode)new JsonObject
                     {
                         ["key"] = p.Key,
@@ -179,6 +218,7 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
                             + string.Create(CultureInfo.InvariantCulture, $" · envelope {p.EnvelopeMm[0]:0.#}×{p.EnvelopeMm[1]:0.#}×{p.EnvelopeMm[2]:0.#} mm"),
                     }).ToArray()),
             };
+            if (custom && fv.Allowed) preview["binding"] = Binding(call, parts[0], fv.FullPath);
         }
         catch (Exception ex) when (ex is FormatException or KeyNotFoundException or InvalidOperationException)
         {
@@ -193,64 +233,237 @@ public sealed class CodeCadToolProvider(IPythonRunner python) : IToolProvider
         try { parts = ParseParts(call.Arguments); }
         catch (Exception ex) when (ex is FormatException or KeyNotFoundException or InvalidOperationException) { return ToolResult.Fail(ex.Message); }
         int proposed = parts.Count;
+        bool custom = call.Tool.Name == CustomTool;
         if (call.Tool.Name == GenerateTool && call.ApprovedRows is { } keep) parts = parts.Where(p => keep.Contains(p.Key)).ToList();
         if (parts.Count == 0) return ToolResult.Fail("No parts were approved.");
 
         var folderVerdict = call.Job.Paths.Check(call.Arguments.GetProperty("outputFolder").GetString(), PathAccess.List);
         if (!folderVerdict.Allowed) return ToolResult.Fail(folderVerdict.Message);
         string folder = folderVerdict.FullPath;
-        if (!python.IsAvailable) return ToolResult.Fail($"Cannot run build123d: {python.Describe}. Install it with: pip install build123d");
-        if (python.MapPath(folder) is not string runnerFolder) return ToolResult.Fail($"{folder} is not visible to {python.Describe}; use a folder under the WSL exchange folder.");
 
-        // Host and runner paths for every output; unique names so nothing is overwritten.
-        var outputs = parts.ToDictionary(p => p.Key, p => SafeFiles.Unique(folder, p.Key + ".step"));
-        string script = SafeFiles.Unique(folder, "generate_parts.py");
-        var config = new JsonObject
+        if (custom)
         {
-            ["parts"] = new JsonArray(parts.Select(p => (JsonNode)new JsonObject
-            {
-                ["key"] = p.Key, ["template"] = p.Template,
-                ["params"] = new JsonObject(p.Params.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),
-                ["envelope"] = new JsonArray(p.EnvelopeMm.Select(v => (JsonNode)v).ToArray()),
-                ["step"] = python.MapPath(outputs[p.Key]),
-                ["script"] = p.Script,
-            }).ToArray()),
-        };
-        call.Job.Paths.WriteNewText(script, Build123dScript.Render(config));
+            // Model-written code: the sandbox is required. There is no fallback to the host interpreter.
+            if (!SandboxUsable)
+                return ToolResult.Fail($"Refused: custom code runs only inside the sandbox, and none is available ({SandboxProblem}). It was not run.");
+            var binding = Binding(call, parts[0], folder);
+            if (call.ApprovedPreview?["binding"] is not JsonNode approved || !JsonNode.DeepEquals(approved, binding))
+                return ToolResult.Fail("Refused: what would run (script, arguments, folder, sandbox policy or limits) is not exactly what was approved. It was not run.");
+        }
+        else if (!SandboxUsable && !python.IsAvailable)
+            return ToolResult.Fail($"Cannot run build123d: {python.Describe}. Install it with: pip install build123d");
 
-        var run = await python.RunScriptAsync(script, [], null, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
-        JsonNode? report = null;
-        foreach (var line in run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Reverse())
+        // Private staging: the generator writes here, never into the user's folder.
+        string stage = Path.Combine(stagingRoot, call.Job.JobId, "sandbox", Guid.NewGuid().ToString("N")[..12]);
+        string stageIn = Path.Combine(stage, "in"), stageOut = Path.Combine(stage, "out");
+        Directory.CreateDirectory(stageIn);
+        Directory.CreateDirectory(stageOut);
+        try
+        {
+            bool isolated = SandboxUsable;
+            string? StepPath(string key) => isolated ? "/out/" + key + ".step" : python.MapPath(Path.Combine(stageOut, key + ".step"));
+            if (!isolated && parts.Any(p => StepPath(p.Key) is null))
+                return ToolResult.Fail($"The staging folder {stageOut} is not visible to {python.Describe}.");
+            var config = new JsonObject
+            {
+                ["parts"] = new JsonArray(parts.Select(p => (JsonNode)new JsonObject
+                {
+                    ["key"] = p.Key, ["template"] = p.Template,
+                    ["params"] = new JsonObject(p.Params.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)JsonValue.Create(kv.Value)))),
+                    ["envelope"] = new JsonArray(p.EnvelopeMm.Select(v => (JsonNode)v).ToArray()),
+                    ["step"] = StepPath(p.Key),
+                    ["script"] = p.Script,
+                }).ToArray()),
+            };
+            string scriptText = Build123dScript.Render(config);
+            string script = Path.Combine(stageIn, "generate_parts.py");
+            await File.WriteAllTextAsync(script, scriptText, ct).ConfigureAwait(false);
+
+            ProcessResult run = isolated
+                ? await sandbox.RunAsync(new SandboxRequest(sandboxPython!.Executable, ["-I", "/in/generate_parts.py"], stageIn, stageOut,
+                    sandboxPython.Binds, new Dictionary<string, string>(), LimitsFor(call)), ct).ConfigureAwait(false)
+                : await python.RunScriptAsync(script, [], null, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
+            JsonNode? report = LastJson(run.Stdout);
+            if (report?["results"] is not JsonArray results)
+            {
+                string tail = run.TimedOut ? "it was stopped at the time limit" : run.Tail(800);
+                return ToolResult.Fail(tail.Contains("No module named 'build123d'", StringComparison.Ordinal)
+                    ? $"build123d is not installed for {(isolated ? "the sandbox Python" : python.Describe)}. Install it with: pip install build123d"
+                    : $"The generator failed: {tail}");
+            }
+
+            // 1. Only plain files with the expected names, under the size limit.
+            var expected = parts.Select(p => p.Key + ".step").ToHashSet(StringComparer.Ordinal);
+            var (accepted, refused) = SandboxOutputs.Inspect(stageOut, expected.Contains, MaxStepBytes);
+            var made = new JsonArray();
+            var failed = new JsonArray();
+            foreach (var r in refused) failed.Add(new JsonObject { ["key"] = r.Split(':')[0], ["error"] = r });
+            var reported = results.OfType<JsonObject>().ToDictionary(r => (string)r["key"]!, r => r, StringComparer.Ordinal);
+
+            // 2. Structural check in Cockpit, independent of the generator.
+            var structurallyOk = new List<SandboxOutputs.Accepted>();
+            foreach (var a in accepted)
+            {
+                StepValidator.Report sr;
+                using (var fs = File.OpenRead(a.StagedPath)) sr = StepValidator.Check(fs);
+                if (sr.Ok) structurallyOk.Add(a);
+                else failed.Add(new JsonObject { ["key"] = Path.GetFileNameWithoutExtension(a.Name), ["error"] = "STEP check: " + sr.Error });
+            }
+
+            // 3. Geometric re-import in a fresh process that sees only the STEP files (sandboxed for model-written code).
+            var geometry = structurallyOk.Count == 0 ? new Dictionary<string, JsonObject>() : await ReimportAsync(structurallyOk, stage, isolated, call, ct).ConfigureAwait(false);
+
+            foreach (var part in parts)
+            {
+                string name = part.Key + ".step";
+                if (failed.Any(f => (string?)f!["key"] == part.Key)) continue;
+                var staged = structurallyOk.FirstOrDefault(a => a.Name == name);
+                reported.TryGetValue(part.Key, out var gen);
+                if (staged is null)
+                {
+                    failed.Add(new JsonObject { ["key"] = part.Key, ["error"] = (string?)gen?["error"] ?? "no file written" });
+                    continue;
+                }
+                if (!geometry.TryGetValue(name, out var geo) || (bool?)geo["ok"] != true)
+                {
+                    failed.Add(new JsonObject { ["key"] = part.Key, ["error"] = "re-import: " + ((string?)geo?["error"] ?? "the STEP could not be re-read") });
+                    continue;
+                }
+                if (GeometryProblem(part, geo, gen) is string problem)
+                {
+                    failed.Add(new JsonObject { ["key"] = part.Key, ["error"] = "re-import: " + problem });
+                    continue;
+                }
+                // 4. Into the user's folder: a new file, created through the job's authorizer.
+                string dest = SafeFiles.Unique(folder, name);
+                await using (var src = File.OpenRead(staged.StagedPath))
+                await using (var dst = call.Job.Paths.CreateNew(dest))
+                    await src.CopyToAsync(dst, ct).ConfigureAwait(false);
+                made.Add(new JsonObject
+                {
+                    ["key"] = part.Key, ["step"] = dest, ["bboxMm"] = geo["bbox"]?.DeepClone(), ["volumeMm3"] = geo["volume"]?.DeepClone(),
+                    ["solids"] = geo["solids"]?.DeepClone(),
+                });
+            }
+
+            // The approved generator is kept next to the parts, as a record of exactly what ran.
+            string scriptCopy = SafeFiles.Unique(folder, custom ? parts[0].Key + "_custom.py" : "generate_parts.py");
+            call.Job.Paths.WriteNewText(scriptCopy, scriptText);
+
+            var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture, $"Generated {made.Count} of {parts.Count} part(s) in {folder}"));
+            sb.Append(isolated ? " (sandboxed)." : " (host Python: built-in templates only).");
+            if (parts.Count < proposed) sb.Append(CultureInfo.InvariantCulture, $" {proposed - parts.Count} part(s) were excluded by the user; do not generate them.");
+            foreach (var f in failed) sb.Append(CultureInfo.InvariantCulture, $" {f!["key"]}: {f["error"]}.");
+            if (made.Count > 0) sb.Append(" Next: swx_import_step with these STEP files, then swx_part_cards and swx_build_assembly.");
+            var structured = new JsonObject
+            {
+                ["parts"] = made, ["failed"] = failed, ["script"] = scriptCopy,
+                ["runner"] = isolated ? sandbox.Id : python.Describe, ["isolated"] = isolated,
+            };
+            return made.Count == 0 ? new ToolResult(true, sb.ToString(), structured) : ToolResult.Ok(sb.ToString(), structured);
+        }
+        finally
+        {
+            // Never follows links: a link the generator planted is removed, its target is untouched.
+            try { Directory.Delete(stage, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static string? GeometryProblem(PartRequest part, JsonObject geo, JsonObject? gen)
+    {
+        int solids = (int?)geo["solids"] ?? 0;
+        double volume = (double?)geo["volume"] ?? 0;
+        var bbox = geo["bbox"]?.AsArray().Select(v => (double)v!).ToArray() ?? [];
+        if (solids < 1) return "no solid body in the file";
+        if (volume <= 0) return "zero volume";
+        if (bbox.Length != 3) return "no bounding box";
+        for (int i = 0; i < 3; i++)
+            if (bbox[i] > part.EnvelopeMm[i] + 0.01) return string.Create(CultureInfo.InvariantCulture, $"bounding box {bbox[0]:0.###}×{bbox[1]:0.###}×{bbox[2]:0.###} mm exceeds the envelope");
+        if (gen?["bbox"] is JsonArray g && g.Count == 3)
+            for (int i = 0; i < 3; i++)
+                if (Math.Abs((double)g[i]! - bbox[i]) > 0.05) return "the re-imported size differs from what the generator reported";
+        return null;
+    }
+
+    private async Task<Dictionary<string, JsonObject>> ReimportAsync(List<SandboxOutputs.Accepted> files, string stage, bool isolated, ToolCallContext call, CancellationToken ct)
+    {
+        string vin = Path.Combine(stage, "verify-in"), vout = Path.Combine(stage, "verify-out");
+        Directory.CreateDirectory(vin);
+        Directory.CreateDirectory(vout);
+        foreach (var f in files) File.Copy(f.StagedPath, Path.Combine(vin, f.Name));
+        string script = Path.Combine(vin, "validate_step.py");
+        await File.WriteAllTextAsync(script, StepReimportScript, ct).ConfigureAwait(false);
+        var names = files.Select(f => f.Name).ToList();
+        ProcessResult run = isolated
+            ? await sandbox.RunAsync(new SandboxRequest(sandboxPython!.Executable, ["-I", "/in/validate_step.py", .. names.Select(n => "/in/" + n)], vin, vout,
+                sandboxPython.Binds, new Dictionary<string, string>(), LimitsFor(call) with { Wall = TimeSpan.FromMinutes(5) }), ct).ConfigureAwait(false)
+            : await python.RunScriptAsync(script, names.Select(n => python.MapPath(Path.Combine(vin, n)) ?? n).ToList(), null, TimeSpan.FromMinutes(5), ct).ConfigureAwait(false);
+        var map = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        if (LastJson(run.Stdout)?["files"] is JsonArray arr)
+            foreach (var o in arr.OfType<JsonObject>())
+                if ((string?)o["name"] is string n) map[Path.GetFileName(n)] = o;
+        return map;
+    }
+
+    private static JsonNode? LastJson(string stdout)
+    {
+        foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Reverse())
         {
             if (!line.StartsWith('{')) continue;
-            try { report = JsonNode.Parse(line); break; } catch (JsonException) { }
+            try { return JsonNode.Parse(line); } catch (JsonException) { }
         }
-        if (report?["results"] is not JsonArray results)
-        {
-            string tail = run.Tail(800);
-            return ToolResult.Fail(tail.Contains("No module named 'build123d'", StringComparison.Ordinal)
-                ? $"build123d is not installed for {python.Describe}. Install it with: pip install build123d"
-                : $"The generator failed: {tail}");
-        }
+        return null;
+    }
 
-        var made = new JsonArray();
-        var failed = new JsonArray();
-        foreach (var r in results.OfType<JsonObject>())
+    /// <summary>Fixed re-import check: a fresh interpreter reads each STEP back with OpenCascade and reports solids, volume, size.</summary>
+    public const string StepReimportScript = """
+# COCKPIT_STEP_VALIDATOR: re-reads STEP files independently of the code that wrote them.
+import json, sys
+out = []
+try:
+    from build123d import import_step
+except ImportError as e:
+    print(json.dumps({"files": [{"name": n, "ok": False, "error": "No module named 'build123d'"} for n in sys.argv[1:]]}))
+    sys.exit(4)
+for path in sys.argv[1:]:
+    try:
+        shape = import_step(path)
+        solids = shape.solids()
+        size = shape.bounding_box().size
+        vol = sum(s.volume for s in solids)
+        valid = all((s.is_valid() if callable(s.is_valid) else s.is_valid) for s in solids)
+        out.append({"name": path, "ok": bool(solids) and valid, "solids": len(solids), "volume": round(vol, 1),
+                    "bbox": [round(size.X, 3), round(size.Y, 3), round(size.Z, 3)],
+                    "error": None if solids and valid else ("no solid bodies" if not solids else "invalid solid")})
+    except Exception as e:
+        out.append({"name": path, "ok": False, "error": "%s: %s" % (type(e).__name__, e)})
+print(json.dumps({"files": out}))
+""";
+}
+
+/// <summary>The interpreter used inside the sandbox and the host folders it needs bound read-only (its own prefix).</summary>
+public sealed record SandboxPython(string Executable, IReadOnlyList<string> Binds)
+{
+    /// <summary>Asks a host Python (fixed code, no user input) for its prefixes. Linux only. Null if it cannot be used.</summary>
+    public static SandboxPython? Probe(string? hostPython)
+    {
+        if (hostPython is null || !OperatingSystem.IsLinux()) return null;
+        try
         {
-            string key = (string)r["key"]!;
-            // The generator wrote this file: re-authorize it (a link or a file outside the root is not accepted as output).
-            var produced = call.Job.Paths.Check(outputs[key], PathAccess.Read);
-            if ((bool?)r["ok"] == true && produced.Allowed)
-                made.Add(new JsonObject { ["key"] = key, ["step"] = outputs[key], ["bboxMm"] = r["bbox"]?.DeepClone(), ["volumeMm3"] = r["volume"]?.DeepClone() });
-            else
-                failed.Add(new JsonObject { ["key"] = key, ["error"] = (string?)r["error"] ?? (produced.Code == "not_found" ? "no file written" : produced.Message) });
+            var psi = new System.Diagnostics.ProcessStartInfo(hostPython) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (var a in new[] { "-I", "-c", "import json,sys;print(json.dumps([sys.prefix,sys.base_prefix,sys.executable]))" }) psi.ArgumentList.Add(a);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            string text = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(10_000);
+            var v = JsonSerializer.Deserialize<string[]>(text.Trim());
+            if (v is not { Length: 3 }) return null;
+            var binds = new[] { v[0], v[1] }.Where(d => d != "/usr" && !d.StartsWith("/usr/", StringComparison.Ordinal)).Distinct().ToList();
+            return new SandboxPython(v[2], binds);
         }
-        var sb = new StringBuilder(string.Create(CultureInfo.InvariantCulture, $"Generated {made.Count} of {parts.Count} part(s) in {folder}."));
-        if (parts.Count < proposed) sb.Append(CultureInfo.InvariantCulture, $" {proposed - parts.Count} part(s) were excluded by the user; do not generate them.");
-        foreach (var f in failed) sb.Append(CultureInfo.InvariantCulture, $" {f!["key"]}: {f["error"]}.");
-        if (made.Count > 0) sb.Append(" Next: swx_import_step with these STEP files, then swx_part_cards and swx_build_assembly.");
-        var structured = new JsonObject { ["parts"] = made, ["failed"] = failed, ["script"] = script, ["runner"] = python.Describe };
-        return made.Count == 0 ? new ToolResult(true, sb.ToString(), structured) : ToolResult.Ok(sb.ToString(), structured);
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or JsonException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 }
 

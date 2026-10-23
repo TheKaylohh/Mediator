@@ -625,7 +625,7 @@ internal sealed class BusConnection : IDisposable
                     ToolResult.Fail("No approval within the time limit, so the action was not run.")).ConfigureAwait(false);
         }
 
-        call = call with { ApprovedRows = outcome.ApprovedRows };
+        call = call with { ApprovedRows = outcome.ApprovedRows, ApprovedPreview = outcome.Preview };
         string approvedAs = auto ? "auto" : outcome.ApprovedRows is null ? "approved" : "approved_subset";
         _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "running", null));
         using var exec = CancellationTokenSource.CreateLinkedTokenSource(ct);

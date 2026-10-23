@@ -98,6 +98,11 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("fs-auth: TOCTOU swap race (folder ↔ symlink) never writes or reads outside; openat2 and fallback", Cockpit.Tests.SecurityTests.SwapRace),
     ("fs-auth: providers refuse a PDF behind a link and timeline media outside the roots; audited with the rule", () => Cockpit.Tests.SecurityTests.ProvidersRefuseLinks(bridgeDll)),
     ("fs-auth (Windows): junctions, junction swap race, real ADS", Cockpit.Tests.SecurityTests.WindowsJunctions),
+    // V6 Phase 2b: custom-code isolation
+    ("isolation: approval bound to script/args/folder/policy; tampered binding refused; link/surface/truncated/extra outputs refused; staging cleanup never follows links", () => Cockpit.Tests.IsolationTests.ApprovalBindingAndOutputChecks(bridgeDll)),
+    ("isolation (real bwrap): no host files, read-only system, no secrets in env, uid 65534, own PID ns, no nested userns, no mount", Cockpit.Tests.IsolationTests.RealSandboxConfinement),
+    ("isolation (real bwrap): no network (host loopback, external, DNS)", Cockpit.Tests.IsolationTests.RealSandboxNoNetwork),
+    ("isolation (real bwrap): memory, CPU, process and file-size limits; wall-clock kill; no surviving grandchildren", Cockpit.Tests.IsolationTests.RealSandboxLimitsAndCleanup),
     ("fs-auth: journal rejects link moves at plan time and stops a move whose destination was swapped after approval", Cockpit.Tests.SecurityTests.JournalRefusesLinks),
 };
 
@@ -108,6 +113,7 @@ Func<Task> Live(Func<Task> body) => () => Cockpit.Tests.LiveTests.Python is null
 tests.Add(("live: build123d builds all 7 templates to STEP within their envelopes", Live(() => Cockpit.Tests.LiveTests.Build123dTemplates(bridgeDll))));
 tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", Live(() => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll))));
 tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", Live(() => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll))));
+tests.Add(("live: build123d custom code inside real bubblewrap through the bus; hostile script contained", Live(() => Cockpit.Tests.IsolationTests.LiveCustomCodeInSandbox(bridgeDll))));
 tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Live(Cockpit.Tests.LiveTests.MediaProbes)));
 
 // A skip is never a pass: it is printed as SKIP, counted separately, and with COCKPIT_REQUIRE_ALL=1 it fails the run.

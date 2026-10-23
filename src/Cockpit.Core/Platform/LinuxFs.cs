@@ -101,6 +101,17 @@ internal static partial class LinuxFs
     [LibraryImport("libc", EntryPoint = "renameat2", SetLastError = true)]
     private static partial int RenameAt2(int olddirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string oldpath, int newdirfd, [MarshalAs(UnmanagedType.LPUTF8Str)] string newpath, uint flags);
 
+    [LibraryImport("libc", EntryPoint = "chown", SetLastError = true)]
+    private static partial int ChownNative([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int owner, int group);
+
+    [LibraryImport("libc", EntryPoint = "geteuid")]
+    internal static partial int GetEuid();
+
+    internal static void Chown(string path, int uid, int gid)
+    {
+        if (ChownNative(path, uid, gid) < 0) throw new IOException($"chown {path} failed (errno {Marshal.GetLastPInvokeError()})");
+    }
+
     [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
     private static partial int Fsync(int fd);
 

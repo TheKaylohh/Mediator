@@ -162,6 +162,15 @@ public sealed record RuntimeOptions
     public IPythonRunner Python { get; init; } = LocalPythonRunner.Detect();
     /// <summary>Python for build123d. Null = <see cref="Python"/>. Set a <see cref="WslPythonRunner"/> to keep generated code inside WSL.</summary>
     public IPythonRunner? CadPython { get; init; }
+    /// <summary>
+    /// The sandbox for model-written code. Null = detected: bubblewrap on Linux; on Windows none unless configured
+    /// (a <see cref="Isolation.WslBubblewrapSandbox"/>). Without one, custom code is refused, never run on the host.
+    /// </summary>
+    public Isolation.ISandboxRunner? CadSandbox { get; init; }
+    /// <summary>The interpreter inside the sandbox. Null = probed from the host Python on Linux.</summary>
+    public CadCode.SandboxPython? CadSandboxPython { get; init; }
+    /// <summary>Where sandbox runs are staged. Null = the workspaces folder. Must be inside the WSL exchange folder for the WSL sandbox.</summary>
+    public string? SandboxStagingDirectory { get; init; }
     public IBlenderRunner Blender { get; init; } = BlenderRunner.Detect();
     public string? Ffmpeg { get; init; } = ToolLocator.Ffmpeg();
 }
@@ -270,7 +279,13 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Tools.Register(new SwxToolProvider(Swx, Registry));
         Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
         Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
-        Tools.Register(new CodeCadToolProvider(options.CadPython ?? options.Python));
+        var cadPython = options.CadPython ?? options.Python;
+        var sandbox = options.CadSandbox ?? (OperatingSystem.IsLinux()
+            ? new Isolation.BubblewrapSandbox(options.ProcessRunner)
+            : new Isolation.UnavailableSandbox("no sandbox is configured on Windows: set up the restricted WSL distro with bubblewrap (see docs/v6/ISOLATION.md)"));
+        var sandboxPython = options.CadSandboxPython ?? (sandbox is Isolation.BubblewrapSandbox && cadPython is LocalPythonRunner local
+            ? CadCode.SandboxPython.Probe(local.Executable) : null);
+        Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
         Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log);
         Bus.ToolCallActivity += e =>
