@@ -27,6 +27,8 @@ public static class Commands
               cockpit organize <folder> --rules <rules.json> [--recursive]
               cockpit organize <folder> --criteria "<what you want>" [--headless|--interactive]
               cockpit rollback <jobId> [--batch <batchId>] [--yes]
+              cockpit operations [--unresolved] [--job-id <id>]              (side-effecting calls and their state)
+              cockpit operations resolve <operationId> --done|--not-done --note "<what you checked>"
               cockpit cad      <folder> --request "front suspension: hub, disc, spring"   (build123d → STEP → SolidWorks)
               cockpit resolve  <folder> --request "60 s teaser, music under"            (FCPXML + EDL for DaVinci Resolve)
               cockpit blender  <folder> --request "red car through a neon city"        (scene .blend + preview frames)
@@ -351,6 +353,40 @@ public static class Commands
         return conflicts == 0 ? 0 : 1;
     }
 
+    // ── operations ────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Lists side-effecting calls, or records the user's verdict on one whose outcome was unknown.</summary>
+    public static async Task<int> OperationsAsync(CliArgs cli)
+    {
+        await using var runtime = await CockpitRuntime.CreateAsync(Options(cli));
+        if (cli.Positional.Count > 0 && cli.Positional[0] == "resolve")
+        {
+            string id = cli.RequirePositional(1, "operation id");
+            if (cli.Has("done") == cli.Has("not-done")) throw new UsageException("Say what you found: --done (it took effect) or --not-done.");
+            string note = cli.Get("note") ?? throw new UsageException("--note is required: say what you checked.");
+            var op = await runtime.Operations.GetAsync(id) ?? throw new UsageException($"No operation {id}.");
+            if (op.State is not (OperationState.RecoveryRequired or OperationState.OutcomeUnknown))
+                throw new UsageException($"{id} is {OperationStore.Snake(op.State)}; only outcome_unknown or recovery_required operations need a verdict.");
+            if (op.State == OperationState.OutcomeUnknown) op = await runtime.Operations.TransitionAsync(id, OperationState.RecoveryRequired, "user is reviewing it");
+            var resolved = await runtime.Operations.ResolveAsync(id, cli.Has("done"), note);
+            await runtime.Audit.RecordAsync(new AuditEntry(op.JobId, "cockpit/operations-resolve", id, ToolRisk.Write,
+                new JsonObject { ["operationId"] = id, ["tookEffect"] = cli.Has("done") }.ToJsonString(), "approved", "ok", note, 0));
+            Console.WriteLine($"{id}: {OperationStore.Snake(resolved.State)}");
+            return 0;
+        }
+        var list = await runtime.Operations.ListAsync(cli.Get("job-id"), cli.Has("unresolved"));
+        if (cli.Has("json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(list.Select(o => new { o.OperationId, o.JobId, o.Tool, State = OperationStore.Snake(o.State), o.Attempt, o.CreatedUtc, o.UpdatedUtc, o.Note }),
+                new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+        if (list.Count == 0) { Console.WriteLine(cli.Has("unresolved") ? "No operations need a check." : "No operations recorded."); return 0; }
+        foreach (var o in list)
+            Console.WriteLine($"{o.OperationId}  {OperationStore.Snake(o.State),-22} {o.Tool,-30} {o.JobId}  {o.UpdatedUtc}  {o.Note}");
+        return 0;
+    }
+
     // ── doctor ────────────────────────────────────────────────────────────────────────────────────────
 
     public sealed record Check(string Name, string Status, string Detail);
@@ -494,7 +530,7 @@ public static class Commands
             var tools = await client.ListToolsAsync();
             var call = await client.CallToolAsync(FilesToolProvider.Status, new JsonObject { ["batchId"] = "doctor-probe" }, TimeSpan.FromSeconds(20));
             long audited = await runtime.Audit.CountAsync(job.JobId);
-            bool ok = tools.SequenceEqual([FilesToolProvider.Status]) && call.IsError && audited >= 1;
+            bool ok = tools.Order(StringComparer.Ordinal).SequenceEqual([OperationsToolProvider.StatusTool, FilesToolProvider.Status]) && call.IsError && audited >= 1;
             add("bridge self-test", ok ? "ok" : "fail", ok
                 ? $"initialize, tools/list, tools/call and audit through the bridge in {sw.ElapsedMilliseconds} ms"
                 : $"unexpected: tools [{string.Join(",", tools)}], call error {call.IsError}, audit rows {audited}");

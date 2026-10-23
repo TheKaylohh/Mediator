@@ -60,14 +60,18 @@ public sealed class McpBusServer : IAsyncDisposable
     internal PermissionGate Gate { get; }
     internal LeaseManager Leases { get; }
     internal AuditLog Audit { get; }
+    internal OperationStore Operations { get; }
     internal ICockpitLog Log { get; }
     internal string ServerVersion => _options.ServerVersion;
 
     public event Action<ToolCallEvent>? ToolCallActivity;
 
+    /// <param name="operations">The durable operation store. Null = a non-durable in-memory store (bus unit tests only;
+    /// the runtime always passes the durable one).</param>
     public McpBusServer(BusOptions options, JobRegistry jobs, ToolRegistry tools, PermissionGate gate, LeaseManager leases,
-        AuditLog audit, ICockpitLog? log = null)
+        AuditLog audit, ICockpitLog? log = null, OperationStore? operations = null)
     {
+        Operations = operations ?? OperationStore.OpenAsync(":memory:").GetAwaiter().GetResult();
         _options = options;
         _pendingTcp = new SemaphoreSlim(options.MaxPendingTcpHandshakes, options.MaxPendingTcpHandshakes);
         Jobs = jobs;
@@ -588,23 +592,69 @@ internal sealed class BusConnection : IDisposable
         var call = new ToolCallContext(Job, tool, args, callId);
         var clock = Stopwatch.StartNew();
         string argsJson = args.GetRawText();
+        var ops = _server.Operations;
+
+        // Durable operation record for anything with side effects (V6). ReadOnly tools have none to protect.
+        OperationRecord? op = null;
+        if (tool.Risk != ToolRisk.ReadOnly)
+        {
+            var (created, existing) = await ops.BeginAsync(Job.JobId, tool.Name, OperationStore.RequestKey(Job.JobId, tool.Name, args), argsJson).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                if (existing.State == OperationState.Committed && existing.ResultJson is string stored)
+                {
+                    // Replay after commit: return what happened, never do it twice.
+                    var prior = FromStored(stored);
+                    var replay = prior with { Text = $"This exact call already completed (operation {existing.OperationId}); it was not run again. Its result:\n" + prior.Text };
+                    await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, "replayed", "not_run",
+                        $"identical to committed operation {existing.OperationId}", clock.ElapsedMilliseconds)).ConfigureAwait(false);
+                    _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "replayed", existing.OperationId));
+                    return ToMcpResult(replay);
+                }
+                string why = OperationStore.IsInFlight(existing.State)
+                    ? "is already in progress"
+                    : $"is {OperationStore.Snake(existing.State)} ({existing.Note ?? "its outcome is not known"})";
+                var refused = ToolResult.Fail($"An identical call (operation {existing.OperationId}) {why}. It may already have taken effect, so it was not run again. " +
+                    "Check it with cockpit_operation_status, or ask the user; do not retry it.");
+                await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, "rejected", "not_run",
+                    $"duplicate of {existing.OperationId} ({OperationStore.Snake(existing.State)})", clock.ElapsedMilliseconds)).ConfigureAwait(false);
+                _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "duplicate_refused", existing.OperationId));
+                return ToMcpResult(refused);
+            }
+            op = created;
+        }
+
+        async Task Move(OperationState to, string? note = null, ToolResult? result = null, string? approval = null)
+        {
+            if (op is null) return;
+            op = await ops.TransitionAsync(op.OperationId, to, note, result is null ? null : ToStored(result), approval).ConfigureAwait(false);
+        }
 
         async Task<JsonNode> Finish(string decision, string outcome, ToolResult result)
         {
+            string? detail = result.IsError ? result.Text : null;
+            if (op is not null) detail = $"[{op.OperationId}] " + (detail ?? "");
             await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, decision, outcome,
-                result.IsError ? result.Text : null, clock.ElapsedMilliseconds)).ConfigureAwait(false);
+                detail, clock.ElapsedMilliseconds)).ConfigureAwait(false);
             _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, outcome, result.IsError ? result.Text : null));
-            return ToMcpResult(result);
+            return ToMcpResult(op is null ? result : result with { Structured = WithOperation(result.Structured, op) });
         }
 
         _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "received", null));
 
         if (ArgumentValidator.Validate(tool.InputSchema, args) is string invalid)
+        {
+            await Move(OperationState.Rejected, invalid).ConfigureAwait(false);
             return await Finish("rejected", "not_run", ToolResult.Fail(invalid)).ConfigureAwait(false);
+        }
 
         if (tool.LeaseResource is string resource && !_server.Leases.TryAcquire(resource, Job.JobId, out var holder))
-            return await Finish("rejected", "not_run",
-                ToolResult.Fail($"{resource} is in use by job {holder}. Wait for that job to finish; do not work around it.")).ConfigureAwait(false);
+        {
+            var busy = ToolResult.Fail($"{resource} is in use by job {holder}. Wait for that job to finish; do not work around it.");
+            await Move(OperationState.Rejected, busy.Text).ConfigureAwait(false);
+            return await Finish("rejected", "not_run", busy).ConfigureAwait(false);
+        }
+        await Move(OperationState.Validated).ConfigureAwait(false);
 
         bool auto = PermissionGate.EffectiveMode(Job, tool) == ApprovalMode.Auto;
         if (!auto) _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "awaiting_approval", null));
@@ -612,49 +662,130 @@ internal sealed class BusConnection : IDisposable
         switch (outcome.Decision)
         {
             case GateDecision.Cancelled:
+                await Move(OperationState.Cancelled, "request cancelled while awaiting approval; not run").ConfigureAwait(false);
                 await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, "cancelled", "not_run",
                     "Request cancelled while awaiting approval.", clock.ElapsedMilliseconds)).ConfigureAwait(false);
                 throw new OperationCanceledException(ct);
             case GateDecision.Denied:
+                await Move(OperationState.Denied, outcome.KillRequested ? "the user stopped the job" : "the user denied it").ConfigureAwait(false);
                 return await Finish(outcome.KillRequested ? "killed" : "denied", "not_run",
                     ToolResult.Fail(outcome.KillRequested
                         ? "The user stopped this job. Do not continue."
                         : "The user denied this action. Do not retry it; ask the user how to proceed.")).ConfigureAwait(false);
             case GateDecision.TimedOut:
+                await Move(OperationState.Denied, "no approval within the time limit").ConfigureAwait(false);
                 return await Finish("timed_out", "not_run",
                     ToolResult.Fail("No approval within the time limit, so the action was not run.")).ConfigureAwait(false);
         }
 
         call = call with { ApprovedRows = outcome.ApprovedRows, ApprovedPreview = outcome.Preview };
         string approvedAs = auto ? "auto" : outcome.ApprovedRows is null ? "approved" : "approved_subset";
+        await Move(OperationState.Approved, null, null, new JsonObject
+        {
+            ["decision"] = approvedAs,
+            ["rows"] = outcome.ApprovedRows is null ? null : new JsonArray(outcome.ApprovedRows.Order(StringComparer.Ordinal).Select(r => (JsonNode)r).ToArray()),
+            ["binding"] = outcome.Preview?["binding"]?.DeepClone(),
+        }.ToJsonString()).ConfigureAwait(false);
+
+        // Durable BEFORE the side effect: from here on, a crash means "may have happened".
+        await Move(OperationState.Executing).ConfigureAwait(false);
         _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, "running", null));
         using var exec = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        exec.CancelAfter(tool.ExecutionTimeout);
+        var providerTask = Task.Run(() => provider.ExecuteAsync(call, exec.Token), CancellationToken.None);
         ToolResult result;
-        string resultOutcome;
         try
         {
-            result = await provider.ExecuteAsync(call, exec.Token).ConfigureAwait(false);
-            resultOutcome = result.IsError ? "tool_error" : "ok";
+            result = await providerTask.WaitAsync(tool.ExecutionTimeout, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (TimeoutException)
         {
-            result = ToolResult.Fail($"{tool.Name} timed out after {tool.ExecutionTimeout.TotalSeconds:0} s.");
-            resultOutcome = "timeout";
+            // The tool did not return in time. Ask it to stop, but do not pretend it stopped: the outcome is unknown
+            // until it reports. A late result is still recorded.
+            exec.Cancel();
+            string note = $"timed out after {tool.ExecutionTimeout.TotalSeconds:0} s while running; it may still complete";
+            await Move(OperationState.OutcomeUnknown, note).ConfigureAwait(false);
+            ObserveLate(providerTask, op, callId, tool, argsJson);
+            return await Finish(approvedAs, "outcome_unknown", ToolResult.Fail(
+                $"{tool.Name} did not finish within {tool.ExecutionTimeout.TotalSeconds:0} s. Its outcome is unknown: it may still complete. " +
+                "Do not retry it; check with cockpit_operation_status.")).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Cancelled by the client or a disconnect while the tool was running. Cancellation is a request, not a fact.
+            exec.Cancel();
+            await Move(OperationState.CancellationRequested, "the client cancelled while it was running").ConfigureAwait(false);
+            string final;
+            try
+            {
+                var late = await providerTask.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
+                await Move(late.IsError ? OperationState.Failed : OperationState.Committed, "finished after the cancellation request", late).ConfigureAwait(false);
+                final = late.IsError ? "tool_error_after_cancel" : "committed_after_cancel";
+            }
+            catch (TimeoutException)
+            {
+                await Move(OperationState.OutcomeUnknown, "still running 5 s after cancellation; it may complete").ConfigureAwait(false);
+                ObserveLate(providerTask, op, callId, tool, argsJson);
+                final = "outcome_unknown";
+            }
+            catch (Exception ex)
+            {
+                await Move(OperationState.OutcomeUnknown, $"stopped on cancellation ({ex.GetType().Name}); partial effects are possible").ConfigureAwait(false);
+                final = "outcome_unknown";
+            }
             await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, approvedAs,
-                "cancelled", "Request cancelled during execution.", clock.ElapsedMilliseconds)).ConfigureAwait(false);
+                final, $"[{op?.OperationId}] cancellation requested during execution", clock.ElapsedMilliseconds)).ConfigureAwait(false);
             throw;
         }
         catch (Exception ex)
         {
             _server.Log.Error($"Job {Job.JobId}: {tool.Name} threw", ex);
-            result = ToolResult.Fail($"{tool.Name} failed: {ex.Message}");
-            resultOutcome = "exception";
+            await Move(OperationState.OutcomeUnknown, $"threw {ex.GetType().Name}; partial effects are possible").ConfigureAwait(false);
+            return await Finish(approvedAs, "outcome_unknown", ToolResult.Fail($"{tool.Name} failed with an error and may have partly taken effect: {ex.Message}. Do not retry it blindly.")).ConfigureAwait(false);
         }
-        return await Finish(approvedAs, resultOutcome, result).ConfigureAwait(false);
+        await Move(result.IsError ? OperationState.Failed : OperationState.Committed, null, result).ConfigureAwait(false);
+        return await Finish(approvedAs, result.IsError ? "tool_error" : "ok", result).ConfigureAwait(false);
+    }
+
+    /// <summary>Records the eventual outcome of a call that outlived its timeout or cancellation.</summary>
+    private void ObserveLate(Task<ToolResult> providerTask, OperationRecord? op, string callId, ToolDescriptor tool, string argsJson)
+    {
+        if (op is null) return;
+        _ = providerTask.ContinueWith(async t =>
+        {
+            try
+            {
+                string outcome;
+                if (t.IsCompletedSuccessfully)
+                {
+                    await _server.Operations.TransitionAsync(op.OperationId, t.Result.IsError ? OperationState.Failed : OperationState.Committed,
+                        "late result after the call had already been answered", ToStored(t.Result)).ConfigureAwait(false);
+                    outcome = t.Result.IsError ? "late_tool_error" : "late_ok";
+                }
+                else outcome = "late_exception";
+                await _server.Audit.RecordAsync(new AuditEntry(Job.JobId, tool.Name, callId, tool.Risk, argsJson, "late", outcome,
+                    $"[{op.OperationId}] " + (t.IsCompletedSuccessfully ? t.Result.Text : t.Exception?.GetBaseException().Message), 0)).ConfigureAwait(false);
+                _server.Raise(new ToolCallEvent(Job.JobId, callId, tool.Name, outcome, op.OperationId));
+            }
+            catch (Exception ex) when (ex is OperationStateException or ObjectDisposedException or InvalidOperationException)
+            {
+                _server.Log.Warn($"Late result for {op.OperationId} could not be recorded: {ex.Message}");
+            }
+        }, TaskScheduler.Default).Unwrap();
+    }
+
+    private static string ToStored(ToolResult r) => new JsonObject { ["isError"] = r.IsError, ["text"] = r.Text, ["structured"] = r.Structured?.DeepClone() }.ToJsonString();
+
+    private static ToolResult FromStored(string json)
+    {
+        var o = JsonNode.Parse(json)!;
+        return new ToolResult((bool)o["isError"]!, (string)o["text"]!, o["structured"]?.DeepClone());
+    }
+
+    private static JsonNode WithOperation(JsonNode? structured, OperationRecord op)
+    {
+        var obj = structured is JsonObject so ? (JsonObject)so.DeepClone() : structured is null ? new JsonObject() : new JsonObject { ["value"] = structured.DeepClone() };
+        obj["operation"] = new JsonObject { ["id"] = op.OperationId, ["state"] = OperationStore.Snake(op.State) };
+        return obj;
     }
 
     private static JsonNode ToMcpResult(ToolResult r)

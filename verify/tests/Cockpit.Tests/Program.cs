@@ -32,6 +32,8 @@ if (args.Length == 2 && args[0] == "--write-fcpxml")
     File.WriteAllText(args[1], Cockpit.Core.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
+if (args.Length == 5 && args[0] == "--ops-core") return await Cockpit.Tests.OperationTests.CoreChildAsync(args[1], args[2], args[3], args[4]);
+if (args.Length == 6 && args[0] == "--journal-child") return await Cockpit.Tests.JournalFaultTests.ChildAsync(args);
 if (args.Length == 2 && args[0] == "--test-pdf") { File.WriteAllBytes(args[1], Cockpit.Tests.TestPdf.Build()); return 0; }
 if (args.Length == 4 && args[0] == "--pdf-text")
 {
@@ -49,6 +51,7 @@ if (args.Length == 3 && args[0] == "--write-blender-script")
 var bridgeDll = args.Length > 0 ? Path.GetFullPath(args[0]) : throw new ArgumentException("Pass the path to cockpit-mcp-bridge.dll");
 var cliDll = args.Length > 1 ? Path.GetFullPath(args[1]) : throw new ArgumentException("Pass the path to cockpit.dll (the console host)");
 var testsDll = typeof(Check).Assembly.Location;
+Cockpit.Tests.JournalFaultTests.TestsDll = testsDll;
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("xxhash64 matches reference vectors", Tests.XxHashVectors),
@@ -98,6 +101,19 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("fs-auth: TOCTOU swap race (folder ↔ symlink) never writes or reads outside; openat2 and fallback", Cockpit.Tests.SecurityTests.SwapRace),
     ("fs-auth: providers refuse a PDF behind a link and timeline media outside the roots; audited with the rule", () => Cockpit.Tests.SecurityTests.ProvidersRefuseLinks(bridgeDll)),
     ("fs-auth (Windows): junctions, junction swap race, real ADS", Cockpit.Tests.SecurityTests.WindowsJunctions),
+    // V6 Phase 2c: journal state machine under real faults
+    ("journal faults: real crash (FailFast in a child) at every boundary, first and middle hit → recover, resume, roll back exactly", Cockpit.Tests.JournalFaultTests.CrashAtEveryBoundary),
+    ("journal faults: file changed after approval is skipped; changed between fingerprint and rename is not rolled back over", Cockpit.Tests.JournalFaultTests.ConcurrentModification),
+    ("journal faults: stale rollback conflicts, newest-first works; a second process cannot open the journal", Cockpit.Tests.JournalFaultTests.StaleRollbackAndSecondProcess),
+    ("journal faults: permission failure as uid 65534 (real): one op fails, rest commit, rollback restores", Cockpit.Tests.JournalFaultTests.PermissionFailure),
+    ("journal faults: disk full under the journal (real 1 MiB tmpfs): stops consistently, reconciles, finishes", Cockpit.Tests.JournalFaultTests.DiskFullJournal),
+    ("journal faults (Windows): locked file (sharing violation)", Cockpit.Tests.JournalFaultTests.LockedFileWindows),
+    // V6 Phase 2d: durable operation store
+    ("operations: state machine refuses illegal transitions; canonical request keys; full history", Cockpit.Tests.OperationTests.StateMachineRules),
+    ("operations: replay after commit returns the stored result; concurrent duplicate refused; one side effect", () => Cockpit.Tests.OperationTests.ReplayAndDuplicates(bridgeDll)),
+    ("operations: timeout during a call that ignores cancellation → outcome_unknown, retry refused, late commit recorded, then replay", () => Cockpit.Tests.OperationTests.TimeoutDuringExecution(bridgeDll)),
+    ("operations: bridge killed mid-call → cancellation_requested (not cancelled), real outcome recorded, reconnect replays", () => Cockpit.Tests.OperationTests.KillBridgeMidCall(bridgeDll)),
+    ("operations: Core killed mid-call (real SIGKILL) → restart marks recovery_required, no blind replay, user verdict; journal reconciler settles files ops", () => Cockpit.Tests.OperationTests.KillCoreAndRestart(bridgeDll, testsDll)),
     // V6 Phase 2b: custom-code isolation
     ("isolation: approval bound to script/args/folder/policy; tampered binding refused; link/surface/truncated/extra outputs refused; staging cleanup never follows links", () => Cockpit.Tests.IsolationTests.ApprovalBindingAndOutputChecks(bridgeDll)),
     ("isolation (real bwrap): no host files, read-only system, no secrets in env, uid 65534, own PID ns, no nested userns, no mount", Cockpit.Tests.IsolationTests.RealSandboxConfinement),

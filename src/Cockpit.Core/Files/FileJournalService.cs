@@ -312,6 +312,25 @@ public sealed class FileJournalService : IAsyncDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            return await ExecuteLockedAsync(batchId, jobId, progress, ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+        {
+            // The journal itself cannot be written (disk full, I/O error). Stop at once: continuing would move
+            // files the journal cannot record. The batch stays 'executing' on disk and is reconciled from the
+            // file system on the next attempt or the next start.
+            throw new JournalException($"The file journal could not record progress ({ex.Message}). No further files were moved; " +
+                "the batch will be reconciled from the disk before it is touched again.", ex);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<ExecuteResult> ExecuteLockedAsync(string batchId, string jobId, IProgress<int>? progress, CancellationToken ct)
+    {
+        {
             string status = await GetOwnedStatusAsync(batchId, jobId, ct).ConfigureAwait(false);
             if (status is "executing" or "rolling_back")
             {
@@ -328,7 +347,6 @@ public sealed class FileJournalService : IAsyncDisposable
 
             var errors = new List<string>();
             int processed = 0;
-            try
             {
                 foreach (var op in await LoadOpsAsync(batchId, "pending", descending: false, ct).ConfigureAwait(false))
                 {
@@ -367,14 +385,6 @@ public sealed class FileJournalService : IAsyncDisposable
                     progress?.Report(++processed);
                 }
             }
-            catch (SqliteException ex)
-            {
-                // The journal itself cannot be written (disk full, I/O error). Stop at once: continuing would move
-                // files the journal cannot record. The batch stays 'executing' on disk and is reconciled from the
-                // file system on the next attempt or the next start.
-                throw new JournalException($"The file journal could not record progress ({ex.Message}). No further files were moved; " +
-                    "the batch will be reconciled from the disk before it is touched again.", ex);
-            }
 
             Fault("execute.before_final_status");
             var counts = await CountStatesAsync(batchId).ConfigureAwait(false);
@@ -382,10 +392,6 @@ public sealed class FileJournalService : IAsyncDisposable
             await SetStatusAsync(batchId, final).ConfigureAwait(false);
             return new ExecuteResult(batchId, final, counts.GetValueOrDefault("done"), counts.GetValueOrDefault("skipped"),
                 counts.GetValueOrDefault("failed"), counts.GetValueOrDefault("pending"), errors);
-        }
-        finally
-        {
-            _gate.Release();
         }
     }
 
@@ -435,6 +441,21 @@ public sealed class FileJournalService : IAsyncDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            return await RollbackLockedAsync(batchId, jobId, ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+        {
+            throw new JournalException($"The file journal could not record the rollback ({ex.Message}). It stopped; the batch will be reconciled before it is touched again.", ex);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<RollbackResult> RollbackLockedAsync(string batchId, string jobId, CancellationToken ct)
+    {
+        {
             string status = await GetOwnedStatusAsync(batchId, jobId, ct).ConfigureAwait(false);
             if (status is "executing" or "rolling_back") status = await ReconcileBatchAsync(batchId, status, ct).ConfigureAwait(false);
             if (status is not ("committed" or "partially_committed" or "partially_rolled_back"))
@@ -445,7 +466,13 @@ public sealed class FileJournalService : IAsyncDisposable
 
             var conflicts = new List<string>();
             int undone = 0;
-            foreach (var op in await LoadOpsAsync(batchId, "done", descending: true, ct).ConfigureAwait(false))
+            // Earlier conflicts are retried: a conflict means "not safe now" (for example a later batch had moved the
+            // file on), and rolling that later batch back first can make it safe.
+            var toUndo = (await LoadOpsAsync(batchId, "done", descending: true, ct).ConfigureAwait(false))
+                .Concat(await LoadOpsAsync(batchId, "conflict", descending: true, ct).ConfigureAwait(false))
+                .Where(o => o.Fingerprint is not null || o.Kind == "mkdir")
+                .OrderByDescending(o => o.Seq).ToList();
+            foreach (var op in toUndo)
             {
                 if (ct.IsCancellationRequested) break;
                 string? conflict = op.Kind == "mkdir" ? UndoMkdir(op, paths) : await UndoMoveAsync(op, paths, ct).ConfigureAwait(false);
@@ -466,10 +493,6 @@ public sealed class FileJournalService : IAsyncDisposable
             string final = counts.GetValueOrDefault("done") == 0 && counts.GetValueOrDefault("conflict") == 0 ? "rolled_back" : "partially_rolled_back";
             await SetStatusAsync(batchId, final).ConfigureAwait(false);
             return new RollbackResult(batchId, final, undone, conflicts);
-        }
-        finally
-        {
-            _gate.Release();
         }
     }
 

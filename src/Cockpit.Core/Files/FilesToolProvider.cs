@@ -10,7 +10,7 @@ namespace Cockpit.Core.Files;
 /// MCP tools for reversible file organization. Planning is read-only and automatic; executing and rolling
 /// back a batch always ask the user, with a preview built from the journal (not from the model's claims).
 /// </summary>
-public sealed class FilesToolProvider : IToolProvider
+public sealed class FilesToolProvider : IToolProvider, IOperationReconciler
 {
     public const string PlanRules = "files_plan_by_rules";
     public const string PlanMoves = "files_plan_moves";
@@ -123,6 +123,32 @@ public sealed class FilesToolProvider : IToolProvider
         {
             return new JsonObject { ["kind"] = "error", ["error"] = ex.Message };
         }
+    }
+
+    /// <summary>
+    /// After a restart: an interrupted execute or rollback is settled from the journal, which records every file.
+    /// Both are safe to run again (the journal resumes; it never repeats a completed move), so a partial batch
+    /// is reported as Failed with a note rather than left for the user.
+    /// </summary>
+    public async Task<(OperationState State, string Note)?> ReconcileAsync(OperationRecord operation)
+    {
+        if (operation.Tool is not (Execute or Rollback)) return null;
+        string? batch;
+        try { batch = JsonDocument.Parse(operation.ArgumentsJson).RootElement.GetProperty("batchId").GetString(); }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException) { return null; }
+        if (batch is null) return null;
+        try
+        {
+            var st = await _journal.GetStatusAsync(batch, operation.JobId, CancellationToken.None).ConfigureAwait(false);
+            return (operation.Tool, st.Status) switch
+            {
+                (Execute, "committed") => (OperationState.Committed, $"batch {batch} is committed"),
+                (Rollback, "rolled_back") => (OperationState.Committed, $"batch {batch} is rolled back"),
+                (Execute, "planned") => (OperationState.Failed, $"batch {batch} never started; nothing moved"),
+                _ => (OperationState.Failed, $"batch {batch} is {st.Status}; running the same call again resumes it safely"),
+            };
+        }
+        catch (JournalException) { return null; }
     }
 
     public async Task<ToolResult> ExecuteAsync(ToolCallContext call, CancellationToken ct)

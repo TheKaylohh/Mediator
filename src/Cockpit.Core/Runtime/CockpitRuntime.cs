@@ -23,6 +23,7 @@ public sealed record CockpitPaths(string DataDirectory)
     public string AuditDatabase => Path.Combine(DataDirectory, "audit.db");
     public string JournalDatabase => Path.Combine(DataDirectory, "journal.db");
     public string UsageDatabase => Path.Combine(DataDirectory, "usage.db");
+    public string OperationsDatabase => Path.Combine(DataDirectory, "operations.db");
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "jobs");
 
     /// <summary>%LOCALAPPDATA%\AiCockpit on Windows; $XDG_DATA_HOME/ai-cockpit or ~/.local/share/ai-cockpit elsewhere.</summary>
@@ -252,8 +253,15 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     public IReadOnlyList<RunningJob> Jobs => _jobs.Values.OrderBy(j => j.StartedAt).ToList();
 
-    private CockpitRuntime(RuntimeOptions options, AuditLog audit, FileJournalService journal, UsageLedger usage)
+    /// <summary>Durable record of side-effecting tool calls (dedupe, outcome-unknown, restart reconciliation).</summary>
+    public OperationStore Operations { get; }
+
+    /// <summary>What restart reconciliation found when this runtime started.</summary>
+    public (int NotRun, int Settled, int NeedsUser) Recovery { get; private set; }
+
+    private CockpitRuntime(RuntimeOptions options, AuditLog audit, FileJournalService journal, UsageLedger usage, OperationStore operations)
     {
+        Operations = operations;
         _options = options;
         Audit = audit;
         Journal = journal;
@@ -287,7 +295,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             ? CadCode.SandboxPython.Probe(local.Executable) : null);
         Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
-        Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log);
+        Tools.Register(new OperationsToolProvider(operations));
+        Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log, operations);
         Bus.ToolCallActivity += e =>
         {
             if (_jobs.TryGetValue(e.JobId, out var active)) active.Touch();
@@ -303,7 +312,14 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         var audit = await AuditLog.OpenAsync(options.Paths.AuditDatabase, ct).ConfigureAwait(false);
         var journal = await FileJournalService.OpenAsync(options.Paths.JournalDatabase, options.PathPolicy ?? ProtectedPathPolicy.CreateDefault(), ct).ConfigureAwait(false);
         var usage = await UsageLedger.OpenAsync(options.Paths.UsageDatabase, ct: ct).ConfigureAwait(false);
-        var runtime = new CockpitRuntime(options, audit, journal, usage);
+        var operations = await OperationStore.OpenAsync(options.Paths.OperationsDatabase, ct).ConfigureAwait(false);
+        var runtime = new CockpitRuntime(options, audit, journal, usage, operations);
+        // Before any bridge can connect: settle what was mid-flight when the previous Core stopped.
+        runtime.Recovery = await operations.ReconcileAfterRestartAsync(op =>
+            runtime.Tools.TryGet(op.Tool, out var provider, out _) && provider is IOperationReconciler r
+                ? r.ReconcileAsync(op) : Task.FromResult<(OperationState, string)?>(null)).ConfigureAwait(false);
+        if (runtime.Recovery.NeedsUser > 0)
+            options.Log.Warn($"{runtime.Recovery.NeedsUser} operation(s) from before the restart need a check: cockpit operations");
         runtime.Bus.Start();
         return runtime;
     }
@@ -318,7 +334,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         RouteDecision? route = spec.Launch == LaunchMode.None ? null
             : await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
         string jobId = spec.JobId ?? NewJobId(spec.Kind);
-        var grant = Registry.Issue(jobId, spec.Tools, spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        var grant = Registry.Issue(jobId, spec.Tools.Append(OperationsToolProvider.StatusTool).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
         RunningJob job;
         try
         {
@@ -566,6 +582,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         foreach (var job in _jobs.Values) job.ProcessGroup.Dispose();
         await Usage.DisposeAsync().ConfigureAwait(false);
         await Journal.DisposeAsync().ConfigureAwait(false);
+        await Operations.DisposeAsync().ConfigureAwait(false);
         await Audit.DisposeAsync().ConfigureAwait(false);
     }
 }
