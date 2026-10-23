@@ -6,6 +6,7 @@ using Cockpit.Core.CadCode;
 using Cockpit.Core.Runtime;
 using Cockpit.Core.Swx;
 using Cockpit.Core.Tools;
+using Cockpit.Tests;
 
 namespace Cockpit.Tests;
 
@@ -86,5 +87,22 @@ static class LiveCadBoundaryTests
         Console.WriteLine($"      {built} parts built and re-imported in the sandbox; {refused} boundary combinations refused up front; {failures.Count} failed in generation");
         foreach (var f in failures) Console.WriteLine("        failed: " + f[..Math.Min(200, f.Length)]);
         Check.True(failures.Count == 0, $"every combination the rules accept produces a valid solid ({failures.Count} did not)");
+    }
+}
+
+/// <summary>StepValidator on STEP files written by real build123d/OpenCascade (verify/fixtures/swx), the same set the SolidWorks procedure imports.</summary>
+static class StepFixtureTests
+{
+    public static Task ValidatorOnRealStepFiles()
+    {
+        string dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 8 && !Directory.Exists(Path.Combine(dir, "verify", "fixtures", "swx")); i++) dir = Path.GetDirectoryName(dir.TrimEnd('/', '\\'))!;
+        string F(string n) => Path.Combine(dir, "verify", "fixtures", "swx", n);
+        StepValidator.Report R(string n) { using var s = File.OpenRead(F(n)); return StepValidator.Check(s); }
+        Check.True(R("plate_solid.step") is { Ok: true, SolidEntities: 1 } && R("shaft_d25.step").Ok, "real solids accepted");
+        Check.True(R("sheet_surface_only.step") is { Ok: false } s && s.Error!.Contains("only surface", StringComparison.Ordinal), "real surface-only STEP refused");
+        Check.True(R("plate_truncated.step") is { Ok: false } t && t.Error!.Contains("truncated", StringComparison.Ordinal), "truncated STEP refused");
+        Check.True(!R("empty.step").Ok, "empty file refused");
+        return Task.CompletedTask;
     }
 }

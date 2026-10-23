@@ -137,6 +137,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("audit: secrets redacted before storage (registered values, key formats, secret fields, bearer, VAR=value)", Cockpit.Tests.AuditTests.RedactionBeforeStorage),
     ("audit: appender SIGKILLed mid-stream 3 times; chain verifies and continues each time", () => Cockpit.Tests.AuditTests.CrashMidAppendStaysConsistent(testsDll)),
     ("support bundle: only documented files; no secrets, tokens, file names, contents or real paths; chain head included", () => Cockpit.Tests.AuditTests.SupportBundleIsClean(bridgeDll)),
+    ("step: validator on STEP files written by real build123d/OpenCascade: solid ok; surface-only, truncated, empty refused", Cockpit.Tests.StepFixtureTests.ValidatorOnRealStepFiles),
     // V6 Phase 2d: durable operation store
     ("operations: state machine refuses illegal transitions; canonical request keys; full history", Cockpit.Tests.OperationTests.StateMachineRules),
     ("operations: replay after commit returns the stored result; concurrent duplicate refused; one side effect", () => Cockpit.Tests.OperationTests.ReplayAndDuplicates(bridgeDll)),

@@ -1,7 +1,8 @@
-# AI Cockpit V5
+# AI Cockpit V6 (partial release candidate)
 
 A personal Windows cockpit that drives your existing subscriptions through their official CLIs — Claude Code (Claude Pro) and Gemini CLI (Google AI Pro), with automatic failover when one is at its limit — and your desktop apps: SolidWorks, DaVinci Resolve, Blender, plus build123d for parametric parts and an exact-arithmetic linear algebra tutor. Every tool call is gated, audited and, for files, reversible.
-Start with [SPEC.md](SPEC.md): what was verified and how, V5 changes, the Toolbox-style overlay, the tool providers, topology, protocol, security, the day-1 bug checklist, and what still needs verifying on Windows.
+**V6 is a hardening release.** Start with [docs/v6/TEST_RESULTS.md](docs/v6/TEST_RESULTS.md) (what ran, what did not), then [THREAT_MODEL](docs/v6/THREAT_MODEL.md), [INTEGRATION_MATRIX](docs/v6/INTEGRATION_MATRIX.md), [FILESYSTEM_SECURITY](docs/v6/FILESYSTEM_SECURITY.md), [ISOLATION](docs/v6/ISOLATION.md), [OPERATION_RECOVERY](docs/v6/OPERATION_RECOVERY.md), [BENCHMARKS](docs/v6/BENCHMARKS.md), [RELEASE_CHECKLIST](docs/v6/RELEASE_CHECKLIST.md) and [CHANGELOG](docs/v6/CHANGELOG.md). Nothing Windows-, SolidWorks-, Resolve- or account-specific has run yet; those suites are written and listed as NOT RUN.
+[SPEC.md](SPEC.md) is the V5 design document: what was verified and how, V5 changes, the Toolbox-style overlay, the tool providers, topology, protocol, security, the day-1 bug checklist, and what still needs verifying on Windows.
 
 | Project | What it is |
 | --- | --- |
@@ -13,4 +14,8 @@ Start with [SPEC.md](SPEC.md): what was verified and how, V5 changes, the Toolbo
 | `src/Cockpit.UI` | Overlay ViewModels (no WPF; tested on any OS) |
 | `src/Cockpit.Wpf` | `AiCockpit`: the tray + Ctrl+Shift+Space overlay (Windows only) |
 | `scripts/check-windows-build.ps1` | Real build on Windows: finds the SolidWorks interop, publishes to `dist\`, runs `cockpit doctor` |
-| `verify/` | Offline stand-ins and the test runner: `bash verify/run-tests.sh` (40 tests, zero warnings); `live-requirements.txt` for the 4 optional live tests |
+| `scripts/run-tests.ps1` | Windows twin of `verify/run-tests.sh` (runs the NTFS and sharing-violation tests that Linux skips) |
+| `scripts/swx-integration.ps1` | Real-SolidWorks procedure (STEP import cases, ownership, worker restart) |
+| `scripts/capture-cli.ps1` | Captures real Claude/Gemini CLI output with your own subscriptions, for parser fixtures |
+| `.github/workflows/v6.yml` | CI layers: Linux offline + live, Windows offline + ship build, self-hosted licensed jobs |
+| `verify/` | Offline stand-ins and the test runner: `bash verify/run-tests.sh` (89 tests; PASS/FAIL/SKIP; zero warnings); `live-requirements.txt` for the 6 live tests; `fixtures/real` holds real CLI captures, `fixtures/swx` real STEP files |
