@@ -51,12 +51,13 @@ public sealed class GeminiLaunchBuilder
         return psi;
     }
 
-    public ProcessStartInfo Interactive(JobWorkspace ws, string initialPrompt, bool allowMeteredBilling = false)
+    /// <param name="hasBrief">The job's task is served by cockpit_job_brief; the command line only says to fetch it.</param>
+    public ProcessStartInfo Interactive(JobWorkspace ws, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false)
     {
         string command = $"& {InteractiveSession.Ps(_geminiExecutable)} --allowed-mcp-server-names {JobWorkspaceFactory.ServerName}" + (_skipTrust ? " --skip-trust" : "")
-            + (initialPrompt.Length == 0 ? "" : " -i " + InteractiveSession.Ps(initialPrompt));
+            + (hasBrief ? " -i " + InteractiveSession.Ps(JobBriefToolProvider.Instruction) : "");
         string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-gemini.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling),
-            allowMeteredBilling, new Dictionary<string, string>(), ws.Root, command);
+            allowMeteredBilling, new Dictionary<string, string>(), ws.Root, command, session.Nonce);
         return CliLaunchBuilder.TerminalStartInfo(script, $"Cockpit {ws.JobId} (Gemini)", ws.Root);
     }
 }

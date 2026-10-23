@@ -15,11 +15,16 @@ public sealed record BridgeOptions(
     TimeSpan RequestTimeout,
     TimeSpan ConnectTimeout)
 {
+    /// <summary>The job token arrives in this environment variable, never on the command line (argv is visible to other processes).</summary>
+    public const string TokenVariable = "COCKPIT_JOB_TOKEN";
+
     public const string Usage =
-        "usage: cockpit-mcp-bridge --job-id <id> --scope <token> [--endpoint pipe:ai-cockpit-bus | tcp:127.0.0.1:<port>] " +
+        "usage: COCKPIT_JOB_TOKEN=<token> cockpit-mcp-bridge --job-id <id> [--endpoint pipe:ai-cockpit-bus | tcp:127.0.0.1:<port>] " +
         "[--timeout-seconds 1200] [--connect-timeout-seconds 10]";
 
-    public static BridgeOptions Parse(string[] args)
+    public static BridgeOptions Parse(string[] args) => Parse(args, Environment.GetEnvironmentVariable(TokenVariable));
+
+    public static BridgeOptions Parse(string[] args, string? tokenFromEnvironment)
     {
         string? jobId = null, token = null;
         var endpoint = BusEndpoint.Default;
@@ -30,15 +35,16 @@ public sealed record BridgeOptions(
             switch (args[i])
             {
                 case "--job-id": jobId = Next(); break;
-                case "--scope": token = Next(); break;
+                case "--scope": throw new ArgumentException($"--scope is no longer accepted: tokens on a command line are visible to other processes. Pass it in {TokenVariable}.");
                 case "--endpoint": endpoint = BusEndpoint.Parse(Next()); break;
                 case "--timeout-seconds": timeout = double.Parse(Next(), CultureInfo.InvariantCulture); break;
                 case "--connect-timeout-seconds": connect = double.Parse(Next(), CultureInfo.InvariantCulture); break;
                 default: throw new ArgumentException($"Unknown argument '{args[i]}'.");
             }
         }
-        if (string.IsNullOrEmpty(jobId) || string.IsNullOrEmpty(token))
-            throw new ArgumentException("--job-id and --scope are required.");
+        token = tokenFromEnvironment;
+        if (string.IsNullOrEmpty(jobId)) throw new ArgumentException("--job-id is required.");
+        if (string.IsNullOrEmpty(token)) throw new ArgumentException($"{TokenVariable} is not set.");
         if (timeout is < 1 or > 86_400 || connect is < 0.1 or > 300)
             throw new ArgumentException("Timeouts are out of range.");
         return new BridgeOptions(jobId, token, endpoint, TimeSpan.FromSeconds(timeout), TimeSpan.FromSeconds(connect));

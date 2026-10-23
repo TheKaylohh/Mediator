@@ -104,7 +104,7 @@ static class LaunchTests
         await Task.Delay(200);
         Check.Equal(JobState.Running, job.State, "still running after the launcher exited");
         using var terminal = launcher.StartTerminal();
-        new InteractiveSession(job.Workspace.Root).WritePid(terminal);
+        job.Interactive!.WritePid(terminal);
         await using (var client = await runtime.ConnectClientAsync(job))
         {
             var cards = await client.CallToolAsync("swx_part_cards", new JsonObject { ["folder"] = folder }, TimeSpan.FromSeconds(30));
@@ -112,7 +112,18 @@ static class LaunchTests
         }
         await Task.Delay(300);
         Check.Equal(JobState.Running, job.State, "still running while the terminal is alive and no done file exists");
-        File.WriteAllText(Path.Combine(job.Workspace.Root, InteractiveSession.DoneFileName), "0");
+        // V6: a done file from another session, a malformed one and a half-written one are all ignored.
+        File.WriteAllText(job.Interactive.DonePath, "0123456789abcdef0123456789abcdef 0");
+        await Task.Delay(300);
+        Check.Equal(JobState.Running, job.State, "a done file with another session's nonce is ignored");
+        Check.True(job.Interactive.LastRejected?.Contains("another session", StringComparison.Ordinal) == true, "and the reason is recorded");
+        File.WriteAllText(job.Interactive.DonePath, job.Interactive.Nonce);
+        await Task.Delay(300);
+        Check.Equal(JobState.Running, job.State, "a half-written done file (nonce only) is ignored");
+        File.WriteAllText(job.Interactive.DonePath, "garbage");
+        await Task.Delay(300);
+        Check.Equal(JobState.Running, job.State, "a malformed done file is ignored");
+        job.Interactive.WriteDone(0);
         Check.Equal(JobState.Succeeded, await job.Completion.WaitAsync(TimeSpan.FromSeconds(5)), "interactive.done 0 → Succeeded");
         Check.True(!runtime.Registry.TryGet("int-1", out _), "grant revoked when the CLI exited");
         terminal.Kill();
@@ -120,7 +131,7 @@ static class LaunchTests
         // ── 2. kill ends the terminal process tree too ──
         var job2 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-2" });
         using var terminal2 = launcher.StartTerminal();
-        new InteractiveSession(job2.Workspace.Root).WritePid(terminal2);
+        job2.Interactive!.WritePid(terminal2);
         await Task.Delay(150);
         Check.True(runtime.KillJob("int-2", "test"), "kill accepted");
         Check.True(terminal2.WaitForExit(5000), "the terminal recorded in interactive.pid was terminated");
@@ -132,7 +143,7 @@ static class LaunchTests
         var job3 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-3" });
         using (var terminal3 = launcher.StartTerminal())
         {
-            new InteractiveSession(job3.Workspace.Root).WritePid(terminal3);
+            job3.Interactive!.WritePid(terminal3);
             await Task.Delay(150);
             terminal3.Kill();
         }
@@ -141,7 +152,7 @@ static class LaunchTests
 
         // ── 4. a recycled PID is not mistaken for the terminal ──
         var job4 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-4" });
-        File.WriteAllText(new InteractiveSession(job4.Workspace.Root).PidPath, InteractiveSession.FormatPid(Environment.ProcessId, DateTime.UtcNow.AddHours(-3)));
+        File.WriteAllText(job4.Interactive!.PidPath, InteractiveSession.FormatPid(job4.Interactive.Nonce, Environment.ProcessId, DateTime.UtcNow.AddHours(-3)));
         Check.Equal(JobState.Ended, await job4.Completion.WaitAsync(TimeSpan.FromSeconds(5)), "same PID, different start time → treated as gone");
 
         // ── 5. terminal never starts ──
@@ -263,7 +274,8 @@ static class LaunchTests
         var server = settings["mcpServers"]!["cockpit"]!;
         Check.Equal(ComponentLocator.DotnetHost(), (string)server["command"]!, "settings.json runs the bridge");
         var serverArgs = server["args"]!.AsArray().Select(a => (string)a!).ToList();
-        Check.True(serverArgs[0] == bridgeDll && serverArgs.Contains("route-a") && serverArgs.Contains(job.Grant.Token), "bridge args carry this job's id and token");
+        Check.True(serverArgs[0] == bridgeDll && serverArgs.Contains("route-a") && !serverArgs.Contains(job.Grant.Token), "bridge args carry this job's id but not its token");
+        Check.Equal(job.Grant.Token, (string?)server["env"]!["COCKPIT_JOB_TOKEN"], "the token travels in the bridge's environment");
 
         Check.Equal(JobState.Succeeded, await job.Completion.WaitAsync(TimeSpan.FromSeconds(20)), "Gemini stream parsed to a successful result: " + job.Detail);
         var totals = await runtime.Usage.TotalsAsync("gemini-cli", DateTimeOffset.MinValue);

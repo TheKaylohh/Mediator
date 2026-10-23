@@ -135,14 +135,16 @@ static class StreamTests
             var metered = builder.ClaudeHeadless(ws, root, 10, allowMeteredBilling: true);
             Check.True(vars.All(v => metered.Environment.TryGetValue(v, out var val) && val == "set-by-test"), "headless: opt-in keeps the variables");
 
-            builder.ClaudeInteractive(ws, root, "assemble 'these' parts; now");
+            var session = new InteractiveSession(ws.Root);
+            builder.ClaudeInteractive(ws, root, session, hasBrief: true);
             byte[] script = File.ReadAllBytes(Path.Combine(ws.Root, "launch-claude.ps1"));
             Check.True(script.AsSpan().StartsWith(Utf8.WithBom.GetPreamble()), ".ps1 has a UTF-8 BOM");
             string text = Encoding.UTF8.GetString(script);
             Check.True(vars.All(v => text.Contains($"Remove-Item Env:{v} ", StringComparison.Ordinal)), ".ps1 removes every billing variable");
-            Check.True(text.Contains("'assemble ''these'' parts; now'", StringComparison.Ordinal), ".ps1 prompt is a single-quoted literal");
+            Check.True(text.Contains(InteractiveSession.Ps(JobBriefToolProvider.Instruction), StringComparison.Ordinal), ".ps1 carries only the fixed brief instruction, never the user's prompt");
+            Check.True(text.Contains(session.Nonce, StringComparison.Ordinal) && text.Contains("Move-Item", StringComparison.Ordinal), ".ps1 binds sentinels to this session's nonce and writes them atomically");
 
-            builder.ClaudeInteractive(ws, root, "x", allowMeteredBilling: true);
+            builder.ClaudeInteractive(ws, root, session, hasBrief: true, allowMeteredBilling: true);
             text = File.ReadAllText(Path.Combine(ws.Root, "launch-claude.ps1"));
             Check.True(!text.Contains("Remove-Item Env:", StringComparison.Ordinal) && text.Contains("Metered billing was opted in", StringComparison.Ordinal), ".ps1 opt-in keeps the variables");
         }

@@ -256,6 +256,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     /// <summary>Durable record of side-effecting tool calls (dedupe, outcome-unknown, restart reconciliation).</summary>
     public OperationStore Operations { get; }
 
+    /// <summary>Interactive jobs' tasks, served over the bus instead of a command line.</summary>
+    internal JobBriefToolProvider Briefs { get; } = new();
+
     /// <summary>What restart reconciliation found when this runtime started.</summary>
     public (int NotRun, int Settled, int NeedsUser) Recovery { get; private set; }
 
@@ -296,6 +299,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
         Tools.Register(new OperationsToolProvider(operations));
+        Tools.Register(Briefs);
         Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log, operations);
         Bus.ToolCallActivity += e =>
         {
@@ -334,7 +338,10 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         RouteDecision? route = spec.Launch == LaunchMode.None ? null
             : await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
         string jobId = spec.JobId ?? NewJobId(spec.Kind);
-        var grant = Registry.Issue(jobId, spec.Tools.Append(OperationsToolProvider.StatusTool).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
+        var builtIns = brief ? new[] { OperationsToolProvider.StatusTool, JobBriefToolProvider.BriefTool } : [OperationsToolProvider.StatusTool];
+        var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        if (brief) Briefs.Set(jobId, spec.Prompt);
         RunningJob job;
         try
         {
@@ -391,7 +398,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         var bridge = Bridge ?? throw new InvalidOperationException("cockpit-mcp-bridge not found.");
         return BridgeMcpClient.StartAsync(bridge, JobWorkspaceFactory.BridgeArguments(job.Grant, Bus.EndpointFor(job.Grant), _options.BridgeTimeout),
-            job.ProcessGroup, "cockpit-cli", ct);
+            job.ProcessGroup, "cockpit-cli", ct, JobWorkspaceFactory.BridgeEnvironment(job.Grant));
     }
 
     private string RequireExecutable(AiProvider provider) => ExecutableFor(provider) ?? throw new ProviderUnavailableException(provider == AiProvider.ClaudeCode
@@ -462,11 +469,14 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     private void LaunchInteractive(RunningJob job)
     {
         var spec = job.Spec;
+        var session = new InteractiveSession(job.Workspace.Root);
+        session.ClearStale();
+        bool hasBrief = spec.Prompt.Length > 0;
         var psi = job.Provider == AiProvider.GeminiCli
-            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, spec.Prompt, spec.AllowMeteredBilling)
+            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, spec.Prompt, spec.AllowMeteredBilling);
-        job.Interactive = new InteractiveSession(job.Workspace.Root);
+                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling);
+        job.Interactive = session;
         _options.Launcher.StartInteractive(psi, job.Workspace);
         // Never watch the launcher: wt.exe exits within milliseconds. The script's sentinel files tell us what happens.
         _ = Task.Run(() => WatchInteractiveAsync(job), CancellationToken.None);
@@ -558,6 +568,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     private void OnRevoked(string jobId)
     {
+        Briefs.Remove(jobId);
         // Expiry (bus sweep) or an external revoke ends the job too.
         if (_jobs.TryGetValue(jobId, out var job) && job.TryFinish(JobState.Ended, "grant revoked or expired"))
         {

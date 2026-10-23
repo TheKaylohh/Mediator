@@ -40,9 +40,10 @@ public sealed class BridgeMcpClient : IAsyncDisposable
     }
 
     public static async Task<BridgeMcpClient> StartAsync(ComponentCommand bridge, IEnumerable<string> bridgeArguments, ChildProcessJob? job,
-        string clientName = "cockpit-cli", CancellationToken ct = default)
+        string clientName = "cockpit-cli", CancellationToken ct = default, IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = bridge.ToStartInfo(bridgeArguments);
+        foreach (var (k, v) in environment ?? new Dictionary<string, string>()) psi.Environment[k] = v;
         psi.RedirectStandardInput = psi.RedirectStandardOutput = psi.RedirectStandardError = true;
         psi.StandardOutputEncoding = Utf8.NoBom;
         psi.StandardErrorEncoding = Utf8.NoBom;

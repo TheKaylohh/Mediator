@@ -10,8 +10,10 @@ public sealed record JobWorkspace(string JobId, string Root, string ArtifactsDir
 
 /// <summary>
 /// Creates a job's private folder and the MCP configs that point each CLI at cockpit-mcp-bridge with this
-/// job's ID and token. The token appears only here and in the bridge's process arguments; it is bound
-/// server-side to this job's grant and dies with the job.
+/// job's ID and token. V6: the token is passed to the bridge in its environment (the configs' "env" block),
+/// never in its arguments, so it does not appear in any process command line. The config files are owner-only
+/// on Unix; on Windows they sit in the user's profile. The token is bound server-side to this job's grant and
+/// dies with the job.
 /// </summary>
 public static class JobWorkspaceFactory
 {
@@ -22,8 +24,20 @@ public static class JobWorkspaceFactory
 
     /// <summary>The bridge's arguments for a job, after any prefix (e.g. the .dll path when started through dotnet).</summary>
     public static IReadOnlyList<string> BridgeArguments(JobGrant grant, BusEndpoint endpoint, TimeSpan bridgeTimeout) =>
-        ["--job-id", grant.JobId, "--scope", grant.Token, "--endpoint", endpoint.ToString(),
+        ["--job-id", grant.JobId, "--endpoint", endpoint.ToString(),
          "--timeout-seconds", ((int)bridgeTimeout.TotalSeconds).ToString(CultureInfo.InvariantCulture)];
+
+    public const string TokenVariable = "COCKPIT_JOB_TOKEN";
+
+    /// <summary>The bridge's environment for a job: the token, and nothing else.</summary>
+    public static IReadOnlyDictionary<string, string> BridgeEnvironment(JobGrant grant) =>
+        new Dictionary<string, string>(StringComparer.Ordinal) { [TokenVariable] = grant.Token };
+
+    private static void WriteOwnerOnly(string path, string content)
+    {
+        File.WriteAllText(path, content, Utf8.NoBom);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
 
     public static JobWorkspace Create(string workspacesRoot, JobGrant grant, ComponentCommand bridge, BusEndpoint endpoint, TimeSpan bridgeTimeout)
     {
@@ -45,11 +59,11 @@ public static class JobWorkspaceFactory
                     ["type"] = "stdio",
                     ["command"] = bridgeExecutable,
                     ["args"] = args.DeepClone(),
-                    ["env"] = new JsonObject(),
+                    ["env"] = new JsonObject { [TokenVariable] = grant.Token },
                 },
             },
         };
-        File.WriteAllText(claudePath, claude.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), Utf8.NoBom);
+        WriteOwnerOnly(claudePath, claude.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
         // Gemini CLI: project settings in <cwd>/.gemini/settings.json. "trust": true skips Gemini's own
         // confirmation because the Cockpit gate is the authority; "timeout" (ms) must exceed the bridge's.
@@ -64,12 +78,13 @@ public static class JobWorkspaceFactory
                 {
                     ["command"] = bridgeExecutable,
                     ["args"] = args.DeepClone(),
+                    ["env"] = new JsonObject { [TokenVariable] = grant.Token },
                     ["timeout"] = (long)(bridgeTimeout + TimeSpan.FromSeconds(30)).TotalMilliseconds,
                     ["trust"] = true,
                 },
             },
         };
-        File.WriteAllText(geminiPath, gemini.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), Utf8.NoBom);
+        WriteOwnerOnly(geminiPath, gemini.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
         return new JobWorkspace(grant.JobId, root, artifacts, claudePath, geminiPath);
     }

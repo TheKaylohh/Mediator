@@ -422,9 +422,14 @@ static class Tests
         Check.True(raw[0] == (byte)'{', "MCP config has no BOM");
         var claude = JsonNode.Parse(raw)!;
         var argv = claude["mcpServers"]!["cockpit"]!["args"]!.AsArray().Select(n => (string)n!).ToList();
-        Check.True(argv.SequenceEqual(new[] { "--job-id", "job-gen", "--scope", grant.Token, "--endpoint", "pipe:ai-cockpit-bus", "--timeout-seconds", "1200" }), "bridge args");
+        Check.True(argv.SequenceEqual(new[] { "--job-id", "job-gen", "--endpoint", "pipe:ai-cockpit-bus", "--timeout-seconds", "1200" }), "bridge args carry no token");
+        Check.True(!argv.Any(a => a.Contains(grant.Token, StringComparison.Ordinal)), "the token is not in argv");
         var gemini = JsonNode.Parse(File.ReadAllText(ws.GeminiSettingsPath))!;
         Check.True((long)gemini["mcpServers"]!["cockpit"]!["timeout"]! > 1_200_000, "Gemini timeout exceeds bridge timeout");
+        Check.Equal(grant.Token, (string?)claude["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Claude config passes the token in env");
+        Check.Equal(grant.Token, (string?)gemini["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Gemini config passes the token in env");
+        if (!OperatingSystem.IsWindows())
+            Check.True(File.GetUnixFileMode(ws.ClaudeMcpConfigPath) == (UnixFileMode.UserRead | UnixFileMode.UserWrite), "config files are owner-only");
         return Task.CompletedTask;
     }
 
@@ -496,9 +501,10 @@ static class Tests
         private readonly StreamReader _stdout;
         public StringBuilder Stderr { get; } = new();
 
-        public BridgeProcess(string bridgeDll, params string[] args)
+        public BridgeProcess(string bridgeDll, string? token, params string[] args)
         {
             var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            if (token is not null) psi.Environment["COCKPIT_JOB_TOKEN"] = token;
             psi.ArgumentList.Add(bridgeDll);
             foreach (var a in args) psi.ArgumentList.Add(a);
             _p = Process.Start(psi)!;
@@ -541,7 +547,7 @@ static class Tests
     public static async Task BridgeEndToEnd(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", h.Grant.Token, "--endpoint", "pipe:" + h.PipeName);
+        await using var b = new BridgeProcess(bridgeDll, h.Grant.Token, "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName);
 
         // A BOM before the first message must be tolerated.
         await b.SendRawAsync([0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""" + "\n")]);
@@ -595,7 +601,7 @@ static class Tests
     public static async Task BridgeTimeout(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", h.Grant.Token, "--endpoint", "pipe:" + h.PipeName, "--timeout-seconds", "2");
+        await using var b = new BridgeProcess(bridgeDll, h.Grant.Token, "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName, "--timeout-seconds", "2");
         await b.SendAsync("""{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"slow","arguments":{"ms":5000}}}""");
         var timedOut = await b.ReceiveAsync(TimeSpan.FromSeconds(10));
         Check.Equal(10, (int)timedOut["id"]!, "timeout answers the right id");
@@ -613,7 +619,7 @@ static class Tests
     public static async Task BridgeRejected(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", "wrong-token", "--endpoint", "pipe:" + h.PipeName);
+        await using var b = new BridgeProcess(bridgeDll, "wrong-token", "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName);
         // The bridge connects eagerly, so it may already have exited when this write happens.
         try { await b.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}"""); } catch (IOException) { }
         string? line = await b.TryReceiveLineAsync(TimeSpan.FromSeconds(10));
