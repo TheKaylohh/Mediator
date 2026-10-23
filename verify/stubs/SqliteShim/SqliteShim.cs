@@ -1,6 +1,6 @@
-// VERIFY ONLY: implements the subset of Microsoft.Data.Sqlite that Cockpit.Core uses, with the same
-// strictness on the points that commonly cause bugs (null parameter values, commands that ignore an
-// active transaction, NULL columns read as strings).
+// Offline stand-in for Microsoft.Data.Sqlite (V9: used by verify builds AND by offline ship builds, CockpitUseShims=true).
+// Implements the subset of Microsoft.Data.Sqlite that Cockpit.Core uses, with the same strictness on the points that
+// commonly cause bugs (null parameter values, commands that ignore an active transaction, NULL columns read as strings).
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -9,8 +9,10 @@ using System.Text;
 namespace Microsoft.Data.Sqlite;
 
 /// <summary>
-/// "sqlite3" is libsqlite3.so on Linux. Windows 10+ ships the same library as System32\winsqlite3.dll, so the
-/// verify suite can also run on Windows without NuGet (x64 only: on x86 winsqlite3 uses stdcall).
+/// "sqlite3" is libsqlite3.so on Linux. Windows 10/11 ship SQLite as System32\winsqlite3.dll, so the Cockpit runs on
+/// Windows without NuGet or a bundled native library (x64/ARM64; on x86 winsqlite3 uses stdcall, and the package is
+/// win-x64). On Windows only System32 is searched first, then this assembly's own folder: a sqlite3.dll planted in a
+/// PATH folder or the current directory is never loaded.
 /// </summary>
 internal static class NativeResolver
 {
@@ -22,8 +24,13 @@ internal static class NativeResolver
     private static IntPtr Resolve(string name, Assembly assembly, DllImportSearchPath? path)
     {
         if (name != "sqlite3") return IntPtr.Zero;
-        if (NativeLibrary.TryLoad("sqlite3", assembly, path, out var handle)) return handle;
-        if (OperatingSystem.IsWindows() && NativeLibrary.TryLoad("winsqlite3", assembly, DllImportSearchPath.System32, out handle)) return handle;
+        IntPtr handle;
+        if (OperatingSystem.IsWindows())
+        {
+            if (NativeLibrary.TryLoad("winsqlite3", assembly, DllImportSearchPath.System32, out handle)) return handle;
+            return NativeLibrary.TryLoad("sqlite3", assembly, DllImportSearchPath.AssemblyDirectory, out handle) ? handle : IntPtr.Zero;
+        }
+        if (NativeLibrary.TryLoad("sqlite3", assembly, path, out handle)) return handle;
         if (NativeLibrary.TryLoad("libsqlite3.so.0", assembly, path, out handle)) return handle;
         return IntPtr.Zero;
     }

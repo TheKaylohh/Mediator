@@ -6,19 +6,30 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <WarningLevel>5</WarningLevel>
     <!--
-      One switch for every dependency (Directory.Build.targets applies it):
-        CockpitVerify=false (default, ship): Microsoft.Data.Sqlite and System.IO.Hashing from NuGet, and the
-          SolidWorks interop assemblies from $(SolidWorksInteropDir).
-        CockpitVerify=true (offline): the stand-ins in verify/stubs, no network and no SolidWorks needed.
+      Two switches (Directory.Build.targets applies them):
+        CockpitVerify   false (default, ship): the real products: net8.0-windows WPF overlay and worker, the SolidWorks
+                        interop from $(SolidWorksInteropDir) (or the no-SolidWorks worker, COCKPIT001).
+                        true (verify, any OS): everything builds as net8.0 against the stand-ins in verify/stubs (SolidWorks
+                        interop stub, WpfCompileStub), so the test suite runs on Linux.
+        CockpitUseShims V9. Where Microsoft.Data.Sqlite and System.IO.Hashing come from, decoupled from CockpitVerify:
+                        false: NuGet (default for ship builds);
+                        true:  verify/stubs/SqliteShim (P/Invoke to the OS SQLite: System32\winsqlite3.dll on Windows 10/11,
+                               libsqlite3 elsewhere) and verify/stubs/HashingShim. NO NuGet download at all: restore uses only the
+                               empty local feed (and packages already in the NuGet cache), and the NuGet-only build features are
+                               off (Native AOT and the AOT/trim analyzers, which download ILCompiler/ILLink). Default when
+                               CockpitVerify=true; on Windows `-p:CockpitUseShims=true -p:CockpitVerify=false` builds the real
+                               AiCockpit.exe, cockpit.exe, cockpit-mcp-bridge.exe and cockpit-swx-worker.exe with Wi-Fi off
+                               (publish-release.ps1 falls back to it when NuGet restore fails).
       Projects opt in with CockpitUsesSqlite / CockpitUsesHashing / CockpitUsesSolidWorks.
     -->
     <CockpitVerify Condition="'$(CockpitVerify)' == ''">false</CockpitVerify>
+    <CockpitUseShims Condition="'$(CockpitUseShims)' == ''">$(CockpitVerify)</CockpitUseShims>
     <!-- SolidWorksApiDir is the v3 name, still honoured. scripts/check-windows-build.ps1 reads the real path from the registry. -->
     <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == '' and '$(SolidWorksApiDir)' != ''">$(SolidWorksApiDir)</SolidWorksInteropDir>
     <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == ''">C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist</SolidWorksInteropDir>
     <SolidWorksInteropDir>$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</SolidWorksInteropDir>
     <CockpitRoot>$(MSBuildThisFileDirectory)</CockpitRoot>
-    <!-- Verify builds restore from an empty local folder: no network needed. -->
-    <RestoreSources Condition="'$(CockpitVerify)' == 'true'">$(CockpitRoot)verify/local-feed</RestoreSources>
+    <!-- Shim builds (verify, or offline ship builds) restore from an empty local folder: no network is ever contacted. -->
+    <RestoreSources Condition="'$(CockpitUseShims)' == 'true'">$(CockpitRoot)verify/local-feed</RestoreSources>
   </PropertyGroup>
 </Project>

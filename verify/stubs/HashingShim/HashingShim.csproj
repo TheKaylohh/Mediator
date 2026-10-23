@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- VERIFY ONLY. Same public surface as System.IO.Hashing.XxHash64 for the members Cockpit.Core uses.
-       Checked against the reference xxhash library's vectors in the test suite. -->
+  <!-- Offline stand-in for System.IO.Hashing (V9: no longer verify-only): the XxHash64 members Cockpit.Core uses, checked
+       against the reference xxhash vectors in the test suite. Used by verify builds and offline ship builds (CockpitUseShims=true). -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>System.IO.Hashing.VerifyShim</AssemblyName>
+    <AssemblyName>System.IO.Hashing.CockpitShim</AssemblyName>
     <RootNamespace>System.IO.Hashing</RootNamespace>
   </PropertyGroup>
 </Project>

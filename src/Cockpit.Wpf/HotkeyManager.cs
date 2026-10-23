@@ -1,24 +1,34 @@
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using Cockpit.UI;
 
 namespace Cockpit.Wpf;
 
 /// <summary>
-/// A system-wide hotkey through RegisterHotKey on a message-only window. Ctrl+Shift+Space by default; if another
-/// program already owns the combination, registration fails and the caller says so (the tray icon still works).
+/// The system-wide hotkey: RegisterHotKey on a message-only window. Which combination, the fallback when another
+/// program owns it, and live rebinding are decided by <see cref="HotkeyBinding"/> (Cockpit.UI, tested on any OS);
+/// this class only talks to Win32. The hotkey string comes from settings.json / the setup card and is parsed by
+/// <see cref="HotkeyParser"/> (V9: it was always registered from the parsed setting; now a conflict keeps the
+/// previous hotkey instead of leaving none, and the tray shows the active one).
 /// </summary>
-public sealed partial class HotkeyManager : IDisposable
+public sealed partial class HotkeyManager : IHotkeyRegistrar, IDisposable
 {
     public const uint ModAlt = 0x0001, ModControl = 0x0002, ModShift = 0x0004, ModWin = 0x0008, ModNoRepeat = 0x4000;
-    public const uint VkSpace = 0x20;
     private const int WmHotkey = 0x0312;
     private const int HotkeyId = 0xC0C1;
 
     private readonly HwndSource _source;
+    private readonly HotkeyBinding _binding;
     private bool _registered;
 
     public event Action? Pressed;
+
+    /// <summary>The hotkey that currently opens the panel changed (null: none; the tray icon still works).</summary>
+    public event Action<HotkeyGesture?>? ActiveChanged
+    {
+        add => _binding.ActiveChanged += value;
+        remove => _binding.ActiveChanged -= value;
+    }
 
     public HotkeyManager()
     {
@@ -26,15 +36,28 @@ public sealed partial class HotkeyManager : IDisposable
         var parameters = new HwndSourceParameters("AiCockpitHotkey") { ParentWindow = new IntPtr(-3), WindowStyle = 0 };
         _source = new HwndSource(parameters);
         _source.AddHook(WndProc);
+        _binding = new HotkeyBinding(this);
     }
 
-    /// <summary>Registers modifiers+key; throws <see cref="Win32Exception"/> (usually ERROR_HOTKEY_ALREADY_REGISTERED) when taken.</summary>
-    public void Register(uint modifiers = ModControl | ModShift, uint virtualKey = VkSpace)
+    public HotkeyGesture? Active => _binding.Active;
+
+    /// <summary>At startup: the configured hotkey, else Ctrl+Shift+Space, else none (see <see cref="HotkeyBinding.Start"/>).</summary>
+    public HotkeyBindResult Start(string? configuredGesture) => _binding.Start(configuredGesture);
+
+    /// <summary>Switches to <paramref name="gesture"/> immediately; keeps the current hotkey if the new one is taken.</summary>
+    public HotkeyBindResult Rebind(string gesture) => _binding.Rebind(gesture);
+
+    bool IHotkeyRegistrar.TryRegister(uint modifiers, uint virtualKey, out int win32Error)
     {
         Unregister();
         if (!RegisterHotKey(_source.Handle, HotkeyId, modifiers | ModNoRepeat, virtualKey))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+        {
+            win32Error = Marshal.GetLastWin32Error();
+            return false;
+        }
+        win32Error = 0;
         _registered = true;
+        return true;
     }
 
     public void Unregister()

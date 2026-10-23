@@ -1,6 +1,44 @@
 # Changelog
 
-Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full V8 story, with what was and was not verified, is in [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
+Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
+
+## V9: Windows release candidate (2026-10-23)
+
+V9 builds on V8 (commit `a033d7f`). All 110 V8 tests still pass, and 9 V9 tests were added (119 in total). With `COCKPIT_LIVE_PYTHON` set, 117 run and pass, plus 2 Windows-only skips. Without it, 111 pass. The six builds have 0 warnings with `TreatWarningsAsErrors=true`, including the overlay project, which now compiles all of its C#.
+
+### Added
+
+- **The whole overlay is compiled in verify builds.** `verify/stubs/WpfCompileStub` is a compile-only WPF and Windows Forms stand-in that follows the .NET 8 API, including its nullability. `XamlPartials.targets` generates the `InitializeComponent()` and named-field partials the markup compiler would. Verify-mode `Cockpit.Wpf.csproj` now builds every `.cs` file into `AiCockpit.dll`, with WPF's implicit usings.
+- **`CockpitUseShims`**, independent of `CockpitVerify`:
+  - It builds the real Windows products with `SqliteShim` (System32 `winsqlite3.dll`) and `HashingShim`, from an empty local feed, without Native AOT. No NuGet download at all.
+  - `publish-release.ps1` falls back to it when NuGet restore fails (`-UseShims`, `-NoShimFallback`). A missing MSVC toolchain now only drops Native AOT.
+- **Hotkeys:**
+  - `HotkeyParser` adds Tab, Enter and `~` (Tab and Enter need two modifiers; task-switcher combinations are refused).
+  - `HotkeyBinding`: start falls back to the default, then to none. A live rebind keeps the previous hotkey on a conflict.
+  - The setup card rebinds before it saves (`OnboardingViewModel.Rebinder`).
+  - `HotkeyManager.Start` and `Rebind`.
+  - The tray menu and tooltip show the active hotkey.
+- **Session continuation:**
+  - `RunningJob.SessionId`, `ContinuableSession`, `CockpitRuntime.LastContinuableSession` and `JobSpecFactory.Continue`.
+  - `JobSpec.ContinueSessionId` makes the runtime run `claude -p --resume <id>`, or `claude --resume` in the terminal, in the same folder with a new job and grant. Only safe-token ids are accepted, and the session is pinned to Claude Code.
+  - The overlay shows **↩ Continue session (id)**: selected by default, click to deselect, × or a folder switch removes it. `MainWindow.xaml` has the new chip.
+- **Tests:** 9 new ones. 2 compile WPF code against the stub, 2 cover hotkeys, 2 cover sessions, and 3 cover the offline build: the script fallback, MSBuild evaluation, and a real ship build plus `doctor` from an empty feed. The CI Windows job also builds everything with `CockpitUseShims=true`.
+
+### Changed
+
+- **The shims** are renamed `Microsoft.Data.Sqlite.CockpitShim` and `System.IO.Hashing.CockpitShim`, and are no longer marked verify-only.
+- **SQLite loading on Windows:** System32 first, then the shim's own folder, never PATH.
+- **`publish-release.ps1`:** builds come from a publish plan (`Get-PublishPlan`). `VERSION.txt` says V9 and which dependencies the package used.
+- **A test assertion:** one V7 assertion text changed, because Ctrl+Enter is now refused for needing a second modifier, not as unsupported.
+
+### Fixed
+
+- `RunningJob.TryFinish` records the finished job's continuation before `Completion` completes. The full suite caught this race in the new V9 code.
+
+### Release hygiene
+
+- V8 is committed as `a033d7f` and V9 as the commit after it, and the working tree is clean.
+- `cockpit-v9.zip` is made from the clean tree.
 
 ## V8: Windows stabilized release candidate (2026-10-23)
 

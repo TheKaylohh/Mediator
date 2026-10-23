@@ -65,8 +65,12 @@ public sealed class CliLaunchBuilder
         return null;
     }
 
-    /// <summary>Headless Claude Code with a JSON event stream. Write the prompt to stdin, then close it.</summary>
-    public ProcessStartInfo ClaudeHeadless(JobWorkspace ws, string workingDirectory, int maxTurns, string? model = null, bool allowMeteredBilling = false)
+    /// <summary>
+    /// Headless Claude Code with a JSON event stream. Write the prompt to stdin, then close it.
+    /// <paramref name="resumeSessionId"/> (V9) continues that session with `--resume`; it must be a safe token
+    /// (<see cref="SessionIds.IsSafe"/>), since it is the one value here that came from a previous run's output.
+    /// </summary>
+    public ProcessStartInfo ClaudeHeadless(JobWorkspace ws, string workingDirectory, int maxTurns, string? model = null, bool allowMeteredBilling = false, string? resumeSessionId = null)
     {
         var args = new List<string>
         {
@@ -77,6 +81,7 @@ public sealed class CliLaunchBuilder
             "--max-turns", maxTurns.ToString(CultureInfo.InvariantCulture),
         };
         if (model is not null) { args.Add("--model"); args.Add(model); }
+        if (resumeSessionId is not null) { args.Add("--resume"); args.Add(RequireSafeSession(resumeSessionId)); }
 
         var psi = WrapForShim(_claudeExecutable, args);
         psi.WorkingDirectory = workingDirectory;
@@ -101,9 +106,10 @@ public sealed class CliLaunchBuilder
     /// </summary>
     /// <param name="hasBrief">V6: the user's task is never put on a command line (visible to other processes). When the job has
     /// one, the first message is a fixed instruction to fetch it from cockpit_job_brief over the authenticated bus.</param>
-    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false)
+    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false, string? resumeSessionId = null)
     {
         string command = $"& {Ps(_claudeExecutable)} --mcp-config {Ps(ws.ClaudeMcpConfigPath)} --strict-mcp-config --allowedTools {Ps("mcp__" + JobWorkspaceFactory.ServerName)}"
+            + (resumeSessionId is not null ? " --resume " + Ps(RequireSafeSession(resumeSessionId)) : "")
             + (hasBrief ? " " + Ps(JobBriefToolProvider.Instruction) : "");
         string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-claude.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling), allowMeteredBilling,
             new Dictionary<string, string> { ["MCP_TOOL_TIMEOUT"] = ((long)_toolTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture) },
@@ -151,4 +157,7 @@ public sealed class CliLaunchBuilder
     }
 
     private static string Ps(string value) => InteractiveSession.Ps(value);
+
+    private static string RequireSafeSession(string id) =>
+        SessionIds.IsSafe(id) ? id : throw new ArgumentException($"'{id}' is not a valid session id (letters, digits, '-' and '_' only).", nameof(id));
 }

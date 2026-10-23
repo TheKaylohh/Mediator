@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using Cockpit.Core.Connectors;
@@ -89,25 +88,18 @@ public partial class App : Application
         if (settings.LoadError is { } settingsError)
             _tray.Notify("Settings reset", $"settings.json could not be read ({settingsError}); defaults are used and the old file was kept as settings.json.bad.");
 
+        // Hotkey (V9): the configured one, else Ctrl+Shift+Space; the setup card rebinds live and keeps the old one if
+        // the new combination is taken. The tray menu always shows the hotkey that works right now.
         _hotkey = new HotkeyManager();
         _hotkey.Pressed += () => vm.OnHotkey(CaptureContext());
-        RegisterHotkey(HotkeyGesture.TryParse(vm.Settings.Hotkey, out var gesture, out _) ? gesture : HotkeyGesture.Default);
-        onboarding.HotkeyChanged += RegisterHotkey;
+        _hotkey.ActiveChanged += active => _tray?.SetHotkey(active?.DisplayText);
+        var bound = _hotkey.Start(vm.Settings.Hotkey);
+        _tray.SetHotkey(bound.Active?.DisplayText);
+        if (!bound.Success) _tray.Notify("Hotkey unavailable", bound.Message);
+        onboarding.Rebinder = gesture => _hotkey.Rebind(gesture.ToString());
 
         // First launch, or neither CLI found: open the setup card.
         if (await onboarding.StartAsync()) vm.Show();
-    }
-
-    private void RegisterHotkey(HotkeyGesture gesture)
-    {
-        try
-        {
-            _hotkey?.Register((uint)gesture.Modifiers, gesture.VirtualKey);
-        }
-        catch (Win32Exception)
-        {
-            _tray?.Notify("Hotkey unavailable", $"Another program owns {gesture}. Pick another in the setup card, or use the tray icon.");
-        }
     }
 
     /// <summary>Runs on the UI (STA) thread before the panel activates, so the foreground window is still the user's.</summary>
