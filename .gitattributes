@@ -1,0 +1,5 @@
+# Windows launchers keep CRLF line endings: cmd.exe mis-parses LF-only batch files (labels, goto), and the
+# published bytes are then the same whatever OS the repository was checked out on.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.vbs  text eol=crlf

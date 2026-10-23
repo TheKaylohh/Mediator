@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     The overlay: a thin WPF view over Cockpit.UI's ViewModels. Windows only.
-    Verify builds (Linux, no WindowsDesktop reference pack) compile nothing here; the XAML is still checked by the
-    test suite (well-formed, every {Binding} resolves on the ViewModel types, every StaticResource exists).
+    Verify builds (Linux, no WindowsDesktop reference pack) compile only MonitorPlacement.cs here (see below); the XAML
+    is still checked by the test suite (well-formed, every {Binding} resolves on the ViewModel types, every
+    StaticResource exists, every pack URI resolves).
   -->
   <PropertyGroup Condition="'$(CockpitVerify)' != 'true'">
     <OutputType>WinExe</OutputType>
@@ -24,9 +25,35 @@
     <ProjectReference Include="../Cockpit.Core/Cockpit.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    V8: the theme dictionaries are compiled into AiCockpit.exe (Page items, loaded by pack URI) AND copied loose to
+    <output>\Themes\ for ThemeManager's fallback. Both copies come from the same files, so they cannot drift.
+  -->
+  <ItemGroup Condition="'$(CockpitVerify)' != 'true'">
+    <CockpitLooseTheme Include="$(MSBuildProjectDirectory)\Themes\*.xaml" />
+  </ItemGroup>
+  <Target Name="CockpitCopyLooseThemes" AfterTargets="Build" Condition="'$(CockpitVerify)' != 'true'">
+    <Copy SourceFiles="@(CockpitLooseTheme)" DestinationFolder="$(OutDir)Themes" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CockpitPublishLooseThemes" AfterTargets="Publish" Condition="'$(CockpitVerify)' != 'true'">
+    <Copy SourceFiles="@(CockpitLooseTheme)" DestinationFolder="$(PublishDir)Themes" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!--
+    Verify builds (Linux, no WindowsDesktop reference pack) compile only the WPF-free Win32 code: the monitor/DPI
+    placement (V8), so its P/Invoke signatures are compiled on every run and its WINDOWPOS handling is unit-tested.
+  -->
   <PropertyGroup Condition="'$(CockpitVerify)' == 'true'">
     <TargetFramework>net8.0</TargetFramework>
     <EnableDefaultItems>false</EnableDefaultItems>
     <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <ItemGroup Condition="'$(CockpitVerify)' == 'true'">
+    <Compile Include="MonitorPlacement.cs" />
+    <ProjectReference Include="../Cockpit.UI/Cockpit.UI.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cockpit.Tests" />
+  </ItemGroup>
 </Project>

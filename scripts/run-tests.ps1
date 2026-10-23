@@ -14,7 +14,7 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
-foreach ($p in 'src/Cockpit.Bridge', 'src/Cockpit.SwxWorker', 'src/Cockpit.CliHost', 'src/Cockpit.Wpf', 'verify/tests/Cockpit.Tests') {
+foreach ($p in 'src/Cockpit.Bridge', 'src/Cockpit.SwxWorker', 'verify/stubs/SwxWorkerNoInterop', 'src/Cockpit.CliHost', 'src/Cockpit.Wpf', 'verify/tests/Cockpit.Tests') {
     dotnet build $p -nologo -v q -p:CockpitVerify=true -p:TreatWarningsAsErrors=true
     if ($LASTEXITCODE -ne 0) { throw "build failed: $p" }
 }

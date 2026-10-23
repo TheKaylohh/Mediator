@@ -1,42 +1,52 @@
 <#
 .SYNOPSIS
-  Builds every AI Cockpit project in Release mode and packages a ready-to-run folder: dist\AiCockpit\.
+  Builds every AI Cockpit project in Release mode and packages a clean, ready-to-run folder: dist\AiCockpit\.
 
 .DESCRIPTION
   1. Checks the prerequisites: Windows, the .NET 8 SDK, and (for the Native AOT bridge) the MSVC linker from the
      "Desktop development with C++" workload, found with vswhere.
   2. Optionally runs the offline verification suite first (-RunTests; CockpitVerify=true, no SolidWorks needed).
   3. Publishes, each into its own staging folder:
-       src\Cockpit.Wpf       → AiCockpit.exe            (the overlay)
-       src\Cockpit.CliHost   → cockpit.exe              (console host: doctor, organize, rollback, …)
-       src\Cockpit.Bridge    → cockpit-mcp-bridge.exe   (Native AOT: -p:PublishAot=true, starts in milliseconds)
-       src\Cockpit.SwxWorker → cockpit-swx-worker.exe   (only when the SolidWorks interop is found)
+       src\Cockpit.Wpf       -> AiCockpit.exe            (the tray overlay) + Themes\*.xaml (loose fallback copies)
+       src\Cockpit.CliHost   -> cockpit.exe              (console host: doctor, organize, rollback, ...)
+       src\Cockpit.Bridge    -> cockpit-mcp-bridge.exe   (Native AOT: -p:PublishAot=true, starts in milliseconds)
+       src\Cockpit.SwxWorker -> cockpit-swx-worker.exe   (V8: ALWAYS. With the SolidWorks interop when it is found;
+                                                          without it the worker answers "SolidWorks assemblies not
+                                                          installed on this machine" and the build only warns, COCKPIT001)
      Self-contained win-x64 by default (no .NET install needed on the target PC); -FrameworkDependent makes a smaller
      folder that needs the .NET 8 Desktop Runtime.
   4. Merges the staging folders into dist\AiCockpit\. A file that two projects publish must be byte-identical
-     (shared runtime files); anything else stops the script instead of silently overwriting.
-  5. Adds Create-Desktop-Shortcut.ps1, README-FIRST.txt, VERSION.txt and SHA256SUMS.txt, then runs
-     `cockpit.exe doctor` from the package as a smoke test.
+     (shared runtime files); anything else stops the script instead of silently overwriting. Debug symbols (.pdb) are
+     left out unless -IncludeSymbols.
+  5. Adds the zero-dependency launchers (launch.bat, install-shortcut.vbs: double-click, no PowerShell execution
+     policy involved), Create-Desktop-Shortcut.ps1, README-FIRST.txt, VERSION.txt and SHA256SUMS.txt, checks that
+     every required file is present (the four executables and the three themes), then runs `cockpit.exe doctor`
+     from the package as a smoke test.
 
-  Every build uses -p:TreatWarningsAsErrors=true.
+  Every build uses -p:TreatWarningsAsErrors=true. The one expected warning is COCKPIT001 (no SolidWorks interop),
+  which never fails the build.
 
-  UNTESTED ON WINDOWS BY ITS AUTHOR: written on Linux, where the WPF project, Native AOT for Windows and the real
-  SolidWorks interop cannot be built. Expect to fix small things on the first run; each step says what it ran.
+  This file is ASCII-only on purpose: Windows PowerShell 5.1 reads a UTF-8 file without BOM as ANSI, where some
+  UTF-8 bytes become curly quotes that end strings (verify/tests checks every script).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\publish-release.ps1
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\publish-release.ps1 -RunTests -FrameworkDependent
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\publish-release.ps1 -RequireSolidWorks    # fail instead of the no-SolidWorks worker
 #>
 [CmdletBinding()]
 param(
     [string]$OutDir = (Join-Path $PSScriptRoot '..\dist\AiCockpit'),
     [string]$Runtime = 'win-x64',
     [string]$SolidWorksInteropDir,
+    [switch]$RequireSolidWorks,
     [switch]$FrameworkDependent,
     [switch]$RunTests,
     # Escape hatch when the C++ build tools are not installed: the bridge is published as a normal .NET app.
     [switch]$NoAot,
+    [switch]$IncludeSymbols,
     [switch]$SkipDoctor
 )
 
@@ -51,17 +61,25 @@ function Invoke-Checked([string]$what, [scriptblock]$block) {
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
 }
 
+# Same search as the app's DesktopAppLocator: HKLM\SOFTWARE\SolidWorks\SOLIDWORKS <year>\Setup (newest first), then
+# the default install folder. Returns <SOLIDWORKS folder>\api\redist when it holds the interop assemblies.
 function Find-SolidWorksInterop {
+    $candidates = @()
     $base = 'HKLM:\SOFTWARE\SolidWorks'
-    if (-not (Test-Path $base)) { return $null }
-    $versions = Get-ChildItem $base -ErrorAction SilentlyContinue |
-        Where-Object { $_.PSChildName -like 'SOLIDWORKS *' } | Sort-Object PSChildName -Descending
-    foreach ($v in $versions) {
-        $folder = (Get-ItemProperty -Path (Join-Path $v.PSPath 'Setup') -Name 'SolidWorks Folder' -ErrorAction SilentlyContinue).'SolidWorks Folder'
-        if ($folder) {
-            $redist = Join-Path $folder 'api\redist'
-            if (Test-Path (Join-Path $redist 'SolidWorks.Interop.sldworks.dll')) { return $redist }
+    if (Test-Path $base) {
+        $versions = Get-ChildItem $base -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSChildName -like 'SOLIDWORKS *' } | Sort-Object PSChildName -Descending
+        foreach ($v in $versions) {
+            $folder = (Get-ItemProperty -Path (Join-Path $v.PSPath 'Setup') -Name 'SolidWorks Folder' -ErrorAction SilentlyContinue).'SolidWorks Folder'
+            if ($folder) { $candidates += $folder }
         }
+    }
+    foreach ($pf in @($env:ProgramW6432, $env:ProgramFiles) | Where-Object { $_ }) {
+        $candidates += (Join-Path $pf 'SOLIDWORKS Corp\SOLIDWORKS')
+    }
+    foreach ($folder in $candidates) {
+        $redist = Join-Path $folder 'api\redist'
+        if ((Test-Path (Join-Path $redist 'SolidWorks.Interop.sldworks.dll')) -and (Test-Path (Join-Path $redist 'SolidWorks.Interop.swconst.dll'))) { return $redist }
     }
     return $null
 }
@@ -73,7 +91,7 @@ function Test-MsvcLinker {
     return [bool]$path
 }
 
-# ── 1. Prerequisites ──────────────────────────────────────────────────────────────────────────────
+# -- 1. Prerequisites -----------------------------------------------------------------------------------
 Step 'Prerequisites'
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'Run this on Windows: the overlay is WPF and the package is win-x64.' }
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'The .NET 8 SDK is required: https://dotnet.microsoft.com/download/dotnet/8.0' }
@@ -87,10 +105,15 @@ if ($aot -and -not (Test-MsvcLinker)) {
            'or the Build Tools). Install it, or run again with -NoAot to publish the bridge as a normal .NET app.')
 }
 if (-not $SolidWorksInteropDir) { $SolidWorksInteropDir = Find-SolidWorksInterop }
-if ($SolidWorksInteropDir) { Write-Host "SolidWorks interop: $SolidWorksInteropDir" }
-else { Write-Warning 'SolidWorks interop not found: cockpit-swx-worker is left out (assembly and STEP import jobs will say so). Pass -SolidWorksInteropDir to include it.' }
+$withSolidWorks = [bool]$SolidWorksInteropDir
+if ($withSolidWorks) { Write-Host "SolidWorks interop: $SolidWorksInteropDir" }
+elseif ($RequireSolidWorks) { throw 'SolidWorks interop not found and -RequireSolidWorks was given. Pass -SolidWorksInteropDir "<SOLIDWORKS folder>\api\redist".' }
+else {
+    Write-Warning ('SolidWorks interop not found: cockpit-swx-worker is built WITHOUT SolidWorks support (it answers "SolidWorks assemblies ' +
+                   'not installed on this machine"). Everything else is unaffected. Pass -SolidWorksInteropDir to include it.')
+}
 
-# ── 2. Offline tests (optional) ───────────────────────────────────────────────────────────────────
+# -- 2. Offline tests (optional) ------------------------------------------------------------------------
 if ($RunTests) {
     Step 'Offline verification suite'
     Invoke-Checked 'verification suite' { & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'run-tests.ps1') }
@@ -98,21 +121,22 @@ if ($RunTests) {
     Get-ChildItem -Path src, verify -Directory -Recurse -Filter obj | Remove-Item -Recurse -Force
 }
 
-# ── 3. Publish each project into its own staging folder ───────────────────────────────────────────
+# -- 3. Publish each project into its own staging folder ------------------------------------------------
 $staging = Join-Path $root 'dist\.staging'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 $common = @('-c', 'Release', '-r', $Runtime, '-nologo', '-p:TreatWarningsAsErrors=true')
-if ($SolidWorksInteropDir) { $common += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
+if ($withSolidWorks) { $common += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
+if ($RequireSolidWorks) { $common += '-p:CockpitRequireSolidWorks=true' }
 $selfContained = if ($FrameworkDependent) { @('--self-contained', 'false') } else { @('--self-contained', 'true') }
 
 $projects = [ordered]@{
-    'src\Cockpit.Wpf'     = @($selfContained)
-    'src\Cockpit.CliHost' = @($selfContained)
-    'src\Cockpit.Bridge'  = if ($aot) { @('-p:PublishAot=true') } else { @('-p:PublishAot=false') + $selfContained }
+    'src\Cockpit.Wpf'       = @($selfContained)
+    'src\Cockpit.CliHost'   = @($selfContained)
+    'src\Cockpit.SwxWorker' = @($selfContained)
+    'src\Cockpit.Bridge'    = if ($aot) { @('-p:PublishAot=true') } else { @('-p:PublishAot=false') + $selfContained }
 }
-if ($SolidWorksInteropDir) { $projects['src\Cockpit.SwxWorker'] = @($selfContained) }
 
 foreach ($p in $projects.Keys) {
     Step "Publish $p"
@@ -121,7 +145,7 @@ foreach ($p in $projects.Keys) {
     Invoke-Checked "publish $p" { & dotnet publish $p @common @extra -o $dest }
 }
 
-# ── 4. Merge, refusing conflicting files ──────────────────────────────────────────────────────────
+# -- 4. Merge, refusing conflicting files ---------------------------------------------------------------
 Step "Package into $OutDir"
 if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -130,7 +154,7 @@ $seen = @{}
 foreach ($dir in Get-ChildItem $staging -Directory) {
     foreach ($file in Get-ChildItem $dir.FullName -Recurse -File) {
         $rel = $file.FullName.Substring($dir.FullName.Length + 1)
-        if ($rel -like '*.pdb') { continue }
+        if (-not $IncludeSymbols -and $rel -like '*.pdb') { continue }
         $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash
         if ($seen.ContainsKey($rel)) {
             if ($seen[$rel].Hash -ne $hash) { throw "Conflict: $rel differs between $($seen[$rel].From) and $($dir.Name). Publish with one runtime version, or -FrameworkDependent." }
@@ -144,34 +168,52 @@ foreach ($dir in Get-ChildItem $staging -Directory) {
 }
 Remove-Item $staging -Recurse -Force
 
-foreach ($required in 'AiCockpit.exe', 'cockpit.exe', 'cockpit-mcp-bridge.exe') {
-    if (-not (Test-Path (Join-Path $OutDir $required))) { throw "$required is missing from the package." }
+# -- 5. Launchers, shortcut script, readme, version, checksums ------------------------------------------
+Copy-Item (Join-Path $PSScriptRoot 'launch-cockpit.bat') (Join-Path $OutDir 'launch.bat')
+Copy-Item (Join-Path $PSScriptRoot 'install-shortcut.vbs') (Join-Path $OutDir 'install-shortcut.vbs')
+Copy-Item (Join-Path $PSScriptRoot 'Create-Desktop-Shortcut.ps1') $OutDir
+
+$required = @('AiCockpit.exe', 'cockpit.exe', 'cockpit-mcp-bridge.exe', 'cockpit-swx-worker.exe',
+              'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs')
+foreach ($r in $required) {
+    if (-not (Test-Path (Join-Path $OutDir $r))) { throw "$r is missing from the package." }
 }
 
-# ── 5. Extras: shortcut script, readme, version, checksums ───────────────────────────────────────
-Copy-Item (Join-Path $PSScriptRoot 'Create-Desktop-Shortcut.ps1') $OutDir
 $commit = (& git -C $root rev-parse --short HEAD 2>$null)
-$version = "AI Cockpit V7`nbuilt $(Get-Date -Format 'yyyy-MM-dd HH:mm') from commit $commit`nruntime $Runtime, $(if ($FrameworkDependent) { 'framework-dependent (.NET 8 Desktop Runtime required)' } else { 'self-contained' })`nbridge: $(if ($aot) { 'Native AOT' } else { 'JIT' })`nSolidWorks worker: $(if ($SolidWorksInteropDir) { 'included' } else { 'not included' })"
-Set-Content -Path (Join-Path $OutDir 'VERSION.txt') -Value $version -Encoding UTF8
+$version = @(
+    'AI Cockpit V8 (Windows stabilized release candidate)'
+    "built $(Get-Date -Format 'yyyy-MM-dd HH:mm') from commit $commit"
+    "runtime $Runtime, $(if ($FrameworkDependent) { 'framework-dependent (.NET 8 Desktop Runtime required)' } else { 'self-contained' })"
+    "bridge: $(if ($aot) { 'Native AOT' } else { 'JIT' })"
+    "SolidWorks worker: $(if ($withSolidWorks) { "with SolidWorks support ($SolidWorksInteropDir)" } else { 'without SolidWorks support (no interop found at build time)' })"
+) -join "`r`n"
+Set-Content -Path (Join-Path $OutDir 'VERSION.txt') -Value $version -Encoding ASCII
 @"
 AI Cockpit
 ==========
 
-1. Run AiCockpit.exe. It lives in the tray; Ctrl+Shift+Space opens the panel.
-2. The first launch opens a setup card: it checks Claude Code, Gemini CLI, Python and Git, and lets you pick the theme,
-   the hotkey and "Run on Windows startup".
-3. Optional: right-click Create-Desktop-Shortcut.ps1 > Run with PowerShell for a desktop shortcut.
+1. Double-click launch.bat (or AiCockpit.exe). It lives in the tray; Ctrl+Shift+Space opens the panel.
+   Nothing to install and no administrator rights: this folder is the whole app. Keep it somewhere permanent,
+   for example %LOCALAPPDATA%\Programs\AiCockpit, before creating shortcuts.
+2. Double-click install-shortcut.vbs for Desktop and Start menu shortcuts.
+   (If scripts are blocked on your PC, right-click AiCockpit.exe > Send to > Desktop (create shortcut) does the same.)
+3. The first launch opens a setup card: it checks Claude Code, Gemini CLI, Python and Git, and lets you pick the theme,
+   the hotkey and "Run on Windows startup". The Connectors tab shows SolidWorks, DaVinci Resolve and Blender, found
+   through the registry and Program Files even when they are not on PATH.
 
-cockpit.exe doctor   checks the installation from a terminal.
+If Windows shows "Windows protected your PC" (SmartScreen) for the unsigned exe, choose More info > Run anyway, or
+unblock the downloaded zip (right-click > Properties > Unblock) before extracting it.
+
+launch.bat doctor     checks the installation in a console window (same as cockpit.exe doctor).
 Your data (settings, audit log, journal, attachments) is in %LOCALAPPDATA%\AiCockpit.
-"@ | Set-Content -Path (Join-Path $OutDir 'README-FIRST.txt') -Encoding UTF8
+"@ | Set-Content -Path (Join-Path $OutDir 'README-FIRST.txt') -Encoding ASCII
 
 $sums = Get-ChildItem $OutDir -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object FullName | ForEach-Object {
     "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.FullName.Substring($OutDir.Length + 1))"
 }
-Set-Content -Path (Join-Path $OutDir 'SHA256SUMS.txt') -Value $sums -Encoding UTF8
+Set-Content -Path (Join-Path $OutDir 'SHA256SUMS.txt') -Value $sums -Encoding ASCII
 
-# ── 6. Smoke test ─────────────────────────────────────────────────────────────────────────────────
+# -- 6. Smoke test --------------------------------------------------------------------------------------
 if (-not $SkipDoctor) {
     Step 'cockpit doctor (from the package)'
     & (Join-Path $OutDir 'cockpit.exe') doctor
@@ -181,4 +223,4 @@ if (-not $SkipDoctor) {
 Step 'Done'
 $size = [math]::Round(((Get-ChildItem $OutDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
 Write-Host "Package: $OutDir ($size MB, $((Get-ChildItem $OutDir -Recurse -File).Count) files)"
-Write-Host 'Next: run Create-Desktop-Shortcut.ps1 from that folder, or start AiCockpit.exe.'
+Write-Host 'Next: double-click launch.bat in that folder (install-shortcut.vbs adds Desktop and Start menu shortcuts).'

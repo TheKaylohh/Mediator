@@ -610,8 +610,15 @@ public static class Commands
         using (var clsid = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"SldWorks.Application\CLSID"))
             add("SolidWorks COM", clsid is null ? "warn" : "ok", clsid is null ? "SldWorks.Application is not registered (SolidWorks not installed?)" : $"SldWorks.Application → {clsid.GetValue(null)}");
 
+        // V8: installations found through the registry and the standard folders, not just PATH.
+        foreach (var app in new[] { DesktopApp.SolidWorks, DesktopApp.Resolve, DesktopApp.Blender })
+        {
+            var install = ComponentLocator.FindDesktopApp(app);
+            add($"{DesktopAppLocator.DisplayName(app)} install", install is null ? "warn" : "ok", DesktopAppLocator.Default.Summary(app));
+        }
+
         string? redist = SolidWorksInteropDirectory();
-        add("SolidWorks interop", redist is null ? "warn" : "ok", redist ?? "api\\redist not found; the worker build needs it (see scripts/check-windows-build.ps1)");
+        add("SolidWorks interop", redist is null ? "warn" : "ok", redist ?? "api\\redist not found: cockpit-swx-worker is built without SolidWorks support and reports \"SolidWorks assemblies not installed on this machine\"");
 
         string system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
         add("WSL", File.Exists(Path.Combine(system32, "wsl.exe")) ? "ok" : "warn", File.Exists(Path.Combine(system32, "wsl.exe")) ? "wsl.exe present" : "wsl.exe not found (Linux isolation unavailable)");
@@ -621,21 +628,11 @@ public static class Commands
         add("Windows Terminal", wt is null ? "warn" : "ok", wt ?? "wt.exe not found: interactive jobs open a plain PowerShell window");
     }
 
-    /// <summary>HKLM\SOFTWARE\SolidWorks\SOLIDWORKS &lt;year&gt;\Setup "SolidWorks Folder" + api\redist. Newest install wins.</summary>
+    /// <summary>
+    /// &lt;SolidWorks folder&gt;\api\redist with the interop assemblies, newest install first (HKLM\SOFTWARE\SolidWorks\SOLIDWORKS
+    /// &lt;year&gt;\Setup, the COM registration, Apps &amp; features, the default folder; see DesktopAppLocator).
+    /// </summary>
     [SupportedOSPlatform("windows")]
-    public static string? SolidWorksInteropDirectory()
-    {
-        using var root = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\SolidWorks");
-        if (root is null) return null;
-        foreach (var name in root.GetSubKeyNames().Where(n => n.StartsWith("SOLIDWORKS ", StringComparison.OrdinalIgnoreCase)).OrderByDescending(n => n, StringComparer.OrdinalIgnoreCase))
-        {
-            using var setup = root.OpenSubKey(name + @"\Setup");
-            if (setup?.GetValue("SolidWorks Folder") is string folder)
-            {
-                string redist = Path.Combine(folder, "api", "redist");
-                if (File.Exists(Path.Combine(redist, "SolidWorks.Interop.sldworks.dll"))) return redist;
-            }
-        }
-        return null;
-    }
+    public static string? SolidWorksInteropDirectory() =>
+        DesktopAppLocator.Default.FindAll(DesktopApp.SolidWorks).Select(i => i.InteropDirectory).FirstOrDefault(d => d is not null);
 }

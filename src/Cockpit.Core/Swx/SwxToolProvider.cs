@@ -168,6 +168,13 @@ public sealed class SwxToolProvider : IToolProvider
                 "then check the result (re-read part cards or reopen the output) before continuing.",
                 new JsonObject { ["code"] = ex.Code, ["dialog"] = ex.Detail?.DeepClone() });
         }
+        catch (SwxWorkerException ex) when (ex.Code == SwxWorkerException.SolidWorksNotInstalled)
+        {
+            // V8: the worker was built on a machine without SolidWorks. Retrying cannot help, so say so.
+            return new ToolResult(true,
+                $"SolidWorks: {ex.Code}: {ex.Message} Do not retry this tool; tell the user that SolidWorks jobs need SolidWorks installed on this PC.",
+                new JsonObject { ["code"] = ex.Code });
+        }
         catch (SwxWorkerException ex)
         {
             return ToolResult.Fail($"SolidWorks: {ex.Code}: {ex.Message}");

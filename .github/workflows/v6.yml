@@ -1,4 +1,4 @@
-# V6 verification layers. Jobs that need licensed applications run only on a self-hosted runner you register
+# V6-V8 verification layers (file name kept from V6). Jobs that need licensed applications run only on a self-hosted runner you register
 # with the matching labels; they are skipped (and reported as not run) everywhere else.
 # Status: WRITTEN, NOT RUN — no GitHub remote was available when V6 was prepared.
 name: v6-verification
@@ -67,6 +67,8 @@ jobs:
           dotnet build src/Cockpit.Bridge -c Release -p:TreatWarningsAsErrors=true
           dotnet build src/Cockpit.CliHost -c Release -p:TreatWarningsAsErrors=true
           dotnet build src/Cockpit.Wpf -c Release -p:TreatWarningsAsErrors=true
+          # V8: no SolidWorks on the runner, so the worker builds with SOLIDWORKS_NOT_INSTALLED (warning COCKPIT001, not an error)
+          dotnet build src/Cockpit.SwxWorker -c Release -p:TreatWarningsAsErrors=true -warnaserror
       - name: Clean publish and doctor
         shell: pwsh
         run: |
@@ -75,8 +77,9 @@ jobs:
           ./dist/cockpit.exe doctor --json
 
   windows-release-package:
-    # V7: the first real WPF compile (themes, orb, Connectors tab, first-run card) and the full package, with the
-    # bridge as Native AOT (windows-latest has the MSVC tools). The XAML is otherwise only checked offline.
+    # V7/V8: the real WPF compile (themes by pack URI, orb, Connectors tab, first-run card, V8 placement hook) and the
+    # full package, with the bridge as Native AOT (windows-latest has the MSVC tools). The XAML is otherwise only
+    # checked offline.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +90,14 @@ jobs:
         run: ./scripts/publish-release.ps1 -SkipDoctor
       - name: Package smoke test
         shell: pwsh
-        run: ./dist/AiCockpit/cockpit.exe doctor --json
+        run: |
+          ./dist/AiCockpit/cockpit.exe doctor --json
+          # V8: the launchers and the loose themes are in the package; the worker without SolidWorks says so.
+          foreach ($f in 'launch.bat', 'install-shortcut.vbs', 'cockpit-swx-worker.exe', 'Themes/HoloHud.xaml', 'Themes/ProDark.xaml', 'Themes/CleanLight.xaml') {
+            if (-not (Test-Path "dist/AiCockpit/$f")) { throw "$f missing from the package" }
+          }
+          $reply = '{"id":1,"method":"health"}' | ./dist/AiCockpit/cockpit-swx-worker.exe
+          if ($reply -notmatch 'solidworks_not_installed') { throw "unexpected worker reply: $reply" }
       - uses: actions/upload-artifact@v4
         with: { name: AiCockpit-win-x64, path: dist/AiCockpit }
 

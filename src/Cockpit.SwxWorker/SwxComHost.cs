@@ -1,3 +1,6 @@
+#if !SOLIDWORKS_NOT_INSTALLED
+// Compiled only when the SolidWorks interop assemblies are available (Directory.Build.targets). Without them the
+// worker is built with SwxUnavailableHost instead, so the rest of the solution still builds and runs.
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Cockpit.Protocol.Swx;
@@ -10,30 +13,7 @@ namespace Cockpit.SwxWorker;
 //  SwxComHost: SolidWorks connection, part cards and assembly builds. All COM work happens on the STA queue.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-public sealed class SwxException : Exception
-{
-    public string Code { get; }
-    public SwxException(string code, string message) : base(message) => Code = code;
-}
-
-public sealed record SwxHostOptions
-{
-    /// <summary>Launch SolidWorks if it is not running. Off by default: attaching to the user's session is safer.</summary>
-    public bool AllowLaunch { get; init; }
-    public TimeSpan AttachWait { get; init; } = TimeSpan.FromSeconds(60);
-    /// <summary>How long the message filter keeps retrying a busy SolidWorks before giving up on a call.</summary>
-    public TimeSpan BusyRetryWindow { get; init; } = TimeSpan.FromSeconds(90);
-    public TimeSpan QueueTimeout { get; init; } = TimeSpan.FromMinutes(2);
-    public int MaxCylinderFaces { get; init; } = 8;
-    public int MaxPlanarFaces { get; init; } = 6;
-    /// <summary>Run COM work on an STA thread with the OLE message filter. Always true in production; offline tests on Linux set it false.</summary>
-    public bool UseStaApartment { get; init; } = true;
-    /// <summary>How long a call may block before the host starts looking for a SolidWorks modal dialog.</summary>
-    public TimeSpan DialogProbeDelay { get; init; } = TimeSpan.FromSeconds(3);
-    public TimeSpan DialogProbeInterval { get; init; } = TimeSpan.FromSeconds(1);
-}
-
-public sealed class SwxComHost : IDisposable
+public sealed class SwxComHost : ISwxHost
 {
     public const string UndoLabel = "AI Cockpit Batch";
 
@@ -774,3 +754,4 @@ public sealed class SwxComHost : IDisposable
         return Math.Sqrt(Dot(perp, perp));
     }
 }
+#endif

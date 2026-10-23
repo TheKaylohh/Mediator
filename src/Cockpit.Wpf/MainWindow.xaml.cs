@@ -12,22 +12,29 @@ using Cockpit.UI;
 namespace Cockpit.Wpf;
 
 /// <summary>
-/// The panel. All behaviour lives in <see cref="CockpitOverlayViewModel"/>; this class places the window above the
-/// tray (bottom-right of the work area, like Toolbox), follows IsVisible, focuses the prompt, hides on deactivation
-/// (unless pinned or an approval is open), and turns drag-and-drop, Ctrl+V and the Attach button into ViewModel
-/// calls. Paths are only handed over: the Core checks and stages them.
+/// The panel. All behaviour lives in <see cref="CockpitOverlayViewModel"/>; this class places the window by the tray
+/// (the work-area corner next to the notification area, on the monitor under the mouse), follows IsVisible, focuses
+/// the prompt, hides on deactivation (unless pinned or an approval is open), and turns drag-and-drop, Ctrl+V and the
+/// Attach button into ViewModel calls. Paths are only handed over: the Core checks and stages them.
+///
+/// V8 placement: the window is positioned while still hidden, then shown; a WM_WINDOWPOSCHANGING hook keeps it
+/// anchored whenever SizeToContent or a DPI change resizes it (no frame where it hangs off the screen), MaxHeight is
+/// capped to the monitor's usable height, and work-area / display changes re-place it (see MonitorPlacement).
 /// </summary>
 public partial class MainWindow : Window
 {
     private readonly CockpitOverlayViewModel _vm;
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
     private MonitorPlacement.POINT? _anchor; // the cursor when the panel opened: the monitor it stays on while visible
+    private PanelPlacementResult? _placed;    // the current anchor while visible (WM_WINDOWPOSCHANGING keeps it)
+    private readonly double _designMaxHeight; // MaxHeight from the XAML; the monitor can only lower it
 
     public MainWindow(CockpitOverlayViewModel vm)
     {
         InitializeComponent();
         _vm = vm;
         DataContext = vm;
+        _designMaxHeight = MaxHeight;
 
         vm.PropertyChanged += OnViewModelChanged;
         vm.FocusPromptRequested += () => Dispatcher.BeginInvoke(FocusPrompt, DispatcherPriority.Input);
@@ -38,6 +45,7 @@ public partial class MainWindow : Window
             _vm.OnDeactivated();
         };
         SizeChanged += (_, _) => PlaceAboveTray();
+        DpiChanged += (_, _) => PlaceAboveTray();
         _tick.Tick += (_, _) => _vm.Tick();
 
         // Preview (tunnelling) events, so the prompt TextBox cannot swallow a file drop before the window sees it.
@@ -56,9 +64,14 @@ public partial class MainWindow : Window
         if (e.PropertyName != nameof(CockpitOverlayViewModel.IsVisible)) return;
         if (_vm.IsVisible)
         {
-            if (!IsVisible) _anchor = MonitorPlacement.Cursor(); // follow the mouse only when opening, not while open
+            if (!IsVisible)
+            {
+                _anchor = MonitorPlacement.Cursor(); // follow the mouse only when opening, not while open
+                _ = new WindowInteropHelper(this).EnsureHandle(); // so the very first open is placed before it is shown
+                PlaceAboveTray();                             // while hidden: no frame at the old position
+            }
             Show();
-            PlaceAboveTray();
+            PlaceAboveTray(); // again with the laid-out size (the hook has usually done it already)
             Activate();
             _tick.Start();
         }
@@ -67,6 +80,7 @@ public partial class MainWindow : Window
             _tick.Stop();
             _vm.IsDragOver = false;
             Hide();
+            _placed = null;
         }
     }
 
@@ -165,16 +179,49 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Bottom-right of the work area of the monitor the mouse was on when the panel opened (above the taskbar).
-    /// Falls back to the primary work area if the Win32 calls fail.
+    /// The tray corner of the usable work area of the monitor the mouse was on when the panel opened (taskbar on any
+    /// edge, auto-hide taskbars kept clear, target-monitor DPI). Falls back to the primary work area if Win32 fails.
     /// </summary>
     private void PlaceAboveTray()
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd != IntPtr.Zero && _anchor is { } anchor && MonitorPlacement.PlaceBottomRight(hwnd, anchor)) return;
+        double width = double.IsNaN(Width) ? ActualWidth : Width;
+        if (hwnd != IntPtr.Zero && (_anchor ?? MonitorPlacement.Cursor()) is { } anchor && MonitorPlacement.PlaceAboveTray(hwnd, anchor, width) is { } placed)
+        {
+            _placed = placed;
+            double max = Math.Min(_designMaxHeight, placed.MaxHeightDip);
+            if (Math.Abs(MaxHeight - max) > 0.5) MaxHeight = max; // SizeChanged follows if this shrinks the window
+            return;
+        }
+        _placed = null;
         var area = SystemParameters.WorkArea;
-        Left = area.Right - ActualWidth - 4;
-        Top = area.Bottom - ActualHeight - 4;
+        MaxHeight = Math.Min(_designMaxHeight, area.Height - 8);
+        Left = Math.Max(area.Left, area.Right - ActualWidth - 4);
+        Top = Math.Max(area.Top, area.Bottom - ActualHeight - 4);
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(WndProc);
+    }
+
+    /// <summary>Keeps the open panel anchored through resizes, and re-places it when the work area or the displays change.</summary>
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        switch (msg)
+        {
+            case MonitorPlacement.WM_WINDOWPOSCHANGING when _placed is { } placed && IsVisible:
+                // Not marked handled: WPF still sees the (corrected) message.
+                MonitorPlacement.KeepAnchored(lParam, placed, () => MonitorPlacement.WindowSize(hwnd));
+                break;
+            case MonitorPlacement.WM_DISPLAYCHANGE:
+            case MonitorPlacement.WM_SETTINGCHANGE when wParam == MonitorPlacement.SPI_SETWORKAREA:
+                // A monitor was added/removed or rescaled, or a taskbar moved / changed auto-hide.
+                if (IsVisible) Dispatcher.BeginInvoke(PlaceAboveTray, DispatcherPriority.Background);
+                break;
+        }
+        return IntPtr.Zero;
     }
 
     protected override void OnClosing(CancelEventArgs e)

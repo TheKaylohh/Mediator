@@ -1,3 +1,5 @@
+#if !SOLIDWORKS_NOT_INSTALLED
+// Needs the SolidWorks interop (SldWorks); see SwxComHost.cs.
 using System.Diagnostics;
 using SolidWorks.Interop.sldworks;
 
@@ -68,3 +70,4 @@ public sealed class RotSwxConnector : ISwxConnector
         return new SwxConnection(sw, LaunchedByCockpit: true);
     }
 }
+#endif

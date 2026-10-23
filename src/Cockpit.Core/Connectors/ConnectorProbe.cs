@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Cockpit.Core.Jobs;
+using Cockpit.Core.Runtime;
 using Cockpit.Core.Tools;
 
 namespace Cockpit.Core.Connectors;
@@ -33,10 +34,19 @@ public interface IConnectorProbe
     (ProcessStartInfo? StartInfo, string? Problem) SignIn(string cliId);
 }
 
-/// <summary>The real probe. Paths and the process runner can be replaced for tests.</summary>
-public sealed partial class ConnectorProbe(IProcessRunner runner, string? home = null, IReadOnlyDictionary<string, string?>? executables = null) : IConnectorProbe
+/// <summary>
+/// The real probe. Paths, the process runner and the desktop-app locator can be replaced for tests.
+/// V8: SolidWorks, Resolve and Blender are found by <see cref="DesktopAppLocator"/> (registry, Program Files, version
+/// folders, Apps &amp; features), not just PATH and one default folder.
+/// </summary>
+public sealed partial class ConnectorProbe(IProcessRunner runner, string? home = null, IReadOnlyDictionary<string, string?>? executables = null,
+    DesktopAppLocator? apps = null, Func<string, int?>? runningProcess = null) : IConnectorProbe
 {
     private readonly string _home = home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    private readonly DesktopAppLocator _apps = apps ?? DesktopAppLocator.Default;
+    private readonly Func<string, int?> _running = runningProcess ?? FirstProcess;
+    /// <summary>Windows apps are reported as such off Windows, unless a locator was injected (tests).</summary>
+    private readonly bool _windowsApps = apps is not null || OperatingSystem.IsWindows();
 
     public static readonly IReadOnlyList<string> Prerequisites = ["claude", "gemini", "python", "git"];
 
@@ -104,38 +114,47 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
 
     public AppStatus SolidWorks()
     {
-        if (!OperatingSystem.IsWindows()) return new AppStatus("solidworks", "SolidWorks", false, "Windows only");
-        var p = FirstProcess("SLDWORKS");
-        return p is { } pid
-            ? new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it")
-            : new AppStatus("solidworks", "SolidWorks", false, "not running: start SolidWorks before an assembly or STEP import job");
+        if (!_windowsApps) return new AppStatus("solidworks", "SolidWorks", false, "Windows only");
+        var install = _apps.Find(DesktopApp.SolidWorks);
+        string installed = install is null ? "installation not found in the registry or the default folder" : $"installed: {Label(install)}";
+        if (_running("SLDWORKS") is { } pid)
+            return new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it. {installed}");
+        return install is null
+            ? new AppStatus("solidworks", "SolidWorks", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.SolidWorks))})")
+            : new AppStatus("solidworks", "SolidWorks", false, $"{installed}; not running: start SolidWorks before an assembly or STEP import job");
     }
 
     public AppStatus Resolve()
     {
-        if (!OperatingSystem.IsWindows()) return new AppStatus("resolve", "DaVinci Resolve", false, "Windows only");
-        string exe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Blackmagic Design", "DaVinci Resolve", "Resolve.exe");
-        bool installed = File.Exists(exe);
-        string edition = "edition not detected";
-        if (installed)
-        {
-            var info = FileVersionInfo.GetVersionInfo(exe);
-            string product = $"{info.ProductName} {info.FileDescription}";
-            edition = product.Contains("Studio", StringComparison.OrdinalIgnoreCase)
-                ? "Studio: the scripting bridge can create the timeline (enable External scripting: Local)"
-                : "edition not confirmed as Studio: FCPXML/EDL import works in both; the scripting bridge needs Studio";
-        }
-        var pid = FirstProcess("Resolve");
-        string running = pid is { } id ? $"running (PID {id})" : "not running";
-        return new AppStatus("resolve", "DaVinci Resolve", installed, installed ? $"{running}; {edition}" : "not installed in the default folder");
+        if (!_windowsApps) return new AppStatus("resolve", "DaVinci Resolve", false, "Windows only");
+        var install = _apps.Find(DesktopApp.Resolve);
+        if (install is null)
+            return new AppStatus("resolve", "DaVinci Resolve", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.Resolve))})");
+        string edition = (install.ProductName ?? "").Contains("Studio", StringComparison.OrdinalIgnoreCase)
+            ? "Studio: the scripting bridge can create the timeline (enable External scripting: Local)"
+            : "edition not confirmed as Studio: FCPXML/EDL import works in both; the scripting bridge needs Studio";
+        string running = _running("Resolve") is { } id ? $"running (PID {id})" : "not running";
+        return new AppStatus("resolve", "DaVinci Resolve", true, $"{running}; {edition}; {Label(install)}");
     }
 
     public AppStatus Blender()
     {
-        string? path = executables is not null && executables.TryGetValue("blender", out var forced) ? forced : ToolLocator.Blender();
-        return path is null
-            ? new AppStatus("blender", "Blender", false, "not found on PATH or in Program Files\\Blender Foundation")
-            : new AppStatus("blender", "Blender", true, path);
+        if (executables is not null && executables.TryGetValue("blender", out var forced))
+            return forced is null
+                ? new AppStatus("blender", "Blender", false, "not found")
+                : new AppStatus("blender", "Blender", true, forced);
+        var install = _apps.Find(DesktopApp.Blender);
+        return install is null
+            ? new AppStatus("blender", "Blender", false, $"not found (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.Blender))})")
+            : new AppStatus("blender", "Blender", true, Label(install));
+    }
+
+    /// <summary>"Blender 4.2 — C:\…\blender.exe (Program Files\Blender Foundation\Blender 4.2)".</summary>
+    private static string Label(DesktopAppInstall install)
+    {
+        string name = install.ProductName ?? DesktopAppLocator.DisplayName(install.App);
+        string version = install.Version is null || name.Contains(install.Version, StringComparison.OrdinalIgnoreCase) ? "" : " " + install.Version;
+        return $"{name}{version} — {install.Executable} ({install.FoundBy})";
     }
 
     private static int? FirstProcess(string name)

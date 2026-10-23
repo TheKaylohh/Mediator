@@ -11,6 +11,8 @@ public sealed class SwxWorkerException : Exception
 {
     /// <summary>Set by the worker when SolidWorks shows a modal dialog during a call (see SwxDialogs.cs).</summary>
     public const string ModalDialogBlocking = "MODAL_DIALOG_BLOCKING";
+    /// <summary>V8: the worker was built without the SolidWorks interop (SOLIDWORKS_NOT_INSTALLED); every call fails with this code.</summary>
+    public const string SolidWorksNotInstalled = "solidworks_not_installed";
 
     public string Code { get; }
     /// <summary>Extra error detail from the worker, e.g. <c>{title, text, buttons}</c> for a blocking dialog.</summary>

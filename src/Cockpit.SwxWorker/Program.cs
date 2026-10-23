@@ -12,6 +12,8 @@ using Cockpit.SwxWorker;
 //   response: {"id":1,"result":{...}}  or  {"id":1,"error":{"code":"...","message":"..."}}
 // Methods: health, part_cards {paths}, build_assembly {plan}, shutdown.
 // Exit codes: 0 normal, 2 bad arguments, 3 a COM call wedged the STA thread (Core restarts the worker).
+// Built without the SolidWorks interop (SOLIDWORKS_NOT_INSTALLED), every method answers
+//   {"id":1,"error":{"code":"solidworks_not_installed","message":"SolidWorks assemblies not installed on this machine: …"}}
 
 var options = new SwxHostOptions();
 try
@@ -34,7 +36,9 @@ catch (Exception ex) when (ex is ArgumentException or FormatException or IndexOu
 }
 
 await using var stdio = StdioJsonLines.OpenProcessStdio();
-using var host = new SwxComHost(options);
+// SwxComHost, or SwxUnavailableHost when this worker was built without the SolidWorks interop (V8).
+using var host = SwxHostFactory.Create(options);
+if (!SwxHostFactory.HasSolidWorksInterop) Console.Error.WriteLine("[swx-worker] built without the SolidWorks interop: every call answers solidworks_not_installed");
 
 host.Wedged += reason =>
 {

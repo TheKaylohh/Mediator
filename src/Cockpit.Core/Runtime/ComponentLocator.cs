@@ -16,7 +16,7 @@ public sealed record ComponentCommand(string FileName, IReadOnlyList<string> Pre
 }
 
 /// <summary>
-/// Finds cockpit-mcp-bridge and cockpit-swx-worker. Order: an explicit path, next to the running host
+/// Finds cockpit-mcp-bridge and cockpit-swx-worker (and, through <see cref="FindDesktopApp"/>, the desktop apps). Order: an explicit path, next to the running host
 /// (the shipped layout), then the repository's own build output (so `dotnet run` of the CLI host works).
 /// </summary>
 public static class ComponentLocator
@@ -29,6 +29,13 @@ public static class ComponentLocator
         [Bridge] = "Cockpit.Bridge",
         [SwxWorker] = "Cockpit.SwxWorker",
     };
+
+    /// <summary>
+    /// V8: the desktop applications the Cockpit drives (SolidWorks, DaVinci Resolve, Blender) are not our components
+    /// and are rarely on PATH; <see cref="DesktopAppLocator"/> finds them through the registry and the standard install
+    /// folders. This is the one entry point the rest of the Core uses.
+    /// </summary>
+    public static DesktopAppInstall? FindDesktopApp(DesktopApp app) => DesktopAppLocator.Default.Find(app);
 
     public static ComponentCommand? Find(string name, string? explicitPath = null, string? baseDirectory = null)
     {

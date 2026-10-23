@@ -13,20 +13,20 @@
 
   Cases, each with the expected result:
     health                      SolidWorks revision and PID; no hidden instance started
-    import valid STEP           plate_solid.step → new plate_solid.SLDPRT; reopened by part_cards: 1 body, 1 cylinder r=5 mm
-    import surface-only         sheet_surface_only.step → error no_solid_body, nothing saved
+    import valid STEP           plate_solid.step -> new plate_solid.SLDPRT; reopened by part_cards: 1 body, 1 cylinder r=5 mm
+    import surface-only         sheet_surface_only.step -> error no_solid_body, nothing saved
     import truncated / empty    import_failed (or com_error), nothing saved
-    import existing target      a second import of plate_solid.step → error exists, the first .SLDPRT unchanged (hash)
-    import duplicate names      a\bracket.step + b\bracket.step → both duplicate_target
-    import already open         open shaft_d25.step in SolidWorks first (the script pauses) → already_open, document untouched
-    assembly                    shaft + plate, 1 concentric mate (valid) → assembly saved; 1 mate between two planes
-                                that cannot be concentric (invalid) → reported mate error, nothing crashes
+    import existing target      a second import of plate_solid.step -> error exists, the first .SLDPRT unchanged (hash)
+    import duplicate names      a\bracket.step + b\bracket.step -> both duplicate_target
+    import already open         open shaft_d25.step in SolidWorks first (the script pauses) -> already_open, document untouched
+    assembly                    shaft + plate, 1 concentric mate (valid) -> assembly saved; 1 mate between two planes
+                                that cannot be concentric (invalid) -> reported mate error, nothing crashes
     worker restart              the worker is killed mid-session; a new one attaches to the SAME SolidWorks PID
     your document               still open, still modified, never saved
 
   Output: a transcript in docs\v6\swx-integration-<date>.txt. Copy the summary into TEST_RESULTS.md.
 
-  NOT RUN BY ITS AUTHOR: no Windows or SolidWorks host was available. API names used are listed in SPEC.md §8;
+  NOT RUN BY ITS AUTHOR: no Windows or SolidWorks host was available. API names used are listed in SPEC.md section 8;
   ISldWorks.GetDocuments (new in V6, used for ownership) is assumed and must be confirmed by this run.
 #>
 [CmdletBinding()]
@@ -62,7 +62,7 @@ $pidBefore = ($h.result -split 'PID ')[1].Split(')')[0].Split(',')[0]
 
 $r = Call 'import_step' @{ paths = @("$work\plate_solid.step"); outputFolder = "$work\out" }
 $saved = $r.result.results[0].partPath
-Expect ($saved -and (Test-Path $saved)) "import valid STEP → $saved"
+Expect ($saved -and (Test-Path $saved)) "import valid STEP -> $saved"
 $cards = Call 'part_cards' @{ paths = @($saved) }
 $cyl = $cards.result.cards[0].faces | Where-Object { $_.kind -eq 'Cylinder' }
 Expect ($cyl -and [math]::Abs($cyl[0].radiusM - 0.005) -lt 1e-6) "reopened part has the 5 mm-radius bore"
