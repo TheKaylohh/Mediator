@@ -786,4 +786,57 @@ static class OverlayTests
         Check.True(card.Finish() && !card.IsOpen, "a free hotkey finishes");
         Check.True(settings.Current?.Hotkey == "Ctrl+Shift+K" && cardBinding.Active?.ToString() == "Ctrl+Shift+K" && changed?.ToString() == "Ctrl+Shift+K", "saved, registered live, announced");
     }
+
+    /// <summary>V10: model selection and Quota Saver routing; free text runs headless (no terminal) and streams the full answer; cross-CLI continuation.</summary>
+    public static async Task V10ChatRoutingAndContinuation(string bridgeDll, string testsDll)
+    {
+        // (a) models and policies
+        Check.True(ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Cad, "design the architecture") == "opus"
+            && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Chat, "hi") == "haiku"
+            && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Chat, new string('x', 200)) == "sonnet"
+            && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Code, "fix the bug") == "sonnet"
+            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Files, "sort") == "gemini-2.5-flash"
+            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Tutor, "explain") == "gemini-2.5-pro", "SelectModel");
+        Check.True(ProviderRouter.Route(TaskCategory.Cad, null, false, _ => null, _ => true, RoutingPolicy.ConserveClaude).Provider == AiProvider.GeminiCli
+            && ProviderRouter.Route(TaskCategory.Tutor, null, false, _ => null, _ => true, RoutingPolicy.PreferClaude).Provider == AiProvider.ClaudeCode
+            && ProviderRouter.Route(TaskCategory.Chat, null, false, _ => null, _ => true).Provider == AiProvider.GeminiCli
+            && ProviderRouter.Route(TaskCategory.Cad, AiProvider.ClaudeCode, false, _ => null, _ => true, RoutingPolicy.ConserveClaude).Provider == AiProvider.ClaudeCode, "policies (an explicit choice still wins)");
+        Check.True(ProviderRouter.ParseProviderPrefix("/gemini sum this up") == (AiProvider.GeminiCli, "sum this up") && ProviderRouter.ParseProviderPrefix("hello") is null, "/gemini prefix");
+        Check.True(JobSpecFactory.InferToolsAndCategory("what is a fillet?", null) is { Category: TaskCategory.Chat, Tools.Count: 0 }
+            && JobSpecFactory.InferToolsAndCategory("check the mates", "SLDWORKS").Category == TaskCategory.Cad, "tool inference");
+
+        // (b) free text: headless assistant, no terminal, full answer streamed
+        string answer = string.Concat(Enumerable.Repeat("A fillet rounds an edge between two faces. ", 20)); // > 500 chars
+        string stream = Path.Combine(TempDir(), "chat.jsonl");
+        string sid = "7a1b2c3d-0000-4000-8000-000000000001";
+        File.WriteAllText(stream,
+            new JsonObject { ["type"] = "system", ["subtype"] = "init", ["session_id"] = sid, ["apiKeySource"] = "none", ["tools"] = new JsonArray(), ["mcp_servers"] = new JsonArray() }.ToJsonString() + "\n" +
+            new JsonObject { ["type"] = "assistant", ["session_id"] = sid, ["message"] = new JsonObject { ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = answer }) } }.ToJsonString() + "\n" +
+            new JsonObject { ["type"] = "result", ["subtype"] = "success", ["is_error"] = false, ["result"] = answer, ["num_turns"] = 1, ["session_id"] = sid }.ToJsonString() + "\n");
+        var launcher = new FakeLauncher(testsDll) { EmitFile = stream };
+        await using var rt = await LaunchTests.Runtime(bridgeDll, launcher);
+        var vm = new CockpitOverlayViewModel(rt, new InlineDispatcher()) { RoutingPolicy = RoutingPolicy.PreferClaude };
+        vm.PromptText = "Explain what a fillet is in CAD";
+        vm.SubmitPromptCommand.Execute(null);
+        await Until(() => vm.Conversation.Count == 1 && !vm.Conversation[0].IsRunning && vm.Jobs.Count == 1 && !vm.Jobs[0].IsActive, "chat turn finished");
+        var turn = vm.Conversation[0];
+        Check.True(launcher.Headless.Count == 1 && launcher.Interactive.Count == 0, "headless, never a terminal");
+        var args = launcher.Headless[0].ArgumentList.ToList();
+        Check.True(args[args.IndexOf("--model") + 1] == "haiku" && turn.BadgeText == "Claude Code · haiku", $"Claude First + short chat → haiku ({turn.BadgeText})");
+        Check.True(turn.ResponseText == answer && turn.ResponseText.Length > 500 && vm.SelectedTab == 0 && vm.HasConversation, "full answer, untruncated, on the Actions tab");
+        Check.True(vm.Activity.Any(a => a.Detail.EndsWith("…", StringComparison.Ordinal)), "the Activity feed still truncates");
+
+        // (c) cross-CLI continuation
+        var native = ContinuableSession.From(rt.Jobs.Single())!;
+        Check.True(native.NativeResume && native.LastResponseText == answer, "Claude run: native resume, answer kept");
+        var toGemini = JobSpecFactory.Continue(native, "and a chamfer?", targetProvider: AiProvider.GeminiCli);
+        Check.True(toGemini.ContinueSessionId is null && toGemini.Provider == AiProvider.GeminiCli
+            && toGemini.Prompt.StartsWith("Previous turn user: Explain what a fillet is in CAD", StringComparison.Ordinal)
+            && toGemini.Prompt.Contains("Previous turn assistant: A fillet", StringComparison.Ordinal) && toGemini.Prompt.EndsWith("Follow-up: and a chamfer?", StringComparison.Ordinal), "Claude → Gemini carries the turn as context");
+        var gem = native with { SessionId = "turn-x", Provider = AiProvider.GeminiCli, NativeResume = false };
+        Check.True(JobSpecFactory.Continue(gem, "more") is { ContinueSessionId: null, Provider: null } g && g.Prompt.Contains("Previous turn assistant:", StringComparison.Ordinal), "Gemini session: routed normally with context");
+        Check.True(JobSpecFactory.Continue(native, "more").ContinueSessionId == sid, "Claude → Claude still resumes natively");
+        var gl = new GeminiLaunchBuilder("/opt/fake/gemini").Headless(rt.Jobs.Single().Workspace, null, false, TempDir()).ArgumentList.ToList();
+        Check.True(gl.Contains("--include-directories"), "Gemini sees the user's folder");
+    }
 }

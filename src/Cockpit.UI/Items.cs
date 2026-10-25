@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Jobs;
@@ -282,4 +283,26 @@ public sealed class ContinuationViewModel : ObservableObject
     public string Text => $"\u21A9 Continue session ({Session.ShortId})";
     public string ToolTipText => $"Follow-up to \u201C{Session.Spec.Title}\u201D in {Folder} on Claude Pro (claude --resume {Session.SessionId}). Click to start fresh instead; \u00D7 removes it.";
     public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+}
+
+/// <summary>
+/// V10: one turn of the in-app conversation: the user's prompt, which CLI and model answered, what it is doing
+/// (tool steps), and the full answer (never truncated; the view shows it in a selectable read-only text box).
+/// </summary>
+public sealed class ChatTurnViewModel(string jobId, string userPrompt, string badgeText) : ObservableObject
+{
+    private string _badgeText = badgeText;
+    private string _thinkingSummary = "Thinking…";
+    private string _responseText = "";
+    private bool _isRunning = true;
+    private bool _isError;
+
+    public string JobId { get; } = jobId;
+    public string UserPrompt { get; } = userPrompt;
+    public string BadgeText { get => _badgeText; set => SetProperty(ref _badgeText, value); }
+    public string ThinkingSummary { get => _thinkingSummary; set => SetProperty(ref _thinkingSummary, value); }
+    public string ResponseText { get => _responseText; set => SetProperty(ref _responseText, value); }
+    public bool IsRunning { get => _isRunning; set => SetProperty(ref _isRunning, value); }
+    public bool IsError { get => _isError; set => SetProperty(ref _isError, value); }
+    public ObservableCollection<string> Steps { get; } = new();
 }

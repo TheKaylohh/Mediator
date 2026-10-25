@@ -119,6 +119,11 @@
                 </ControlTemplate>
               </ToggleButton.Template>
             </ToggleButton>
+            <!-- V10: routing policy pill (Auto Best / Quota Saver (Gemini) / Claude First) -->
+            <Button Style="{StaticResource FlatButton}" Padding="8,3" Margin="0,0,2,0" Command="{Binding CycleRoutingPolicyCommand}"
+                    ToolTip="Which subscription goes first when you do not pick one (click to change)" AutomationProperties.Name="Routing policy">
+              <TextBlock Text="{Binding RoutingPolicyText}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+            </Button>
             <Button Style="{StaticResource FlatButton}" Padding="6,4" Command="{Binding CycleThemeCommand}"
                     ToolTip="{Binding ThemeDisplayName}" AutomationProperties.Name="Next theme">
               <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE790;" />
@@ -288,6 +293,38 @@
             <!-- Actions -->
             <TabItem Header="Actions">
               <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420">
+                <StackPanel>
+                <!-- V10: the conversation. Each headless run: prompt, CLI · model, steps, and the full answer (selectable). -->
+                <StackPanel Margin="8,6,8,0" Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}">
+                  <ItemsControl ItemsSource="{Binding Conversation}" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border CornerRadius="{DynamicResource CardCornerRadius}" Background="{DynamicResource PanelBrush}" Padding="10,8" Margin="0,0,0,6">
+                          <StackPanel>
+                            <TextBlock Text="{Binding UserPrompt}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" Text="{Binding BadgeText}" />
+                            <TextBlock Style="{StaticResource MutedText}" Text="{Binding ThinkingSummary}"
+                                       Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                            <ItemsControl ItemsSource="{Binding Steps}" Focusable="False">
+                              <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" Text="{Binding}" />
+                                </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBox Margin="0,4,0,0" Text="{Binding ResponseText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                     Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextBrush}"
+                                     MaxHeight="300" VerticalScrollBarVisibility="Auto" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Right" Padding="8,2" Command="{Binding ClearConversationCommand}"
+                          AutomationProperties.Name="Clear conversation">
+                    <TextBlock Text="Clear conversation" FontSize="11" />
+                  </Button>
+                </StackPanel>
                 <ItemsControl ItemsSource="{Binding FilteredActions}" Margin="8,6,8,6" Focusable="False">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -322,6 +359,7 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </StackPanel>
               </ScrollViewer>
             </TabItem>
 

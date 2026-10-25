@@ -68,6 +68,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         CycleThemeCommand = new RelayCommand(CycleTheme);
         AcknowledgeFaultCommand = new RelayCommand(() => SetFault(null), () => _fault is not null);
         AttachCommand = new RelayCommand(() => BrowseForAttachmentsRequested?.Invoke());
+        ClearConversationCommand = new RelayCommand(() => { Conversation.Clear(); _turns.Clear(); }, () => Conversation.Count > 0);
+        CycleRoutingPolicyCommand = new RelayCommand(() => RoutingPolicy = (RoutingPolicy)(((int)RoutingPolicy + 1) % 3));
+        Conversation.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasConversation)); ClearConversationCommand.Refresh(); };
         ClearContinuationCommand = new RelayCommand(() => ClearContinuation("Starting fresh: the next prompt opens a new session."), () => Continuation is not null);
 
         _runtime.JobChanged += job => _ui.Post(() => OnJobChanged(job));
@@ -434,6 +437,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     public void SetContext(ContextSnapshot? snapshot)
     {
         ContextChips.Clear();
+        _activeApp = snapshot?.ProcessName;
         if (snapshot is null) return;
         if (snapshot.ExplorerFolder is { Length: > 0 } folder)
             ContextChips.Add(new ContextChipViewModel(ContextKind.Folder, ShortName(folder), folder));
@@ -509,10 +513,72 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             _ = ContinueSessionAsync(PromptText.Trim());
             return;
         }
-        var tile = Route(PromptText);
+        string text = PromptText.Trim();
+        AiProvider? provider = null;
+        if (ProviderRouter.ParseProviderPrefix(text) is { } chosen) { provider = chosen.Provider; text = chosen.Remainder; }
+        if (text.Length == 0) return;
+        bool terminal = UseTerminal || text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase) || text.Contains("claude-terminal", StringComparison.OrdinalIgnoreCase);
+        if (text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase)) text = text[9..].Trim();
+        var tile = Route(text);
         if (tile is null) return;
-        _ = RunActionAsync(tile, PromptBody(PromptText));
+        if (terminal) { _ = RunActionAsync(tile, PromptBody(text), provider); return; }
+
+        // V10: never a terminal unless asked. A specific action with its folder runs as before (streamed into the
+        // conversation); anything else (general questions, no folder, several kinds of tools) is a headless assistant job.
+        string body = PromptBody(text);
+        var (tools, category) = JobSpecFactory.InferToolsAndCategory(body, _activeApp);
+        string? folder = ResolveFolder(body);
+        bool specific = tile.Id != "claude-terminal" && (!tile.NeedsFolder || folder is not null) && tools.All(t => tile.Tools.Contains(t));
+        if (specific) _ = RunActionAsync(tile, body, provider);
+        else _ = RunAssistantAsync(body, provider, tools, category);
     }
+
+    // ── V10: in-app conversation ─────────────────────────────────────────────────────────────────────
+
+    private readonly Dictionary<string, ChatTurnViewModel> _turns = new(StringComparer.Ordinal);
+    private string? _activeApp;
+
+    /// <summary>Every headless run as a chat turn: prompt, CLI · model, steps, full answer.</summary>
+    public ObservableCollection<ChatTurnViewModel> Conversation { get; } = new();
+    public bool HasConversation => Conversation.Count > 0;
+    public RelayCommand ClearConversationCommand { get; }
+    public RelayCommand CycleRoutingPolicyCommand { get; }
+
+    /// <summary>Which subscription goes first when none is picked; saved in settings.json.</summary>
+    public RoutingPolicy RoutingPolicy
+    {
+        get => _settings.RoutingPolicy;
+        set
+        {
+            if (_settings.RoutingPolicy == value) return;
+            UpdateSettings(_settings with { RoutingPolicy = value });
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RoutingPolicyText));
+        }
+    }
+
+    public string RoutingPolicyText => RoutingPolicyName(RoutingPolicy);
+    public static string RoutingPolicyName(RoutingPolicy p) => p switch
+    {
+        RoutingPolicy.ConserveClaude => "Quota Saver (Gemini)",
+        RoutingPolicy.PreferClaude => "Claude First",
+        _ => "Auto Best",
+    };
+
+    /// <summary>A headless "just answer" job: the folder from the prompt or context if any (else no file access), inferred tools.</summary>
+    public Task<RunningJob?> RunAssistantAsync(string prompt, AiProvider? provider = null, IReadOnlyList<string>? tools = null, TaskCategory? category = null)
+    {
+        var inferred = tools is null || category is null ? JobSpecFactory.InferToolsAndCategory(prompt, _activeApp) : (tools, category.Value);
+        var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
+        var spec = JobSpecFactory.Assistant(ResolveFolder(prompt), prompt, LaunchMode.Headless, inferred.Item1, inferred.Item2, _runtime.ChatDirectory)
+            with { Provider = provider, NeverDowngrade = KeepSubscription, RoutingPolicy = RoutingPolicy, Attachments = attached.Select(c => c.Attachment!).ToList() };
+        return StartAndShowAsync(spec, attached, $"Asking: {spec.Title}", stayOnActions: true);
+    }
+
+    private ChatTurnViewModel? TurnFor(string jobId) => _turns.GetValueOrDefault(jobId);
+
+    private static string Badge(RunningJob job) =>
+        (job.Provider is { } p ? (p == AiProvider.ClaudeCode ? "Claude Code" : "Gemini CLI") : "…") + " · " + (job.Model ?? job.Spec.Model ?? "default");
 
     /// <summary>
     /// Asks the runtime which subscription the suggested action would use now, and lights that pill. Shows the
@@ -557,7 +623,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             ?? ContextChips.Where(c => c.IsIncluded && c.Kind == ContextKind.File).Select(c => Path.GetDirectoryName(c.Value)).FirstOrDefault(d => d is not null);
     }
 
-    public async Task<RunningJob?> RunActionAsync(ActionTileViewModel tile, string prompt)
+    public async Task<RunningJob?> RunActionAsync(ActionTileViewModel tile, string prompt, AiProvider? provider = null)
     {
         if (!tile.IsEnabled) { StatusText = tile.DisabledReason; return null; }
         string? folder = ResolveFolder(prompt);
@@ -568,24 +634,32 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         }
         var launch = UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless;
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
-        JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList() };
+        JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList(), RoutingPolicy = RoutingPolicy };
+        if (provider is not null) spec = spec with { Provider = provider };
+        if (prompt.Length > 0 && spec.UserText is null) spec = spec with { UserText = prompt };
         return await StartAndShowAsync(spec, attached, $"Started: {spec.Title}").ConfigureAwait(true);
     }
 
-    private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started)
+    private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started, bool stayOnActions = false)
     {
         try
         {
             var job = await _runtime.StartJobAsync(spec).ConfigureAwait(true);
             _ui.Post(() =>
             {
+                if (job.Spec.Launch == LaunchMode.Headless && !_turns.ContainsKey(job.JobId))
+                {
+                    var turn = new ChatTurnViewModel(job.JobId, spec.UserText ?? spec.Title, Badge(job));
+                    _turns[job.JobId] = turn;
+                    Conversation.Add(turn);
+                }
                 // The job owns these now: the chips go, the staged copies stay for it to read.
                 foreach (var c in attached) ContextChips.Remove(c);
                 OnPropertyChanged(nameof(AttachmentChips));
                 OnJobChanged(job);
                 StatusText = started;
                 PromptText = "";
-                SelectedTab = 1;
+                SelectedTab = stayOnActions ? 0 : 1;
             });
             return job;
         }
@@ -653,7 +727,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             return Route(PromptText) is { } tile ? await RunActionAsync(tile, PromptBody(PromptText)).ConfigureAwait(true) : null;
         }
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
-        var spec = JobSpecFactory.Continue(chip.Session, prompt, UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless, attached.Select(c => c.Attachment!).ToList());
+        var spec = JobSpecFactory.Continue(chip.Session, prompt, UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless, attached.Select(c => c.Attachment!).ToList()) with { RoutingPolicy = RoutingPolicy };
         var job = await StartAndShowAsync(spec, attached, $"Continuing session {chip.Session.ShortId}: {chip.Session.Spec.Title}").ConfigureAwait(true);
         if (job is not null) _ui.Post(() => { if (ReferenceEquals(Continuation, chip)) Continuation = null; });
         return job;
@@ -718,6 +792,15 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             if (item.IsActive) SetFault(null); // a new job clears the last fault
         }
         item.Update(job);
+        if (TurnFor(job.JobId) is { } turn)
+        {
+            turn.BadgeText = Badge(job);
+            if (!item.IsActive)
+            {
+                turn.IsRunning = false;
+                if (job.State != JobState.Succeeded && turn.ResponseText.Length == 0) { turn.IsError = true; turn.ResponseText = job.Detail ?? job.State.ToString(); }
+            }
+        }
         if (!item.IsActive && ContinuableSession.From(job) is { } session && (Continuation is null || Continuation.Session.EndedAt <= session.EndedAt))
             Continuation = new ContinuationViewModel(session);
         if (!item.IsActive)
@@ -764,9 +847,25 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         switch (e)
         {
             case AssistantTextEvent t:
+                if (TurnFor(jobId) is { } turn) // V10: the full text, never truncated
+                {
+                    turn.ResponseText = turn.ResponseText.Length == 0 ? t.Text : turn.ResponseText + "\n\n" + t.Text;
+                    turn.ThinkingSummary = "Writing…";
+                }
                 string text = t.Text.ReplaceLineEndings(" ");
                 string who = _jobProviders.GetValueOrDefault(jobId) == AiProvider.GeminiCli ? "gemini" : "claude";
                 AddActivity(new ActivityItemViewModel(DateTimeOffset.UtcNow, jobId, who, "says", text.Length > 240 ? text[..240] + "…" : text));
+                break;
+            case ToolUseEvent tu when TurnFor(jobId) is { } stepTurn:
+                string tool = tu.Name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? tu.Name["mcp__cockpit__".Length..] : tu.Name;
+                stepTurn.Steps.Add("\u2699 " + tool);
+                stepTurn.ThinkingSummary = $"Using {tool} ({stepTurn.Steps.Count} step{(stepTurn.Steps.Count == 1 ? "" : "s")})";
+                break;
+            case RunResultEvent { RateLimit: null } done when TurnFor(jobId) is { } doneTurn:
+                if (doneTurn.ResponseText.Length == 0) doneTurn.ResponseText = done.ResultText ?? "";
+                doneTurn.IsError = done.IsError;
+                doneTurn.IsRunning = false;
+                doneTurn.ThinkingSummary = doneTurn.Steps.Count == 0 ? "Done" : $"Done · {doneTurn.Steps.Count} step(s)";
                 break;
             case RunResultEvent { RateLimit: { } limit }:
                 string limited = ProviderRouter.Id(_jobProviders.GetValueOrDefault(jobId, AiProvider.ClaudeCode));

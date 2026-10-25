@@ -271,7 +271,9 @@ static class LaunchTests
         var psi = launcher.Headless.Single();
         Check.Equal("/opt/fake/gemini", psi.FileName, "gemini launched");
         string[] args = [.. psi.ArgumentList];
-        Check.True(args.SequenceEqual(new[] { "--output-format", "stream-json", "--allowed-mcp-server-names", "cockpit" }), "gemini flags: " + string.Join(' ', args));
+        // V10: the user's folder via --include-directories and an auto-selected model (-m) follow the V6 flags.
+        Check.True(args.Take(4).SequenceEqual(new[] { "--output-format", "stream-json", "--allowed-mcp-server-names", "cockpit" })
+            && args.Contains("--include-directories") && args[Array.IndexOf(args, "-m") + 1].StartsWith("gemini-", StringComparison.Ordinal), "gemini flags: " + string.Join(' ', args));
         Check.Equal(job.Workspace.Root, psi.WorkingDirectory, "runs in the job workspace so .gemini/settings.json is found");
         Check.True(!psi.Environment.ContainsKey("GEMINI_API_KEY") && !psi.Environment.ContainsKey("GOOGLE_GENAI_USE_VERTEXAI"), "Google billing variables scrubbed");
 
