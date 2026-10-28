@@ -59,14 +59,18 @@ public sealed class SwxToolProvider : IToolProvider
 
         new ToolDescriptor(BuildTool,
             "Create a NEW SolidWorks assembly from parts already read with swx_part_cards. Inserts components at given " +
-            "positions (m), fixes those marked fixed, and adds mates between face IDs. Never overwrites files and never " +
-            "edits the parts. The user reviews the mate plan before anything runs. Mates that fail are left out and reported.",
+            "positions (m), fixes those marked fixed, and adds mates between face IDs. Besides the card's c../p.. faces, every part " +
+            "has its default planes as faceA/faceB: \"front\" (XY), \"top\" (XZ), \"right\" (YZ), e.g. to centre a cylinder on a block " +
+            "(Coincident right↔right and front↔front) or to align parts without a matching face. A part used several times (4 axles, " +
+            "36 track segments) is one component per copy with its own key and position. outputPath: the assembly name the user asked " +
+            "for (e.g. Train_Master_Assembly.SLDASM in their folder); if it already exists, ask or add -v2. Never overwrites files and " +
+            "never edits the parts. The user reviews the mate plan before anything runs. Mates that fail are left out and reported.",
             (JsonObject)JsonNode.Parse("""
             {
               "type": "object",
               "required": ["outputPath", "components"],
               "properties": {
-                "outputPath":   { "type": "string", "description": "Absolute path of the new .SLDASM (must not exist)." },
+                "outputPath":   { "type": "string", "description": "Absolute path of the new .SLDASM (must not exist): the file name the user asked for, in their folder." },
                 "templatePath": { "type": "string", "description": "Optional .ASMDOT; default is SolidWorks' default assembly template." },
                 "components": {
                   "type": "array",
@@ -422,13 +426,13 @@ public sealed class SwxToolProvider : IToolProvider
             if (!cardsByKey.TryGetValue(m.ComponentA, out var ca) || !cardsByKey.TryGetValue(m.ComponentB, out var cb))
                 return (plan, null, $"Mate '{m.Key}' refers to an unknown component.");
             if (m.ComponentA == m.ComponentB) return (plan, null, $"Mate '{m.Key}' must join two different components.");
-            var fa = ca.Faces.FirstOrDefault(f => f.Id == m.FaceA);
-            var fb = cb.Faces.FirstOrDefault(f => f.Id == m.FaceB);
-            if (fa is null || fb is null) return (plan, null, $"Mate '{m.Key}' refers to a face ID that is not in the part card.");
+            var fa = ca.Faces.FirstOrDefault(f => f.Id == m.FaceA) ?? (StandardPlanes.IndexOf(m.FaceA) is >= 0 and var ia ? StandardPlanes.Face(ia) : null);
+            var fb = cb.Faces.FirstOrDefault(f => f.Id == m.FaceB) ?? (StandardPlanes.IndexOf(m.FaceB) is >= 0 and var ib ? StandardPlanes.Face(ib) : null);
+            if (fa is null || fb is null) return (plan, null, $"Mate '{m.Key}' refers to a face ID that is not in the part card (use its c../p.. IDs, or a default plane: front, top, right).");
             if (m.Type == MateKind.Concentric && (fa.Kind != FaceKind.Cylinder || fb.Kind != FaceKind.Cylinder))
                 return (plan, null, $"Mate '{m.Key}': Concentric needs two cylinder faces (c..).");
             if (m.Type != MateKind.Concentric && (fa.Kind != FaceKind.Plane || fb.Kind != FaceKind.Plane))
-                return (plan, null, $"Mate '{m.Key}': {m.Type} needs two plane faces (p..).");
+                return (plan, null, $"Mate '{m.Key}': {m.Type} needs two plane faces (p.. or front/top/right).");
             if (m.Type == MateKind.Distance && m.DistanceM is null)
                 return (plan, null, $"Mate '{m.Key}': Distance needs distanceM.");
             mates.Add(new ResolvedMate(m, fa, fb));
@@ -440,6 +444,7 @@ public sealed class SwxToolProvider : IToolProvider
 
     private static string Describe(string component, FaceInfo f)
     {
+        if (StandardPlanes.IsStandard(f)) return $"{component}.{f.Id} (default plane)";
         string size = f.RadiusM is double r
             ? $"r {Math.Round(r * 1000, 3).ToString(CultureInfo.InvariantCulture)} mm"
             : $"{Math.Round(f.AreaM2 * 1e6, 1).ToString(CultureInfo.InvariantCulture)} mm²";

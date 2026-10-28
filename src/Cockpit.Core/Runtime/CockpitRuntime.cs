@@ -1023,7 +1023,8 @@ public static partial class JobSpecFactory
                    Several parts that go together (a mechanism, a kit, "make the parts and mate them"): one job does it all, one tool
                    call at a time. Build every part with swx_build_parametric_part (check each report), then call swx_part_cards on
                    the output folder, then swx_build_assembly with only the parts you built and mates read from the cards
-                   (concentric for matching cylinders, coincident for opposed faces), largest part fixed.
+                   (concentric for matching cylinders, coincident for opposed faces, default planes "front"/"top"/"right" to
+                   centre parts without matching faces), largest part fixed, saved under the assembly name the user asked for.
                    A DXF/SVG drawing the user gives (logo, plate outline, gasket) becomes a profile shape "import" (path, width?) and
                    is extruded or cut; lock: true keeps its exact shape. A 3D path (pipe, handlebar, wire) is op curve3d, then sweep.
                    Existing SolidWorks files: swx_session shows what is open; swx_document_ops opens, saves or closes (never discard
@@ -1112,6 +1113,23 @@ public static partial class JobSpecFactory
     public static string DefaultAssemblyPath(string folder) =>
         Path.Combine(Path.GetFullPath(folder), string.Create(CultureInfo.InvariantCulture, $"Cockpit-Assembly-{DateTime.Now:yyyyMMdd-HHmmss}.SLDASM"));
 
+    /// <summary>
+    /// The assembly file a request names ("...named Train_Master_Assembly.SLDASM", "save as C:\X\Car.sldasm"), placed in
+    /// <paramref name="folder"/> unless the request gives a full path; null when it names none.
+    /// </summary>
+    public static string? RequestedAssemblyPath(string? request, string folder)
+    {
+        var m = AssemblyFileName().Match(request ?? "");
+        if (!m.Success) return null;
+        string name = m.Groups["name"].Value;
+        string? dir = m.Groups["dir"].Success && m.Groups["dir"].Value.Length > 0 ? m.Groups["dir"].Value : null;
+        try { return Path.GetFullPath(Path.Combine(dir ?? folder, name)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return Path.Combine(Path.GetFullPath(folder), name); }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<dir>[A-Za-z]:\\(?:[^\\/:*?""<>|\r\n]+\\)*)?(?<name>[\w\-.]+\.sldasm)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex AssemblyFileName();
+
     public static JobSpec Assemble(string folder, LaunchMode launch, string? outputPath = null)
     {
         string full = Path.GetFullPath(folder);
@@ -1137,8 +1155,11 @@ public static partial class JobSpecFactory
                 1. Call swx_part_cards with {"folder": "{{full.Replace("\\", "\\\\", StringComparison.Ordinal)}}"}.
                 2. From the cards (bounding boxes, cylinders, planes, mate references) work out how the parts fit together.
                    Prefer concentric mates between cylinders of equal radius and coincident mates between opposed planes.
-                   Give every mate a confidence (0-1) and a one-line reason. Leave out mates you are unsure about.
-                3. Call swx_build_assembly once with outputPath "{{output.Replace("\\", "\\\\", StringComparison.Ordinal)}}", the first
+                   To centre or align parts without matching faces (a cylinder on a block) mate their default planes: faceA/faceB
+                   "front", "top" or "right" (e.g. Coincident right-right and front-front centres the boiler on the chassis).
+                   A part used several times is one component per copy (key, position). Give every mate a confidence (0-1) and a one-line reason. Leave out mates you are unsure about.
+                3. Call swx_build_assembly once with outputPath "{{output.Replace("\\", "\\\\", StringComparison.Ordinal)}}" (or the assembly name
+                   the user asked for, in that folder), the first
                    (largest) part fixed, and your mates. The user reviews and may untick mates before anything is built.
                 4. Report which mates were built, which failed, and what the user should check in SolidWorks.
                 Use only the cockpit tools. Do not try to edit the part files.

@@ -261,4 +261,32 @@ static class SwxTests
         var result = await host.BuildAssemblyAsync(plan, TimeSpan.FromSeconds(30), CancellationToken.None);
         Check.True(result.Mates.Single().Status == MateStatus.Ok, "geometric re-match found both faces: " + result.Mates.Single().Detail);
     }
+
+    /// <summary>
+    /// V10: mates on default planes (found by feature-tree position, so a translated "Plan de face" works), and the prompts
+    /// that blocked a build (save read-only references?, rebuild?, error box, mate flip) are off during it and restored after.
+    /// </summary>
+    public static async Task DefaultPlaneMatesAndQuietPrompts()
+    {
+        var (app, shaftPath, housingPath, dir) = Scene();
+        app.Toggles[15] = false; app.Toggles[77] = true; app.Integers[230] = 0; // the user's own settings
+        using var host = Host(app);
+        var batch = await host.ExtractPartCardsAsync([shaftPath, housingPath], TimeSpan.FromSeconds(30), CancellationToken.None);
+        var housing = batch.Cards.Single(c => c.Path == housingPath);
+        string output = Path.Combine(dir, "Train_Master_Assembly.SLDASM");
+        var plan = new ResolvedAssemblyPlan(output, null,
+            [new PlanComponent("shaft", shaftPath, null, [0, 0, 0], true), new PlanComponent("housing", housingPath, null, [0.05, 0, 0], false)],
+            [
+                new ResolvedMate(new PlanMate("centre", MateKind.Coincident, "shaft", "right", "housing", "right", MateAlignment.Closest, false, null, 0.9, "centre"),
+                    StandardPlanes.Face(2), StandardPlanes.Face(2)),
+                new ResolvedMate(new PlanMate("front", MateKind.Coincident, "shaft", "front", "housing", "p1", MateAlignment.Closest, false, null, 0.9, "plane to face"),
+                    StandardPlanes.Face(0), housing.Faces.Single(f => f.Id == "p1")),
+            ]);
+        var result = await host.BuildAssemblyAsync(plan, TimeSpan.FromSeconds(30), CancellationToken.None);
+        var asm = app.Assemblies.Single();
+        Check.True(result.Saved && result.Mates.All(m => m.Status == MateStatus.Ok), "plane mates built: " + string.Join("; ", result.Mates.Select(m => $"{m.Key} {m.Status} {m.Detail}")) + " / " + asm.LastRejection);
+        Check.True(asm.Mates[0].A is FakeFeature { Name: "Right Plane" } && asm.Mates[1].A is FakeFeature { Name: "Plan de face" } && asm.Mates[1].B is FakeMappedFace,
+            "the default planes are found by position (first, second, third RefPlane); a plane mates a face too");
+        Check.True(app.Toggles[15] == false && app.Toggles[77] && app.Integers[230] == 0, "the user's prompt settings are back after the build");
+    }
 }

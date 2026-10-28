@@ -17,6 +17,11 @@ sealed class FakeSelection
         if (!append) Items.Clear();
         Items.Add((entity, data?.Mark ?? 0));
     }
+    public void Add(bool append, object entity, int mark)
+    {
+        if (!append) Items.Clear();
+        Items.Add((entity, mark));
+    }
 }
 
 sealed class FakeSldWorks : SldWorks
@@ -61,6 +66,12 @@ sealed class FakeSldWorks : SldWorks
     }
 
     public string GetUserPreferenceStringValue(int UserPreferenceValue) => TemplatePath;
+    public readonly Dictionary<int, bool> Toggles = new();
+    public readonly Dictionary<int, int> Integers = new();
+    public bool GetUserPreferenceToggle(int UserPreferenceValue) => Toggles.GetValueOrDefault(UserPreferenceValue);
+    public void SetUserPreferenceToggle(int UserPreferenceValue, bool OnFlag) => Toggles[UserPreferenceValue] = OnFlag;
+    public int GetUserPreferenceIntegerValue(int UserPreferenceValue) => Integers.GetValueOrDefault(UserPreferenceValue);
+    public bool SetUserPreferenceIntegerValue(int UserPreferenceValue, int Value) { Integers[UserPreferenceValue] = Value; return true; }
 
     /// <summary>STEP files this fake can "import": path → geometry to give the imported part.</summary>
     public readonly Dictionary<string, Action<FakePart>> StepFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -144,6 +155,9 @@ sealed class FakeFeature : Feature
     public object GetFirstSubFeature() => Subs.FirstOrDefault()!;
     public object GetNextSubFeature() => Next();
     public int GetErrorCode2(out bool IsWarning) { IsWarning = false; return ErrorCode; }
+    /// <summary>Set by FakeComponent.FeatureByName: the component this assembly-context copy belongs to.</summary>
+    public FakeComponent? Owner { get; set; }
+    public bool Select2(bool Append, int Mark) { if (Owner is null) return false; Owner.Assembly.Selection.Add(Append, this, Mark); return true; }
     private object Next() { int i = _siblings.IndexOf(this); return i >= 0 && i + 1 < _siblings.Count ? _siblings[i + 1] : null!; }
 }
 
@@ -165,7 +179,13 @@ sealed class FakePart : ModelDoc2, PartDoc, ModelDocExtension
     public int SaveAttempts { get; private set; }
     public bool Dirty { get; private set; }
 
-    public FakePart(FakeSldWorks app, string path) { App = app; Path = path; }
+    public FakePart(FakeSldWorks app, string path)
+    {
+        App = app; Path = path;
+        // Like every SolidWorks part: the three default planes come first (names may be renamed or translated).
+        foreach (var plane in new[] { "Plan de face", "Top Plane", "Right Plane" }) _features.Add(new FakeFeature(_features, plane, "RefPlane"));
+    }
+    public IReadOnlyList<FakeFeature> Features => _features;
 
     public FakePart Cylinder(string id, double[] origin, double[] axis, double radius, double area)
     {
@@ -249,6 +269,8 @@ sealed class FakeComponent : Component2
     public object GetCorrespondingEntity(object Entity) =>
         Entity is FakeFace f && ReferenceEquals(f.Part, Part) ? new FakeMappedFace(this, f) : null!;
     public bool Select4(bool Append, SelectData Data, bool ShowPopup) { Assembly.Selection.Add(Append, this, Data); return true; }
+    public object FeatureByName(string Name) => Part.Features.FirstOrDefault(f => f.Name == Name) is { } f
+        ? new FakeFeature([], f.Name, f.TypeName) { Owner = this } : null!;
 }
 
 /// <summary>An assembly-context proxy for a part face, as returned by GetCorrespondingEntity.</summary>
@@ -260,7 +282,7 @@ sealed class FakeMappedFace : Entity
     public bool Select4(bool Append, SelectData Data) { Component.Assembly.Selection.Add(Append, this, Data); return true; }
 }
 
-sealed record CreatedMate(swMateType_e Type, FakeMappedFace A, FakeMappedFace B, double RadiusA, double RadiusB);
+sealed record CreatedMate(swMateType_e Type, object A, object B, double RadiusA, double RadiusB);
 
 sealed class FakeAssembly : ModelDoc2, AssemblyDoc, ModelDocExtension
 {
@@ -345,22 +367,25 @@ sealed class FakeAssembly : ModelDoc2, AssemblyDoc, ModelDocExtension
         }
         ErrorStatus = (int)swAddMateError_e.swAddMateError_IncorrectSelections;
         if (Selection.Items.Count != 2) return Reject($"expected 2 selected entities, got {Selection.Items.Count}");
-        if (Selection.Items.Any(i => i.Entity is not FakeMappedFace m || !ReferenceEquals(m.Component.Assembly, this)))
+        // An assembly-context face proxy, or a component's reference plane (FeatureByName in the assembly).
+        bool InThisAssembly(object e) => e is FakeMappedFace m ? ReferenceEquals(m.Component.Assembly, this)
+            : e is FakeFeature { TypeName: "RefPlane", Owner: { } o } && ReferenceEquals(o.Assembly, this);
+        if (Selection.Items.Any(i => !InThisAssembly(i.Entity)))
             return Reject("a selected entity is a part-space face, not an assembly-context proxy");
         if (Selection.Items.Any(i => i.Mark != 1))
             return Reject("selection mark must be 1 for standard mates");
 
-        var a = (FakeMappedFace)Selection.Items[0].Entity;
-        var b = (FakeMappedFace)Selection.Items[1].Entity;
+        object a = Selection.Items[0].Entity, b = Selection.Items[1].Entity;
+        static bool Cyl(object e) => e is FakeMappedFace m && m.Face.Surface.IsCylinder();
+        static bool Flat(object e) => e is FakeFeature || e is FakeMappedFace m && m.Face.Surface.IsPlane();
         var type = (swMateType_e)MateTypeFromEnum;
-        if (type == swMateType_e.swMateCONCENTRIC && !(a.Face.Surface.IsCylinder() && b.Face.Surface.IsCylinder()))
+        if (type == swMateType_e.swMateCONCENTRIC && !(Cyl(a) && Cyl(b)))
             return Reject("concentric needs two cylinders");
-        if (type is swMateType_e.swMateCOINCIDENT or swMateType_e.swMatePARALLEL or swMateType_e.swMateDISTANCE
-            && !(a.Face.Surface.IsPlane() && b.Face.Surface.IsPlane()))
+        if (type is swMateType_e.swMateCOINCIDENT or swMateType_e.swMatePARALLEL or swMateType_e.swMateDISTANCE && !(Flat(a) && Flat(b)))
             return Reject($"{type} needs two planes");
 
-        double ra = a.Face.Surface.IsCylinder() ? ((double[])a.Face.Surface.CylinderParams)[6] : double.NaN;
-        double rb = b.Face.Surface.IsCylinder() ? ((double[])b.Face.Surface.CylinderParams)[6] : double.NaN;
+        double ra = Cyl(a) ? ((double[])((FakeMappedFace)a).Face.Surface.CylinderParams)[6] : double.NaN;
+        double rb = Cyl(b) ? ((double[])((FakeMappedFace)b).Face.Surface.CylinderParams)[6] : double.NaN;
         Mates.Add(new CreatedMate(type, a, b, ra, rb));
         _mateGroup.Subs.Add(new FakeFeature(_mateGroup.Subs, $"{type}{_mateGroup.Subs.Count + 1}", "MateConcentric"));
         ErrorStatus = (int)swAddMateError_e.swAddMateError_NoError;

@@ -52,9 +52,17 @@ public sealed partial class SwxParametric
 
     // ── Public entry points (each runs on its own STA thread) ──────────────────────────────────────────
 
-    public static JsonObject Build(JsonObject recipe, TimeSpan timeout) => RunSta(() => new SwxParametric().DoBuild(recipe), timeout);
+    public static JsonObject Build(JsonObject recipe, TimeSpan timeout) => Run(p => p.DoBuild(recipe), timeout);
 
-    public static JsonObject SetGlobals(string? partPath, JsonObject values, TimeSpan timeout) => RunSta(() => new SwxParametric().DoSet(partPath, values), timeout);
+    public static JsonObject SetGlobals(string? partPath, JsonObject values, TimeSpan timeout) => Run(p => p.DoSet(partPath, values), timeout);
+
+    /// <summary>Runs one operation on its own instance and STA thread; SolidWorks' prompts are restored afterwards.</summary>
+    private static JsonObject Run(Func<SwxParametric, JsonObject> op, TimeSpan timeout) => RunSta(() =>
+    {
+        var p = new SwxParametric();
+        try { return op(p); }
+        finally { p.RestorePrompts(); }
+    }, timeout);
 
     private static JsonObject RunSta(Func<JsonObject> work, TimeSpan timeout)
     {
@@ -79,6 +87,41 @@ public sealed partial class SwxParametric
         _sw = SolidWorksLauncher.Attach(TimeSpan.FromMinutes(3));
         S(_sw, "Visible", true);
         C(_sw, "SetUserPreferenceToggle", 10, false); // swInputDimValOnCreate: no "Modify" box per dimension
+        QuietPrompts();
+    }
+
+    // SolidWorks questions that would block an automated call (a Yes/No nobody answers). Changed for the call only.
+    private const int ExtRefNoPromptOrSave = 15, ShowErrorsEveryRebuild = 77, SketchPromptToClose = 96, OverdefiningPrompt = 100; // swUserPreferenceToggle_e
+    private const int RebuildOnActivation = 230, RebuildActiveDoc = 2;                                                       // swUserPreferenceIntegerValue_e
+    private readonly List<(int Id, bool Value)> _savedToggles = [];
+    private int? _savedRebuild;
+    private bool? _savedCommandInProgress;
+
+    /// <summary>
+    /// No prompts during the call: read-only references are neither saved nor asked about, rebuilds happen without asking,
+    /// no rebuild-error, close-sketch or over-defining boxes, and CommandInProgress tells SolidWorks a program is driving it.
+    /// (ISldWorks.CloseDoc has no "silent" flag; UserControl = false would hand the user's SolidWorks session to this process.)
+    /// </summary>
+    private void QuietPrompts()
+    {
+        if (_savedCommandInProgress is not null) return;
+        foreach (var (id, value) in new[] { (ExtRefNoPromptOrSave, true), (ShowErrorsEveryRebuild, false), (SketchPromptToClose, false), (OverdefiningPrompt, false) })
+        {
+            try { _savedToggles.Add((id, C(_sw, "GetUserPreferenceToggle", id) is true)); C(_sw, "SetUserPreferenceToggle", id, value); }
+            catch (InvalidOperationException) { }
+        }
+        try { _savedRebuild = C(_sw, "GetUserPreferenceIntegerValue", RebuildOnActivation) as int?; C(_sw, "SetUserPreferenceIntegerValue", RebuildOnActivation, RebuildActiveDoc); }
+        catch (InvalidOperationException) { _savedRebuild = null; }
+        try { _savedCommandInProgress = G(_sw, "CommandInProgress") is true; S(_sw, "CommandInProgress", true); }
+        catch (Exception ex) when (ex is COMException or TargetInvocationException) { _savedCommandInProgress = false; }
+    }
+
+    private void RestorePrompts()
+    {
+        if (_sw is null || _savedCommandInProgress is not { } cip) return;
+        foreach (var (id, value) in _savedToggles) try { C(_sw, "SetUserPreferenceToggle", id, value); } catch (InvalidOperationException) { }
+        if (_savedRebuild is int r) try { C(_sw, "SetUserPreferenceIntegerValue", RebuildOnActivation, r); } catch (InvalidOperationException) { }
+        try { S(_sw, "CommandInProgress", cip); } catch (Exception ex) when (ex is COMException or TargetInvocationException) { }
     }
 
     // ── Build ───────────────────────────────────────────────────────────────────────────────────────────

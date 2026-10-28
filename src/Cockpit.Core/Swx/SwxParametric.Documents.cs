@@ -27,11 +27,11 @@ public sealed partial class SwxParametric
 
     private static string TypeName(object? t) => t switch { SwDocPart => "part", SwDocAssembly => "assembly", SwDocDrawing => "drawing", _ => "other" };
 
-    public static JsonObject Session(TimeSpan timeout) => RunSta(() => new SwxParametric().DoSession(), timeout);
+    public static JsonObject Session(TimeSpan timeout) => Run(p => p.DoSession(), timeout);
     public static JsonObject Document(string action, string? path, bool save, bool discard, TimeSpan timeout) =>
-        RunSta(() => new SwxParametric().DoDocument(action, path, save, discard), timeout);
+        Run(p => p.DoDocument(action, path, save, discard), timeout);
     public static JsonObject Export(IReadOnlyList<string> paths, IReadOnlyList<string> formats, string outputFolder, TimeSpan timeout) =>
-        RunSta(() => new SwxParametric().DoExport(paths, formats, outputFolder), timeout);
+        Run(p => p.DoExport(paths, formats, outputFolder), timeout);
 
     private JsonObject DoSession()
     {
@@ -117,7 +117,15 @@ public sealed partial class SwxParametric
 
     private static void SaveDoc(object doc, string title)
     {
-        int err = (int)C(doc, "Save3", 1, 0, 0)!; // swSaveAsOptions_Silent
+        // Silent | SaveReferenced: an assembly's changed parts are saved with it instead of SolidWorks asking about them.
+        var args = new object?[] { 1 | 4, 0, 0 };
+        var mods = new ParameterModifier(3);
+        mods[1] = true; mods[2] = true; // ref int Errors, ref int Warnings
+        bool ok;
+        try { ok = doc.GetType().InvokeMember("Save3", BindingFlags.InvokeMethod, null, doc, args, [mods], null, null) is true; }
+        catch (TargetInvocationException ex) { throw new InvalidOperationException($"saving {title} failed: {ex.InnerException?.Message}", ex); }
+        int err = args[1] is int e ? e : 0;
+        if (!ok && err == 0) err = -1;
         if (err != 0) throw new InvalidOperationException($"saving {title} failed (error {err})");
     }
 

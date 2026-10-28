@@ -1221,7 +1221,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     /// <summary>The job recipe behind each tile.</summary>
     public static JobSpec SpecFor(string actionId, string? folder, string prompt, LaunchMode launch) => actionId switch
     {
-        "assemble" => JobSpecFactory.Assemble(folder!, launch),
+        "assemble" => JobSpecFactory.Assemble(folder!, launch, JobSpecFactory.RequestedAssemblyPath(prompt, folder!)),
         "codecad" => JobSpecFactory.CodeCad(folder!, prompt.Length > 0 ? prompt : "the parts described in this folder's notes", launch),
         "organize" => JobSpecFactory.Organize(folder!, prompt.Length > 0 ? prompt : "group by file type into Documents, Pictures, Archives, Installers", launch),
         "resolve" => JobSpecFactory.ResolveEdit(folder!, prompt.Length > 0 ? prompt : "a short rough cut in a sensible order", launch),
