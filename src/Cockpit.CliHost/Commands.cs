@@ -40,8 +40,7 @@ public static class Commands
               --simulate         use a simulated SolidWorks (no COM; builds write <output>.simulated.json)
               --yes              approve Write-risk tool calls without asking (Destructive is still denied)
               --allow-metered    let this job's CLI keep API-key variables (pay-per-token). Off by default.
-              --gemini-skip-trust        start Gemini with --skip-trust (recent Gemini CLI; see doctor)
-              --provider claude|gemini   run on this subscription first (default: by task; failover when one is at its limit)
+              --provider claude|agy      run on this subscription first (default: by task; failover when one is at its limit)
               --keep-subscription        never fail over: refuse if the chosen subscription is at its limit
               --data-dir <dir>   state folder (default %LOCALAPPDATA%\AiCockpit, or COCKPIT_DATA_DIR)
               --bridge <path>    cockpit-mcp-bridge (.exe or .dll); --worker <path> cockpit-swx-worker; --claude <path> claude
@@ -74,8 +73,7 @@ public static class Commands
             Bridge = Locate(ComponentLocator.Bridge, cli.Get("bridge")),
             SwxWorker = Locate(ComponentLocator.SwxWorker, cli.Get("worker")),
             ClaudeExecutable = cli.Get("claude"),
-            GeminiExecutable = cli.Get("gemini"),
-            GeminiSkipTrust = cli.Has("gemini-skip-trust"),
+            GeminiExecutable = cli.Get("agy"),
             SwxBackend = cli.Has("simulate") ? new SimulatedSwxBackend() : null,
             Log = new StderrLog("cockpit"),
         };
@@ -125,8 +123,8 @@ public static class Commands
             {
                 null => spec.Provider,
                 "claude" => AiProvider.ClaudeCode,
-                "gemini" => AiProvider.GeminiCli,
-                var other => throw new UsageException($"--provider must be claude or gemini, not '{other}'."),
+                "agy" or "antigravity" or "gemini" => AiProvider.GeminiCli,
+                var other => throw new UsageException($"--provider must be claude or agy, not '{other}'."),
             },
         };
         await using var runtime = await StartRuntimeAsync(cli);
@@ -138,7 +136,7 @@ public static class Commands
             catch (ProviderUnavailableException ex) { Console.Error.WriteLine("cockpit: " + ex.Message); return 1; }
             var dry = await runtime.StartJobAsync(spec with { Launch = LaunchMode.None });
             var psi = route.Provider == AiProvider.GeminiCli
-                ? new GeminiLaunchBuilder(cli.Get("gemini") ?? CliLaunchBuilder.ResolveOnPath("gemini") ?? "gemini").Headless(dry.Workspace, spec.Model, spec.AllowMeteredBilling)
+                ? new GeminiLaunchBuilder(cli.Get("agy") ?? GeminiLaunchBuilder.Locate() ?? "agy").Headless(dry.Workspace, spec.Model, spec.AllowMeteredBilling)
                 : new CliLaunchBuilder(cli.Get("claude") ?? CliLaunchBuilder.ResolveOnPath("claude") ?? "claude", TimeSpan.FromMinutes(21))
                     .ClaudeHeadless(dry.Workspace, spec.WorkingDirectory, spec.MaxTurns, spec.Model, spec.AllowMeteredBilling);
             Console.WriteLine($"Job {dry.JobId} (dry run; nothing launched)\nSubscription: {ProviderRouter.DisplayName(route.Provider)}{(route.Notice is null ? "" : " — " + route.Notice)}\nTools: {string.Join(", ", spec.Tools)}\nRoots: {string.Join(", ", dry.Grant.FileRoots)}");
@@ -468,18 +466,17 @@ public static class Commands
         string? claude = cli.Get("claude") ?? CliLaunchBuilder.ResolveOnPath("claude");
         if (claude is null) Add("Claude Code", "fail", "claude not on PATH. Install Claude Code, then run `claude` once and /login with your Pro account.");
         else Add("Claude Code", "ok", $"{claude} {await VersionAsync(claude)}".Trim());
-        string? gemini = cli.Get("gemini") ?? CliLaunchBuilder.ResolveOnPath("gemini");
-        Add("Gemini CLI", gemini is null ? "warn" : "ok", gemini is null
-            ? "gemini not on PATH: tutor/files/resolve jobs fall back to Claude (npm install -g @google/gemini-cli, then sign in with Google)"
-            : $"{gemini} {await VersionAsync(gemini)}".Trim());
-        if (gemini is not null)
+        string? agy = cli.Get("agy") ?? GeminiLaunchBuilder.Locate();
+        Add("Antigravity CLI", agy is null ? "warn" : "ok", agy is null
+            ? "agy not installed: tutor/files/resolve jobs fall back to Claude (irm https://antigravity.google/cli/install.ps1 | iex, then run agy and sign in with Google)"
+            : $"{agy} {await VersionAsync(agy)}".Trim());
+        if (agy is not null)
         {
-            string help = await HelpAsync(gemini);
-            Add("  stream-json", help.Contains("stream-json", StringComparison.Ordinal) ? "ok" : "warn",
-                help.Contains("stream-json", StringComparison.Ordinal) ? "supported" : "this Gemini CLI does not list --output-format stream-json: update it for headless jobs");
-            Add("  folder trust", "ok", help.Contains("--skip-trust", StringComparison.Ordinal)
-                ? "--skip-trust available: pass --gemini-skip-trust (or trust the Cockpit jobs folder in Gemini) so its MCP config is always loaded"
-                : "if you enabled Gemini folder trust, trust the Cockpit jobs folder, or Gemini ignores the job's MCP config");
+            string settings = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity-cli", "settings.json");
+            bool allowed = File.Exists(settings) && File.ReadAllText(settings).Contains(GeminiLaunchBuilder.CockpitAllowRule, StringComparison.Ordinal);
+            Add("  cockpit tools", allowed ? "ok" : "warn", allowed
+                ? $"{GeminiLaunchBuilder.CockpitAllowRule} allowed in {settings}"
+                : $"{GeminiLaunchBuilder.CockpitAllowRule} is added to {settings} on the first Antigravity job (headless runs skip unapproved tools)");
         }
 
         await HelperChecksAsync(Add);

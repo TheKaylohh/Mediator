@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Runtime;
 using Cockpit.Core.Security;
 using Cockpit.Protocol.Swx;
 
@@ -21,12 +22,17 @@ public sealed class SwxToolProvider : IToolProvider
     public const string ImportStepTool = "swx_import_step";
     private const int MaxParts = 200;
 
+    /// <summary>Every tool of this provider: each one needs SolidWorks running.</summary>
+    public static IReadOnlySet<string> ToolNames { get; } = new HashSet<string>(StringComparer.Ordinal) { PartCardsTool, BuildTool, ImportStepTool };
+
     private readonly ISwxBackend _worker;
+    private readonly IDesktopAppSession _solidWorks;
     private readonly ConcurrentDictionary<(string JobId, string Path), PartCard> _cards = new();
 
-    public SwxToolProvider(ISwxBackend worker, JobRegistry jobs)
+    public SwxToolProvider(ISwxBackend worker, JobRegistry jobs, IDesktopAppSession? solidWorks = null)
     {
         _worker = worker;
+        _solidWorks = solidWorks ?? NoDesktopAppSession.Instance;
         jobs.JobRevoked += jobId =>
         {
             foreach (var key in _cards.Keys.Where(k => k.JobId == jobId).ToList()) _cards.TryRemove(key, out _);
@@ -152,13 +158,19 @@ public sealed class SwxToolProvider : IToolProvider
     {
         try
         {
-            return call.Tool.Name switch
+            // Start SolidWorks before the first call instead of failing with "not running" (the worker never starts it).
+            try { await _solidWorks.EnsureReadyAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is TimeoutException or InvalidOperationException)
             {
-                PartCardsTool => await PartCardsAsync(call, ct).ConfigureAwait(false),
-                BuildTool => await BuildAsync(call, ct).ConfigureAwait(false),
-                ImportStepTool => await ImportStepAsync(call, ct).ConfigureAwait(false),
-                _ => ToolResult.Fail($"Unknown tool {call.Tool.Name}."),
-            };
+                return ToolResult.Fail("SolidWorks could not be started: " + ex.Message);
+            }
+            try { return await DispatchAsync(call, ct).ConfigureAwait(false); }
+            catch (SwxWorkerException ex) when (ex.Code == "not_running" && OperatingSystem.IsWindows())
+            {
+                // Start SolidWorks for the user, then try once more.
+                await Task.Run(() => SolidWorksLauncher.EnsureRunning(TimeSpan.FromMinutes(3)), ct).ConfigureAwait(false);
+                return await DispatchAsync(call, ct).ConfigureAwait(false);
+            }
         }
         catch (SwxWorkerException ex) when (ex.Code == SwxWorkerException.ModalDialogBlocking)
         {
@@ -180,6 +192,14 @@ public sealed class SwxToolProvider : IToolProvider
             return ToolResult.Fail($"SolidWorks: {ex.Code}: {ex.Message}");
         }
     }
+
+    private async Task<ToolResult> DispatchAsync(ToolCallContext call, CancellationToken ct) => call.Tool.Name switch
+    {
+        PartCardsTool => await PartCardsAsync(call, ct).ConfigureAwait(false),
+        BuildTool => await BuildAsync(call, ct).ConfigureAwait(false),
+        ImportStepTool => await ImportStepAsync(call, ct).ConfigureAwait(false),
+        _ => ToolResult.Fail($"Unknown tool {call.Tool.Name}."),
+    };
 
     private static (List<string>? Paths, string? Output, string? Error) ImportArgs(ToolCallContext call)
     {

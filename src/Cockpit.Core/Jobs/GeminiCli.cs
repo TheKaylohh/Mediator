@@ -2,48 +2,74 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Cockpit.Protocol;
 
 namespace Cockpit.Core.Jobs;
 
 /// <summary>
-/// Builds Gemini CLI launches. Gemini reads MCP servers from <c>.gemini/settings.json</c> in its working folder, so
-/// it runs in the job workspace (which <see cref="JobWorkspaceFactory"/> wires to cockpit-mcp-bridge) and reaches the
-/// user's files only through the Cockpit tools. Flags used (verify against `gemini --help` for your version):
-/// <c>--output-format stream-json</c>, <c>--allowed-mcp-server-names cockpit</c>, <c>-m</c>, <c>-i</c> (interactive with a first prompt).
-/// The prompt goes on stdin (piped input runs Gemini non-interactively), never on a command line.
+/// Builds Antigravity CLI (<c>agy</c>) launches for the Google AI Pro provider (<see cref="AiProvider.GeminiCli"/>; Gemini CLI
+/// stopped serving AI Pro accounts on 2026-06-18). agy reads workspace MCP servers from <c>.agents/mcp_config.json</c> in its
+/// working folder, so it runs in the job workspace (wired to cockpit-mcp-bridge by <see cref="JobWorkspaceFactory"/>) and
+/// reaches the user's files only through the Cockpit tools. The user's folder is deliberately NOT added with --add-dir:
+/// agy auto-allows writes inside its workspace, which would bypass the Cockpit gate and journal.
+/// Verified against agy 1.4.7 (verify/fixtures/real/agy-1.4.7-ok.stream.jsonl). The prompt goes on stdin as one stream-json
+/// user event, never on a command line.
 /// </summary>
 public sealed class GeminiLaunchBuilder
 {
-    private readonly string _geminiExecutable;
-    private readonly bool _skipTrust;
+    private readonly string _agyExecutable;
 
-    /// <param name="skipTrust">Pass --skip-trust (newer Gemini CLI): with folder trust enabled, Gemini ignores a project's
-    /// .gemini/settings.json — and so the Cockpit's MCP server — in untrusted folders. The job workspace is the Cockpit's own
-    /// folder. Alternative: trust %LOCALAPPDATA%\AiCockpit\jobs once in Gemini. `cockpit doctor` says which applies.</param>
-    public GeminiLaunchBuilder(string geminiExecutable, bool skipTrust = false)
+    public GeminiLaunchBuilder(string agyExecutable) => _agyExecutable = agyExecutable;
+
+    /// <summary>The executable name on PATH (installed to %LOCALAPPDATA%\agy\bin).</summary>
+    public const string ExecutableName = "agy";
+
+    /// <summary>Finds agy on PATH, then in its default install folder (a terminal opened before the install has the old PATH).</summary>
+    public static string? Locate()
     {
-        _geminiExecutable = geminiExecutable;
-        _skipTrust = skipTrust;
+        if (CliLaunchBuilder.ResolveOnPath(ExecutableName) is string onPath) return onPath;
+        string local = Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? "";
+        string candidate = Path.Combine(local, "agy", "bin", OperatingSystem.IsWindows() ? "agy.exe" : "agy");
+        return local.Length > 0 && File.Exists(candidate) ? candidate : null;
     }
 
-    /// <summary>Billing variables for Gemini specifically, scrubbed so the CLI uses your Google login (Google AI Pro), not an API key or Vertex.</summary>
+    /// <summary>Billing variables for Google, scrubbed so agy uses your Google login (Google AI Pro), not an API key or Vertex.</summary>
     public static readonly string[] GoogleBillingVariables = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS"];
 
     public static IReadOnlyList<string> VariablesToScrub(bool allowMeteredBilling) =>
         allowMeteredBilling ? [] : CliLaunchBuilder.BillingVariables.Concat(GoogleBillingVariables).Distinct(StringComparer.Ordinal).ToList();
 
-    /// <param name="workingDirectory">V10: the user's folder. Gemini runs in the job workspace (for its .gemini/settings.json),
-    /// so the folder is added with --include-directories; Gemini's own read tools can then see it directly.</param>
-    public ProcessStartInfo Headless(JobWorkspace ws, string? model = null, bool allowMeteredBilling = false, string? workingDirectory = null)
+    /// <summary>agy has no documented "not signed in" exit code; sign-in failures are recognised from stderr text.</summary>
+    public const int ExitNoAuth = int.MinValue;
+
+    /// <summary>One stdin line for --input-format stream-json: {"event":"user","message":{"content":"..."}}.</summary>
+    /// <param name="cockpitTools">The job has Cockpit tools: say where they are (<see cref="ToolPreamble"/>). Without
+    /// them (V10 Chat and Search) the model is told not to touch local files, so it does not go looking for tools.</param>
+    /// <param name="webSearch">V10 Search jobs: search_web and read_url_content are the only tools it should use.</param>
+    public static string StdinMessage(string prompt, bool cockpitTools = true, bool webSearch = false) =>
+        new JsonObject { ["event"] = "user", ["message"] = new JsonObject { ["content"] = (cockpitTools ? ToolPreamble : NoToolsPreamble(webSearch)) + prompt } }.ToJsonString() + "\n";
+
+    /// <summary>The preamble for jobs without Cockpit tools: no file, command or browser tools; web search only when allowed.</summary>
+    public static string NoToolsPreamble(bool webSearch) =>
+        "No local tools are granted for this job: do not read, list, search or edit files, run commands or open a browser. "
+        + (webSearch ? "To look things up, use only search_web and read_url_content." : "Answer from your own knowledge without calling any tool.")
+        + "\n\n";
+
+    /// <summary>agy exposes MCP tools through its generic call_mcp_tool, not by name, and models otherwise reach for
+    /// run_command (soft-denied in headless runs). Real run, agy 1.4.7: without this the job ended without a tool call.</summary>
+    public static string ToolPreamble =>
+        $"Your tools for this task are on the MCP server \"{JobWorkspaceFactory.ServerName}\": list them, then call them with call_mcp_tool " +
+        $"(server \"{JobWorkspaceFactory.ServerName}\"). Do not use run_command, file-editing or browser tools; they are disabled for this job.\n\n";
+
+    public ProcessStartInfo Headless(JobWorkspace ws, string? model = null, bool allowMeteredBilling = false, string? effort = null)
     {
-        var args = new List<string> { "--output-format", "stream-json", "--allowed-mcp-server-names", JobWorkspaceFactory.ServerName };
-        if (!string.IsNullOrEmpty(workingDirectory) && !string.Equals(Path.GetFullPath(workingDirectory).TrimEnd('\\', '/'), Path.GetFullPath(ws.Root).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
-        { args.Add("--include-directories"); args.Add(Path.GetFullPath(workingDirectory)); }
-        if (_skipTrust) args.Add("--skip-trust");
-        if (model is not null) { args.Add("-m"); args.Add(model); }
-        var psi = CliLaunchBuilder.WrapForShim(_geminiExecutable, args);
+        // --disable-slash-commands: a prompt starting with "/" must be text, not an agy command (which ends a stream with exit 2).
+        var args = new List<string> { "--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands" };
+        if (model is not null) { args.Add("--model"); args.Add(model); }
+        if (ModelCatalog.IsEffort(effort)) { args.Add("--effort"); args.Add(effort!); }
+        var psi = CliLaunchBuilder.WrapForShim(_agyExecutable, args);
         psi.WorkingDirectory = ws.Root;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
@@ -52,50 +78,72 @@ public sealed class GeminiLaunchBuilder
         psi.StandardOutputEncoding = Utf8.NoBom;
         psi.StandardErrorEncoding = Utf8.NoBom;
         foreach (var v in VariablesToScrub(allowMeteredBilling)) psi.Environment.Remove(v);
-        // Real capture (Gemini CLI 0.65.0, verify/fixtures/real): headless runs in an untrusted folder exit 55 before
-        // doing anything. The job workspace is the Cockpit's own folder holding only its generated settings, so it is
-        // trusted for this process only; the user's folders are never marked trusted.
-        psi.Environment[TrustWorkspaceVariable] = "true";
         return psi;
     }
-
-    public const string TrustWorkspaceVariable = "GEMINI_CLI_TRUST_WORKSPACE";
-
-    /// <summary>Gemini CLI exit codes observed in real captures (0.65.0): 41 = no auth configured, 55 = untrusted folder.</summary>
-    public const int ExitNoAuth = 41, ExitUntrustedFolder = 55;
 
     /// <param name="hasBrief">The job's task is served by cockpit_job_brief; the command line only says to fetch it.</param>
     public ProcessStartInfo Interactive(JobWorkspace ws, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false)
     {
-        string command = $"& {InteractiveSession.Ps(_geminiExecutable)} --allowed-mcp-server-names {JobWorkspaceFactory.ServerName}" + (_skipTrust ? " --skip-trust" : "")
+        string command = $"& {InteractiveSession.Ps(_agyExecutable)}"
             + (hasBrief ? " -i " + InteractiveSession.Ps(JobBriefToolProvider.Instruction) : "");
-        string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-gemini.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling),
-            allowMeteredBilling, new Dictionary<string, string> { [TrustWorkspaceVariable] = "true" }, ws.Root, command, session.Nonce);
-        return CliLaunchBuilder.TerminalStartInfo(script, $"Cockpit {ws.JobId} (Gemini)", ws.Root);
+        string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-agy.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling),
+            allowMeteredBilling, new Dictionary<string, string>(), ws.Root, command, session.Nonce);
+        return CliLaunchBuilder.TerminalStartInfo(script, $"Cockpit {ws.JobId} (Antigravity)", ws.Root);
+    }
+
+    /// <summary>The allow rule that lets agy call the Cockpit's MCP tools without its own prompt (headless runs soft-deny
+    /// unapproved tools). The Cockpit gate still approves, audits and journals every call.</summary>
+    public static string CockpitAllowRule => $"mcp({JobWorkspaceFactory.ServerName}/*)";
+
+    /// <summary>Adds <see cref="CockpitAllowRule"/> to ~/.gemini/antigravity-cli/settings.json permissions.allow, keeping
+    /// everything else. Idempotent. Returns false (and changes nothing) when the file exists but is not a JSON object.</summary>
+    public static bool EnsureCockpitToolsAllowed(string? home = null)
+    {
+        home ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string path = Path.Combine(home, ".gemini", "antigravity-cli", "settings.json");
+        JsonObject root;
+        if (File.Exists(path))
+        {
+            try { root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? throw new JsonException(); }
+            catch (JsonException) { return false; }
+        }
+        else root = new JsonObject();
+        var permissions = root["permissions"] as JsonObject ?? new JsonObject();
+        var allow = permissions["allow"] as JsonArray ?? new JsonArray();
+        if (allow.Any(n => n?.GetValueKind() == JsonValueKind.String && n.GetValue<string>() == CockpitAllowRule)) return true;
+        allow.Add(JsonValue.Create(CockpitAllowRule)); // non-generic: reflection-based JSON is off in this app
+        permissions["allow"] = allow;
+        root["permissions"] = permissions;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        return true;
     }
 }
 
 /// <summary>
-/// Parser for `gemini --output-format stream-json`: one JSON object per line with <c>type</c> init, message
-/// (role, content, delta), tool_use (tool_name, tool_id, parameters), tool_result (tool_id, status, output),
-/// error (severity, message) and result (status, stats). Also accepts the single-object `--output-format json`
-/// shape ({response, stats, error}). Field names are from Gemini CLI's headless documentation as remembered when
-/// this was written: capture a real run and add it as a fixture. Quota errors (429, RESOURCE_EXHAUSTED) become a
-/// <see cref="RateLimitInfo"/> on the final <see cref="RunResultEvent"/>, synthesized if the stream ends without one.
+/// Parser for `agy --output-format stream-json` (agy 1.4.7, real capture in verify/fixtures/real): NDJSON objects
+/// {"event":"init","conversation_id",init:{cwd,tools,permission_mode,model?}}, {"event":"step_update",step_update:{conversation_id,
+/// step_index,state ACTIVE|DONE,step_type user_input|agent_response|tool|...,tool_name?,text_delta?,usage?,tool_info?:{name,parameters,
+/// output,error?:{type,message}}}} and a final {"event":"result",result:{conversation_id,status SUCCESS|ERROR|...,response,error?,
+/// duration_seconds,num_turns,usage:{input_tokens,output_tokens,thinking_tokens,cache_read_tokens}}}. Agent text arrives as deltas
+/// and is emitted once per step when the step is DONE. Quota errors (429, RESOURCE_EXHAUSTED) become a <see cref="RateLimitInfo"/>.
 /// </summary>
 public sealed partial class GeminiStreamParser : ICliStreamParser
 {
     private readonly StringBuilder _buffer = new();
     private readonly TimeProvider _time;
+    private readonly Dictionary<long, StringBuilder> _text = new();
+    private readonly HashSet<long> _toolStarted = new();
     private bool _atStart = true;
     private bool _sawResult;
+    private bool _sawText;
     private string? _session;
     private RateLimitInfo? _limit;
     private string? _lastError;
 
     public GeminiStreamParser(TimeProvider? time = null) => _time = time ?? TimeProvider.System;
 
-    [GeneratedRegex(@"\b429\b|RESOURCE_EXHAUSTED|quota|rate.?limit", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b429\b|RESOURCE_EXHAUSTED|quota|rate.?limit|usage limit", RegexOptions.IgnoreCase)]
     private static partial Regex QuotaText();
 
     [GeneratedRegex(@"retry (?:in|after) (\d+(?:\.\d+)?)\s*s", RegexOptions.IgnoreCase)]
@@ -121,6 +169,7 @@ public sealed partial class GeminiStreamParser : ICliStreamParser
     {
         var events = new List<CockpitStreamEvent>();
         Flush(events);
+        foreach (var step in _text.Keys.ToList()) EmitText(step, events);
         if (!_sawResult && (_limit is not null || _lastError is not null))
         {
             _sawResult = true;
@@ -133,71 +182,108 @@ public sealed partial class GeminiStreamParser : ICliStreamParser
     {
         string line = _buffer.ToString().TrimEnd('\r').Trim();
         _buffer.Clear();
-        if (line.Length > 0) sink.AddRange(ParseLine(line));
+        if (line.Length > 0) ParseLine(line, sink);
     }
 
-    private IReadOnlyList<CockpitStreamEvent> ParseLine(string line)
+    private void EmitText(long step, List<CockpitStreamEvent> sink)
+    {
+        if (!_text.Remove(step, out var sb)) return;
+        string text = sb.ToString().TrimEnd();
+        if (text.Length == 0) return;
+        _sawText = true;
+        sink.Add(new AssistantTextEvent(_session, text));
+    }
+
+    private void ParseLine(string line, List<CockpitStreamEvent> sink)
     {
         JsonDocument doc;
         try { doc = JsonDocument.Parse(line); }
         catch (JsonException ex)
         {
-            // Gemini prints some failures as plain text on stdout; still notice a quota message.
+            // Plain-text failures on stdout: still notice a quota message.
             NoteError(line);
-            return [new ParseErrorEvent(line.Length > 300 ? line[..300] + "…" : line, ex.Message)];
+            sink.Add(new ParseErrorEvent(line.Length > 300 ? line[..300] + "…" : line, ex.Message));
+            return;
         }
         using (doc)
         {
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return [new ParseErrorEvent(line, "not a JSON object")];
-            _session = Str(root, "session_id") ?? _session;
-            string? type = Str(root, "type");
-            if (type is null && root.TryGetProperty("response", out _)) return SingleObject(root);
+            if (root.ValueKind != JsonValueKind.Object) { sink.Add(new ParseErrorEvent(line, "not a JSON object")); return; }
+            _session = Str(root, "conversation_id") ?? _session;
+            string? type = Str(root, "event");
             switch (type)
             {
                 case "init":
-                    return [new SessionInitEvent(_session, Str(root, "model"), null, null, [], [])];
-                case "message":
-                    return Str(root, "role") == "assistant" && Str(root, "content") is { Length: > 0 } text
-                        ? [new AssistantTextEvent(_session, text)]
-                        : [];
-                case "tool_use":
-                    return [new ToolUseEvent(_session, Str(root, "tool_id") ?? "", Str(root, "tool_name") ?? "",
-                        root.TryGetProperty("parameters", out var p) ? p.Clone() : default)];
-                case "tool_result":
-                    string status = Str(root, "status") ?? "";
-                    string output = root.TryGetProperty("output", out var o) ? (o.ValueKind == JsonValueKind.String ? o.GetString()! : o.GetRawText()) : "";
-                    if (root.TryGetProperty("error", out var te) && te.ValueKind == JsonValueKind.Object) output = Str(te, "message") ?? output;
-                    return [new ToolResultEvent(_session, Str(root, "tool_id") ?? "", !status.Equals("success", StringComparison.OrdinalIgnoreCase), output)];
-                case "error":
-                    string message = Str(root, "message") ?? line;
-                    NoteError(message);
-                    return [new SystemNoticeEvent(_session, "error:" + (Str(root, "severity") ?? "error"), message)];
-                case "result":
-                    _sawResult = true;
-                    string resultStatus = Str(root, "status") ?? "";
-                    bool isError = !resultStatus.Equals("success", StringComparison.OrdinalIgnoreCase);
-                    if (isError && root.TryGetProperty("error", out var re) && re.ValueKind == JsonValueKind.Object) NoteError(Str(re, "message") ?? "");
-                    return [new RunResultEvent(_session, resultStatus, isError, isError ? _lastError : null,
-                        root.TryGetProperty("stats", out var st) ? (int?)Long(st, "tool_calls") : null,
-                        root.TryGetProperty("stats", out var st2) ? Long(st2, "duration_ms") : null,
-                        null, Usage(root), _limit)];
+                    var init = Obj(root, "init");
+                    sink.Add(new SessionInitEvent(_session, init is { } i ? Str(i, "model") : null, null, init is { } i2 ? Str(i2, "permission_mode") : null, [], []));
+                    return;
+                case "step_update" when Obj(root, "step_update") is { } s:
+                    Step(s, sink);
+                    return;
+                case "result" when Obj(root, "result") is { } r:
+                    Result(r, sink);
+                    return;
                 default:
-                    return [new UnknownEvent(_session, type ?? "", line.Length > 500 ? line[..500] + "…" : line)];
+                    sink.Add(new UnknownEvent(_session, type ?? "", line.Length > 500 ? line[..500] + "…" : line));
+                    return;
             }
         }
     }
 
-    /// <summary>`--output-format json`: {"response": "...", "stats": {...}, "error": {"type","message","code"}}.</summary>
-    private IReadOnlyList<CockpitStreamEvent> SingleObject(JsonElement root)
+    private void Step(JsonElement s, List<CockpitStreamEvent> sink)
     {
+        _session = Str(s, "conversation_id") ?? _session;
+        long index = Long(s, "step_index") ?? -1;
+        bool done = Str(s, "state") == "DONE";
+        switch (Str(s, "step_type"))
+        {
+            case "agent_response":
+                if (Str(s, "text_delta") is { Length: > 0 } delta)
+                {
+                    if (!_text.TryGetValue(index, out var sb)) _text[index] = sb = new StringBuilder();
+                    sb.Append(delta);
+                }
+                if (done) EmitText(index, sink);
+                return;
+            case "tool":
+                var info = Obj(s, "tool_info");
+                string id = $"{_session}:{index}";
+                string name = (info is { } n ? Str(n, "name") : null) ?? Str(s, "tool_name") ?? "";
+                if (_toolStarted.Add(index))
+                    sink.Add(new ToolUseEvent(_session, id, name, info is { } p && p.TryGetProperty("parameters", out var prm) ? prm.Clone() : default));
+                if (done)
+                {
+                    string output = "";
+                    bool isError = false;
+                    if (info is { } o)
+                    {
+                        if (o.TryGetProperty("output", out var ov)) output = ov.ValueKind == JsonValueKind.String ? ov.GetString()! : ov.GetRawText();
+                        if (Obj(o, "error") is { } err) { isError = true; output = Str(err, "message") ?? output; NoteError(output); }
+                    }
+                    sink.Add(new ToolResultEvent(_session, id, isError, output));
+                }
+                return;
+        }
+    }
+
+    private void Result(JsonElement r, List<CockpitStreamEvent> sink)
+    {
+        foreach (var step in _text.Keys.ToList()) EmitText(step, sink);
         _sawResult = true;
-        var events = new List<CockpitStreamEvent>();
-        if (Str(root, "response") is { Length: > 0 } text) events.Add(new AssistantTextEvent(_session, text));
-        bool isError = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.Object;
-        if (isError) NoteError($"{Str(e, "message")} {(e.TryGetProperty("code", out var code) ? code.GetRawText() : "")}");
-        events.Add(new RunResultEvent(_session, isError ? "error" : "success", isError, isError ? _lastError : null, null, null, null, Usage(root), _limit));
-        return events;
+        string status = Str(r, "status") ?? "";
+        bool isError = !status.Equals("SUCCESS", StringComparison.OrdinalIgnoreCase);
+        string? response = Str(r, "response")?.TrimEnd();
+        if (!_sawText && !isError && response is { Length: > 0 }) sink.Add(new AssistantTextEvent(_session, response));
+        if (isError)
+        {
+            string? message = r.TryGetProperty("error", out var e)
+                ? (e.ValueKind == JsonValueKind.String ? e.GetString() : e.ValueKind == JsonValueKind.Object ? Str(e, "message") ?? e.GetRawText() : null)
+                : null;
+            NoteError(message ?? $"Antigravity run ended with status {status}");
+        }
+        double? seconds = r.TryGetProperty("duration_seconds", out var d) && d.ValueKind == JsonValueKind.Number ? d.GetDouble() : null;
+        sink.Add(new RunResultEvent(_session, status.ToLowerInvariant(), isError, isError ? _lastError : response,
+            (int?)Long(r, "num_turns"), seconds is { } sec ? (long)Math.Round(sec * 1000) : null, null, Usage(r), _limit));
     }
 
     private void NoteError(string message)
@@ -232,24 +318,17 @@ public sealed partial class GeminiStreamParser : ICliStreamParser
         return midnight.ToUniversalTime();
     }
 
-    /// <summary>Null when the result has no stats; a field Gemini did not report stays null (unknown).</summary>
+    /// <summary>Null when the result has no usage; a field agy did not report stays null (unknown).</summary>
     private static UsageTotals? Usage(JsonElement root)
     {
-        if (!root.TryGetProperty("stats", out var s) || s.ValueKind != JsonValueKind.Object) return null;
-        long? input = Long(s, "input_tokens"), output = Long(s, "output_tokens"), cached = Long(s, "cached") ?? Long(s, "cached_tokens");
-        // json mode nests per-model token counts: stats.models.<model>.tokens.{prompt,candidates,cached}
-        if (input is null && output is null && s.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object)
-            foreach (var model in models.EnumerateObject())
-                if (model.Value.TryGetProperty("tokens", out var t) && t.ValueKind == JsonValueKind.Object)
-                {
-                    input = Add(input, Long(t, "prompt"));
-                    output = Add(output, Long(t, "candidates"));
-                    cached = Add(cached, Long(t, "cached"));
-                }
+        if (Obj(root, "usage") is not { } u) return null;
+        long? input = Long(u, "input_tokens"), output = Long(u, "output_tokens"), cached = Long(u, "cache_read_tokens");
+        if (output is not null && Long(u, "thinking_tokens") is { } thinking) output += thinking;
         return input is null && output is null && cached is null ? null : new UsageTotals(input, output, cached, null);
     }
 
-    private static long? Add(long? a, long? b) => a is null ? b : b is null ? a : a + b;
+    private static JsonElement? Obj(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Object ? v : null;
 
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

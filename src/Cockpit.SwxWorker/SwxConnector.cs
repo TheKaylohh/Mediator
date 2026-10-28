@@ -23,7 +23,7 @@ public sealed class RotSwxConnector : ISwxConnector
 
     public SwxConnection Connect(SwxHostOptions options)
     {
-        if (Environment.IsPrivilegedProcess)
+        if (System.Environment.IsPrivilegedProcess)
             throw new SwxException("cockpit_elevated", "The Cockpit worker is running as administrator. Run the Cockpit normally so it can see SolidWorks in the user session.");
 
         var clock = Stopwatch.StartNew();
@@ -39,7 +39,6 @@ public sealed class RotSwxConnector : ISwxConnector
             {
                 if (running.Length == 0)
                 {
-                    if (options.AllowLaunch) return Launch();
                     throw new SwxException("not_running", "SolidWorks is not running. Start it, then retry.");
                 }
                 foreach (var p in running)
@@ -59,15 +58,6 @@ public sealed class RotSwxConnector : ISwxConnector
                     $"SolidWorks is running but did not register for automation within {options.AttachWait.TotalSeconds:0} s. It may still be starting or showing a dialog.");
             Thread.Sleep(1000); // SolidWorks registers in the ROT only after its startup finishes
         }
-    }
-
-    private static SwxConnection Launch()
-    {
-        var type = Type.GetTypeFromProgID(ProgId, throwOnError: true)!;
-        var sw = (SldWorks)Activator.CreateInstance(type)!;
-        // A visible instance is never a hidden zombie: the user can see it and close it if the worker dies.
-        sw.Visible = true;
-        return new SwxConnection(sw, LaunchedByCockpit: true);
     }
 }
 #endif

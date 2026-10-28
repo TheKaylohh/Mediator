@@ -23,9 +23,9 @@ public sealed record AppStatus(string Id, string DisplayName, bool Available, st
 
 public interface IConnectorProbe
 {
-    /// <summary>"claude", "gemini", "python" or "git": located and asked for its version (10 s limit).</summary>
+    /// <summary>"claude", "agy", "python" or "git": located and asked for its version (10 s limit).</summary>
     Task<ToolProbe> ProbeToolAsync(string id, CancellationToken ct = default);
-    /// <summary>"claude" or "gemini". Only checks that the CLI's credential file exists; never reads it.</summary>
+    /// <summary>"claude" or "agy". Only checks that the CLI's credential file exists; never reads it.</summary>
     CredentialState Credentials(string cliId);
     AppStatus SolidWorks();
     AppStatus Resolve();
@@ -48,12 +48,12 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
     /// <summary>Windows apps are reported as such off Windows, unless a locator was injected (tests).</summary>
     private readonly bool _windowsApps = apps is not null || OperatingSystem.IsWindows();
 
-    public static readonly IReadOnlyList<string> Prerequisites = ["claude", "gemini", "python", "git"];
+    public static readonly IReadOnlyList<string> Prerequisites = ["claude", "agy", "python", "git"];
 
     public static string DisplayName(string id) => id switch
     {
         "claude" => "Claude Code CLI",
-        "gemini" => "Gemini CLI",
+        "agy" => "Antigravity CLI",
         "python" => "Python 3",
         "git" => "Git",
         _ => id,
@@ -62,7 +62,7 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
     public static string InstallHint(string id) => id switch
     {
         "claude" => "Install: npm install -g @anthropic-ai/claude-code, then run claude and sign in with your Claude account.",
-        "gemini" => "Install: npm install -g @google/gemini-cli, then run gemini and choose Login with Google.",
+        "agy" => "Install in PowerShell: irm https://antigravity.google/cli/install.ps1 | iex, then run agy and sign in with your Google AI Pro account.",
         "python" => "Install Python 3 from python.org (tick \"Add to PATH\"); needed by the CAD, tutor and Resolve scripting tools.",
         "git" => "Install Git from git-scm.com; Claude Code uses it in code projects.",
         _ => "",
@@ -77,6 +77,7 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
         return id switch
         {
             "python" => ToolLocator.Python(),
+            "agy" => GeminiLaunchBuilder.Locate() is string a ? (a, []) : null,
             _ => CliLaunchBuilder.ResolveOnPath(id) is string p ? (p, []) : null,
         };
     }
@@ -102,11 +103,11 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
         }
     }
 
-    /// <summary>The CLIs' own credential files (Claude Code on Windows and Linux; Gemini CLI's Google login).</summary>
+    /// <summary>The CLIs' own credential files (Claude Code on Windows and Linux; for Antigravity, whose token is in the OS keyring, the onboarding record written after sign-in).</summary>
     public string CredentialFile(string cliId) => cliId switch
     {
         "claude" => Path.Combine(_home, ".claude", ".credentials.json"),
-        "gemini" => Path.Combine(_home, ".gemini", "oauth_creds.json"),
+        "agy" => Path.Combine(_home, ".gemini", "antigravity-cli", "cache", "onboarding.json"),
         _ => throw new ArgumentException($"Unknown CLI '{cliId}'."),
     };
 
@@ -121,7 +122,7 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
             return new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it. {installed}");
         return install is null
             ? new AppStatus("solidworks", "SolidWorks", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.SolidWorks))})")
-            : new AppStatus("solidworks", "SolidWorks", false, $"{installed}; not running: start SolidWorks before an assembly or STEP import job");
+            : new AppStatus("solidworks", "SolidWorks", true, $"{installed}; not running: the Cockpit starts it when a SolidWorks job needs it");
     }
 
     public AppStatus Resolve()

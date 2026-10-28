@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>AI Cockpit User Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1b2330; }
+  h1 { font-size: 24pt; margin: 0 0 4px; color: #0b6e99; }
+  h2 { font-size: 14pt; color: #0b6e99; border-bottom: 1.5px solid #9fd3e6; padding-bottom: 3px; margin-top: 22px; page-break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 14px 0 4px; page-break-after: avoid; }
+  code, pre { font-family: Consolas, monospace; font-size: 9.5pt; background: #eef4f7; border-radius: 3px; }
+  code { padding: 0 3px; }
+  pre { padding: 8px 10px; white-space: pre-wrap; page-break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0; page-break-inside: avoid; }
+  th, td { border: 1px solid #c9d8e0; padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: #e3f1f7; }
+  .sub { color: #5a6b7a; margin-bottom: 18px; }
+  .note { background: #fff6e0; border-left: 3px solid #e0a400; padding: 6px 10px; margin: 8px 0; }
+  .toc li { margin: 1px 0; }
+</style></head><body>
+
+<h1>AI Cockpit User Guide</h1>
+<div class="sub">The overlay, the full-screen chat app, actions, connectors, building a clean release, and extending it with new connectors and CLIs.</div>
+
+<ol class="toc">
+  <li>Quick start</li><li>The overlay</li><li>Full view (chat app)</li><li>Saved chats and resuming</li>
+  <li>Actions, including your own</li><li>Attachments and folders</li><li>Routing: Claude Code vs Antigravity</li>
+  <li>Jobs, approvals and the kill switch</li><li>Connectors</li><li>Settings and themes</li>
+  <li>Building a clean release (dist)</li><li>Adding connectors (custom MCP servers)</li><li>Adding a new CLI</li><li>Troubleshooting</li>
+</ol>
+
+<h2>1. Quick start</h2>
+<ol>
+  <li>Start <b>AiCockpit.exe</b> from <code>dist\AiCockpit\</code> (or the desktop shortcut made by <code>install-shortcut.vbs</code>). It lives in the system tray.</li>
+  <li>Press <b>Ctrl+Shift+Space</b> (default hotkey) or click the tray icon to open the overlay. <b>Esc</b> hides it.</li>
+  <li>Type a question and press <b>Enter</b>. The answer appears in the Actions tab; the job appears in the Jobs tab.</li>
+  <li>Click <b>Full view</b> (or the expand icon on a job) to continue in the full-screen chat app.</li>
+</ol>
+<div class="note">Billing: jobs run on your subscriptions (Claude Pro through Claude Code, Google AI Pro through the Antigravity CLI). API-key variables such as <code>ANTHROPIC_API_KEY</code> are removed from every job so it never bills per token.</div>
+
+<h2>2. The overlay</h2>
+<table>
+  <tr><th>Part</th><th>What it does</th></tr>
+  <tr><td>Header</td><td>Reactor orb (idle / active / waiting for approval / error), subscription pills with usage status, routing policy pill, theme button, hide.</td></tr>
+  <tr><td>Prompt box</td><td>Enter runs it. Start with <code>/</code> to search actions. Prefix <code>/claude</code> or <code>/agy</code> to force a CLI. Ctrl+V pastes files or a screenshot.</td></tr>
+  <tr><td>Attach</td><td>Adds files, folders or images. Jobs can read them, never change them.</td></tr>
+  <tr><td>Save to</td><td>Opens a Windows folder picker. Every job saves into that folder until you clear it (× on the "Saving to" line). Also in Full view.</td></tr>
+  <tr><td>Continue chip</td><td>Shown after a finished chat. Selected: your next prompt is a follow-up in the same session. × starts fresh.</td></tr>
+  <tr><td>Terminal checkbox</td><td>Runs the job in an interactive Claude Code terminal instead of headless.</td></tr>
+  <tr><td>Kill all</td><td>Ends every running job immediately (grants revoked, processes terminated).</td></tr>
+  <tr><td>Tabs</td><td><b>Actions</b> (conversation + action tiles), <b>Jobs</b>, <b>Activity</b> (every tool call, audited), <b>Connectors</b>.</td></tr>
+</table>
+
+<h2>3. Full view (chat app)</h2>
+<p>Open it with <b>Full view</b> under the conversation in the Actions tab, or the expand icon on any job card. It is a maximised window in your current theme, laid out like a chat app:</p>
+<ul>
+  <li><b>Sidebar:</b> New chat, your saved <b>Chats</b>, and live <b>Jobs</b> with status.</li>
+  <li><b>Centre:</b> the whole conversation at reading width; answers are full length and selectable.</li>
+  <li><b>Composer:</b> follow-up prompt (Enter sends), Continue chip, attachment chips, Attach, drag-and-drop files.</li>
+</ul>
+<p>It shares everything with the overlay: a prompt sent in one shows in the other. Closing the window only hides it.</p>
+
+<h2>4. Saved chats and resuming</h2>
+<p>Every chat is saved automatically when an answer finishes: your prompts, the CLI's answers and steps, the CLI/model badge, and the session id needed to resume. Files live in <code>%LOCALAPPDATA%\AiCockpit\chats\</code> (one JSON file per chat).</p>
+<ul>
+  <li><b>Resume:</b> Full view → Chats → click a chat. The history loads and the Continue chip is set, so your next prompt continues it.</li>
+  <li><b>Claude chats</b> resume the real session (<code>claude --resume</code>): full context.</li>
+  <li><b>Antigravity chats</b>, or switching CLI, carry the earlier turns (about the last 4,000 characters) into the next prompt as context.</li>
+  <li><b>New chat</b> starts fresh; <b>×</b> deletes a saved chat.</li>
+</ul>
+
+<h2>5. Actions, including your own</h2>
+<table>
+  <tr><th>Action</th><th>Use</th></tr>
+  <tr><td>Ask &amp; learn</td><td>General questions and tutoring on any topic. Reads PDFs you attach or a folder you select; linear-algebra results are verified exactly.</td></tr>
+  <tr><td>Assemble SolidWorks parts</td><td>Reads parts in a folder, proposes mates for your review, builds a new .SLDASM.</td></tr>
+  <tr><td>Design parametric parts</td><td>build123d code → STEP → SolidWorks parts, checked against size envelopes.</td></tr>
+  <tr><td>Organize a folder</td><td>Plans moves from your description; you review; every move can be rolled back.</td></tr>
+  <tr><td>Rough cut for DaVinci Resolve</td><td>Probes clips, plans a cut, exports FCPXML + EDL.</td></tr>
+  <tr><td>Blender car scene</td><td>Procedural city scene with a chase camera and a preview render.</td></tr>
+  <tr><td>Claude Code in a terminal</td><td>Opens Claude Code in a folder with your prompt; you drive it.</td></tr>
+</table>
+<h3>Native parametric SolidWorks parts</h3>
+<p>Describe a single part by its dimensions (plates, holes, bosses, ribs, fillets) and run <b>Design parametric parts</b> with a Save to folder. The AI builds real SolidWorks features: every size is a global variable (Tools → Equations) and every sketch dimension is linked to them, so the part keeps its design intent. Ask a follow-up such as "change the base to 150 × 80" and it updates the globals, rebuilds, and reports rebuild errors, the bounding box and each hole's distance to the edges. You can also edit the globals yourself in Tools → Equations and press Ctrl+Q. SolidWorks is started automatically if it is not running.</p>
+<h3>Creating your own action</h3>
+<ol>
+  <li>Actions tab → scroll below the tiles → <b>+ New action</b>.</li>
+  <li>Give it a <b>Name</b>, an optional description, and <b>Instructions</b> (what the AI should always do, e.g. "Summarise the attached paper in 10 bullet points, then list open questions").</li>
+  <li>Tick <b>Needs a folder</b> if it works on files in a folder selected in Explorer or named in the prompt.</li>
+  <li><b>Save action</b>. It appears as a tile; click <b>Run</b> and whatever is in the prompt box is added as input. The trash icon deletes it.</li>
+</ol>
+<p>Custom actions are stored in <code>%LOCALAPPDATA%\AiCockpit\settings.json</code>. The Cockpit tools they may use are inferred from the instructions and prompt (e.g. mentioning SolidWorks or a PDF).</p>
+
+<h2>6. Attachments and folders</h2>
+<p>A job's folder is chosen in this order: a folder path typed in the prompt, then the <b>Save to</b> folder, then the folder or files selected in File Explorer when you pressed the hotkey.</p>
+<ul>
+  <li>Select a folder or files in File Explorer <i>before</i> pressing the hotkey: they become a context chip (click to include/exclude).</li>
+  <li>Attach, drag-and-drop, or Ctrl+V add read-only snapshots. A job never modifies an attachment.</li>
+  <li>A folder path typed in the prompt also counts as the job's folder.</li>
+</ul>
+
+<h2>7. Routing: Claude Code vs Antigravity</h2>
+<p>The routing pill cycles <b>Auto Best</b> (per-category defaults) → <b>Quota Saver</b> (Antigravity first) → <b>Claude First</b>. When one subscription is at its usage limit, the job fails over to the other unless "never downgrade" applies. Force a CLI for one prompt with <code>/claude …</code> or <code>/agy …</code>.</p>
+
+<h2>8. Jobs, approvals and the kill switch</h2>
+<ul>
+  <li><b>Jobs tab:</b> state, CLI, elapsed time, outcome. <b>Kill</b> ends one job; the expand icon opens Full view.</li>
+  <li><b>Approval cards:</b> risky tool calls (moving files, building assemblies, custom MCP tools) pause for your Approve/Deny.</li>
+  <li><b>Kill all:</b> ends every running job immediately.</li>
+  <li><b>Activity tab:</b> every tool call with its result, for auditing.</li>
+</ul>
+
+<h2>9. Connectors</h2>
+<ul>
+  <li><b>CLIs:</b> Claude Code and Antigravity, with version and sign-in state. <b>Sign In</b> only appears when the CLI is not signed in; it opens a terminal with API-key variables removed so you sign in with your subscription.</li>
+  <li><b>Desktop apps:</b> SolidWorks, DaVinci Resolve, Blender. SolidWorks counts as available when installed; if it is not running, the Cockpit starts it when a SolidWorks job needs it.</li>
+  <li><b>Custom MCP:</b> see section 12.</li>
+</ul>
+<p>Run <code>cockpit doctor</code> (in <code>dist\AiCockpit\</code>) for a full prerequisite check.</p>
+
+<h2>10. Settings and themes</h2>
+<ul>
+  <li>Themes: Holo HUD, Pro Dark, Clean Light (theme button in the header).</li>
+  <li>Hotkey: rebindable; if it conflicts with another app the Cockpit falls back and shows it in the tray tooltip.</li>
+  <li>Run on startup: set on the first-run card.</li>
+  <li>All settings: <code>%LOCALAPPDATA%\AiCockpit\settings.json</code>. Data (jobs, audit, chats, attachments) lives in the same folder.</li>
+</ul>
+
+<h2>11. Building a clean release (dist)</h2>
+<p>From the repository root in PowerShell, with the Cockpit closed (right-click tray icon → Exit):</p>
+<pre>.\scripts\publish-release.ps1 -NoAot -FrameworkDependent</pre>
+<ul>
+  <li>Output: <code>dist\AiCockpit\</code> with AiCockpit.exe (overlay), cockpit.exe (CLI host), cockpit-swx-worker.exe, cockpit-mcp-bridge.exe, themes, launchers and this guide. The script finishes with <code>cockpit doctor</code>.</li>
+  <li><code>-NoAot</code>: builds the bridge as a normal .NET app. Needed on this machine because the .NET 8 Native AOT linker does not work with Visual Studio 18.</li>
+  <li><code>-FrameworkDependent</code>: uses the installed .NET 8 Desktop Runtime instead of bundling one per program.</li>
+  <li><code>-RunTests</code>: runs the offline test suite first.</li>
+  <li>If a build fails with odd file conflicts, delete the <code>obj</code> folders under <code>src\</code> and run again.</li>
+</ul>
+<p>Quick dev run without packaging: <code>dotnet run --project src\Cockpit.Wpf</code>. Tests: <code>.\scripts\run-tests.ps1</code>.</p>
+
+<h2>12. Adding connectors (custom MCP servers)</h2>
+<p>Any stdio MCP server can be added without code:</p>
+<ol>
+  <li>Connectors tab → <b>+ Add Custom MCP</b>.</li>
+  <li>Enter a name, the <b>full path</b> to the command (e.g. <code>C:\Program Files\nodejs\node.exe</code>) and its arguments.</li>
+  <li><b>Check and add</b>: the Cockpit starts it, pings it (15 s limit) and lists its tools.</li>
+</ol>
+<ul>
+  <li>Tools are registered as <code>ext_&lt;server&gt;_&lt;tool&gt;</code>. Every call shows an approval card and can never be auto-approved.</li>
+  <li>No environment variables are stored (no secrets in <code>cockpit.mcp.json</code>). If a server needs a key, wrap it in a script that reads the key itself.</li>
+  <li>Servers are saved in <code>%LOCALAPPDATA%\AiCockpit\cockpit.mcp.json</code>; you can disable or remove them in the tab.</li>
+</ul>
+<h3>Built-in connector (code)</h3>
+<p>For a first-class connector like SolidWorks or Blender: add a tool provider in <code>src\Cockpit.Core</code> (see <code>Tools\ExternalTools.cs</code> and the tutor/files providers), register its tool names, add a <code>JobSpecFactory</code> recipe and an action tile in <code>DefaultActions()</code> (<code>CockpitOverlayViewModel.cs</code>), and a status probe in <code>Connectors\ConnectorProbe.cs</code>.</p>
+
+<h2>13. Adding a new CLI</h2>
+<p>A new AI CLI needs code in these places:</p>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td><code>Core\Jobs\ProviderRouter.cs</code></td><td>Add a value to <code>AiProvider</code>, its display name and id, its place in the category defaults, and a prompt prefix in <code>ParsePrefix</code>.</td></tr>
+  <tr><td><code>Core\Jobs\CliLaunchBuilder.cs</code> / <code>GeminiCli.cs</code></td><td>A launch builder: headless and interactive command lines, MCP config for the Cockpit bridge, API-key scrubbing.</td></tr>
+  <tr><td><code>Core\Jobs\ClaudeStreamParser.cs</code></td><td>Parse its output stream into steps, answer text, session id and usage.</td></tr>
+  <tr><td><code>Core\Runtime\CockpitRuntime.cs</code></td><td>Locate the executable and start headless/interactive jobs with the new builder.</td></tr>
+  <tr><td><code>Core\Connectors\ConnectorProbe.cs</code></td><td>Version probe, credential file location, sign-in command.</td></tr>
+  <tr><td><code>UI\ConnectorsViewModel.cs</code></td><td>Add a row to <code>Clis</code> and a subscription pill in the overlay.</td></tr>
+</table>
+<p>Then add a test with a recorded output stream under <code>verify\fixtures\real\</code> and run the test suite.</p>
+
+<h2>14. Troubleshooting</h2>
+<table>
+  <tr><th>Symptom</th><th>Fix</th></tr>
+  <tr><td>Rebuilt but the exe has no new features</td><td>You ran the old <code>dist</code> copy. Close the Cockpit and run the publish script (section 11).</td></tr>
+  <tr><td>"not signed in"</td><td>Connectors → Sign In, or run <code>claude</code> / <code>agy</code> once in a terminal.</td></tr>
+  <tr><td>SolidWorks job fails with elevation mismatch</td><td>Start SolidWorks normally, not "Run as administrator", and don't run the Cockpit elevated.</td></tr>
+  <tr><td>Resume fails</td><td>Claude keeps sessions per working folder; if that folder was removed, start a new chat.</td></tr>
+  <tr><td>Anything else</td><td>Run <code>cockpit doctor</code>; the Activity tab shows every tool call and error.</td></tr>
+</table>
+</body></html>

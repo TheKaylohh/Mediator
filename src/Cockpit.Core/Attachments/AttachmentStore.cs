@@ -89,7 +89,8 @@ public sealed class AttachmentStore
         foreach (var d in new DirectoryInfo(_root).EnumerateDirectories())
         {
             if (_time.GetUtcNow().UtcDateTime - d.CreationTimeUtc < Retention) continue;
-            try { d.Delete(recursive: true); n++; } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            // Snapshots are read-only, which Windows refuses to delete: clear the attribute first, as Discard does.
+            if (TryDelete(d.FullName)) n++;
         }
         return n;
     }
@@ -168,15 +169,16 @@ public sealed class AttachmentStore
         TryDelete(a.GrantedRoot);
     }
 
-    private static void TryDelete(string dir)
+    private static bool TryDelete(string dir)
     {
         try
         {
-            foreach (var f in Directory.EnumerateFiles(dir)) File.SetAttributes(f, FileAttributes.Normal);
+            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)) File.SetAttributes(f, FileAttributes.Normal);
             Directory.Delete(dir, recursive: true);
+            return true;
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>

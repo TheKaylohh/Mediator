@@ -142,7 +142,7 @@ public sealed class ConnectorsViewModel : ObservableObject
         _ui = ui;
         _launcher = launcher ?? DefaultProcessLauncher.Instance;
         Clis.Add(new CliConnectorViewModel("claude", "Claude Code CLI", "Claude Pro", SignIn));
-        Clis.Add(new CliConnectorViewModel("gemini", "Gemini CLI", "Google AI Pro", SignIn));
+        Clis.Add(new CliConnectorViewModel("agy", "Antigravity CLI", "Google AI Pro", SignIn));
         Apps.Add(new AppConnectorViewModel("solidworks", "SolidWorks"));
         Apps.Add(new AppConnectorViewModel("resolve", "DaVinci Resolve"));
         Apps.Add(new AppConnectorViewModel("blender", "Blender"));
@@ -193,6 +193,8 @@ public sealed class ConnectorsViewModel : ObservableObject
                 var lastAuthFailure = _runtime.Jobs.Where(j => j.Provider is { } p && ProviderRouter.Id(p) == provider && j.Outcome is not null)
                     .OrderByDescending(j => j.EndedAt ?? j.StartedAt).FirstOrDefault()?.Outcome == RunOutcome.AuthFailed;
                 if (lastAuthFailure) cred = CredentialState.LastRunFailed;
+                else if (_runtime.Jobs.Any(j => j.Provider is { } p && ProviderRouter.Id(p) == provider && j.Outcome == RunOutcome.Succeeded))
+                    cred = CredentialState.FilePresent; // a run this session succeeded, so it is signed in
                 DateTimeOffset? until = await _runtime.GetCooldownAsync(provider).ConfigureAwait(true);
                 _ui.Post(() =>
                 {
@@ -228,7 +230,7 @@ public sealed class ConnectorsViewModel : ObservableObject
             _launcher.Start(psi);
             Status = cli.Id == "claude"
                 ? "A terminal opened with Claude Code: type /login if it does not ask, sign in with your Claude account, then close it and press Refresh."
-                : "A terminal opened with Gemini CLI: choose Login with Google, finish in the browser, then close it and press Refresh.";
+                : "A terminal opened with Antigravity CLI: sign in with Google, finish in the browser, type /exit, then close it and press Refresh.";
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {

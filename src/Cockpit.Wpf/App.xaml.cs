@@ -1,3 +1,4 @@
+using Cockpit.Core.Jobs;
 using System.IO;
 using System.Windows;
 using Cockpit.Core.Connectors;
@@ -69,6 +70,7 @@ public partial class App : Application
         var onboarding = new OnboardingViewModel(probe, new StartupRegistration(), vm);
         vm.Onboarding = onboarding;
 
+        vm.Chats = new ChatStore(System.IO.Path.Combine(_runtime.Paths.DataDirectory, "chats"));
         var window = new MainWindow(vm);
         MainWindow = window;
 

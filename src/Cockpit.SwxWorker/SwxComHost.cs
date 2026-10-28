@@ -298,7 +298,9 @@ public sealed class SwxComHost : ISwxHost
             sw.CommandInProgress = true;               // batch mode for out-of-process callers
             if (view is not null) view.EnableGraphicsUpdate = false;
             featureManager.EnableFeatureTree = false;
-            recordingUndo = ext.StartRecordingUndoObject();
+            // The real interop declares StartRecordingUndoObject() as void: success is "it did not throw".
+            try { ext.StartRecordingUndoObject(); recordingUndo = true; }
+            catch (System.Runtime.InteropServices.COMException) { recordingUndo = false; }
             if (!recordingUndo) warnings.Add("SolidWorks did not start an undo group; Ctrl+Z will undo steps one by one.");
 
             var placed = new Dictionary<string, Component2>(StringComparer.Ordinal);
@@ -573,7 +575,7 @@ public sealed class SwxComHost : ISwxHost
             {
                 // Last resort: name the face in memory. The part is open read-only and is never saved, so the
                 // name lives only for this SolidWorks session; the geometric fallback covers anything later.
-                string candidate = $"cockpit_{id}_{Environment.TickCount64 % 1_000_000}";
+                string candidate = $"cockpit_{id}_{System.Environment.TickCount64 % 1_000_000}";
                 if (part.SetEntityName(f.Face, candidate))
                 {
                     name = candidate;

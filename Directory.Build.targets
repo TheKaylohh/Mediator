@@ -29,8 +29,10 @@
     integration runner and scripts/check-windows-build.ps1 -CheckSolidWorks.
   -->
   <PropertyGroup Condition="'$(CockpitUsesSolidWorks)' == 'true'">
+    <!-- The scripts pass the folder without a trailing separator; a -p: global property cannot be rewritten, so normalize a copy. -->
+    <CockpitSwxDir Condition="'$(SolidWorksInteropDir)' != ''">$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</CockpitSwxDir>
     <CockpitSolidWorksInterop Condition="'$(CockpitVerify)' == 'true' and '$(CockpitSimulateNoSolidWorks)' != 'true'">stub</CockpitSolidWorksInterop>
-    <CockpitSolidWorksInterop Condition="'$(CockpitVerify)' != 'true' and Exists('$(SolidWorksInteropDir)SolidWorks.Interop.sldworks.dll') and Exists('$(SolidWorksInteropDir)SolidWorks.Interop.swconst.dll')">real</CockpitSolidWorksInterop>
+    <CockpitSolidWorksInterop Condition="'$(CockpitVerify)' != 'true' and Exists('$(CockpitSwxDir)SolidWorks.Interop.sldworks.dll') and Exists('$(CockpitSwxDir)SolidWorks.Interop.swconst.dll')">real</CockpitSolidWorksInterop>
     <CockpitSolidWorksInterop Condition="'$(CockpitSolidWorksInterop)' == ''">none</CockpitSolidWorksInterop>
     <DefineConstants Condition="'$(CockpitSolidWorksInterop)' == 'none'">$(DefineConstants);SOLIDWORKS_NOT_INSTALLED</DefineConstants>
     <!-- The fallback is a supported configuration, so its warning never fails a -warnaserror build. -->
@@ -39,12 +41,12 @@
 
   <ItemGroup Condition="'$(CockpitSolidWorksInterop)' == 'real'">
     <Reference Include="SolidWorks.Interop.sldworks">
-      <HintPath>$(SolidWorksInteropDir)SolidWorks.Interop.sldworks.dll</HintPath>
+      <HintPath>$(CockpitSwxDir)SolidWorks.Interop.sldworks.dll</HintPath>
       <EmbedInteropTypes>false</EmbedInteropTypes>
       <Private>true</Private>
     </Reference>
     <Reference Include="SolidWorks.Interop.swconst">
-      <HintPath>$(SolidWorksInteropDir)SolidWorks.Interop.swconst.dll</HintPath>
+      <HintPath>$(CockpitSwxDir)SolidWorks.Interop.swconst.dll</HintPath>
       <EmbedInteropTypes>false</EmbedInteropTypes>
       <Private>true</Private>
     </Reference>

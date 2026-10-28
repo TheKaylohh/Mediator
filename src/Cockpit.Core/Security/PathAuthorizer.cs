@@ -123,6 +123,29 @@ public sealed class PathAuthorizer
         return entry.Final;
     }
 
+    /// <summary>
+    /// Adds a writable root to a live grant (V10: the user allowed a folder for a running job, or picked Save to). The
+    /// caller checks it against the protected-path policy and audits it. Returns the root's real path.
+    /// </summary>
+    public string AddRoot(string raw)
+    {
+        var entry = Resolve(raw, readOnly: false);
+        lock (_rootsLock) _roots = Order(_roots.Where(r => !_syntax.Comparer.Equals(r.Final, entry.Final)).Append(entry));
+        return entry.Final;
+    }
+
+    /// <summary>How many allowed folders a refusal lists (the rest are counted).</summary>
+    private const int ListedRoots = 4;
+
+    /// <summary>The refusal for a path outside every root: which folders are allowed, and how the user can allow another.</summary>
+    private string OutsideRootsReason()
+    {
+        var writable = _roots.Where(r => !r.ReadOnly).Select(r => r.Final).ToList();
+        string list = writable.Count == 0 ? "none" : string.Join("; ", writable.Take(ListedRoots)) + (writable.Count > ListedRoots ? $" and {writable.Count - ListedRoots} more" : "");
+        return $"outside this job's allowed folders (allowed: {list}). Use an allowed folder, or ask the user to click Allow on " +
+               "the folder request in Cockpit (or pick it with Allow folder / Save to), then try again";
+    }
+
     private static string Trim(string p) => p.Length > 1 && Path.EndsInDirectorySeparator(p) && Path.GetPathRoot(p) != p ? p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : p;
 
     // ── Checks ───────────────────────────────────────────────────────────────────────────────────────
@@ -166,7 +189,7 @@ public sealed class PathAuthorizer
         }
 
         RootEntry? root = _roots.FirstOrDefault(r => _syntax.IsSameOrInside(full, r.Final));
-        if (root is null) return PathVerdict.Deny(full, "outside_roots", "outside this job's allowed folders");
+        if (root is null) return PathVerdict.Deny(full, "outside_roots", OutsideRootsReason());
         int depth = _syntax.RelativeDepth(full, root.Final);
         if (root.ReadOnly && access is PathAccess.Modify or PathAccess.CreateFile or PathAccess.CreateDirectory)
             return PathVerdict.Deny(full, "read_only", "this folder was attached read-only: it can be read but nothing in it can be changed or created");

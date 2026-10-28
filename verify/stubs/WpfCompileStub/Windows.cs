@@ -219,6 +219,13 @@ namespace System.Windows
         public static BitmapSource GetImage() => null;
         public static bool ContainsText() => false;
         public static string GetText() => "";
+        public static void SetText(string text) { }
+    }
+
+    public struct GridLength
+    {
+        public GridLength(double value) { Value = value; }
+        public double Value { get; }
     }
 
     public static class SystemParameters
@@ -430,10 +437,18 @@ namespace System.Windows.Controls
 
     public class UserControl : ContentControl { }
 
+    public class ScrollViewer : ContentControl
+    {
+        public void ScrollToEnd() { }
+    }
+
     public class TextBox : Control
     {
         public string Text { get; set; } = "";
+        public static readonly DependencyProperty TextProperty = DependencyProperty.Register("Text", typeof(string), typeof(TextBox));
         public int CaretIndex { get; set; }
+        public bool AcceptsReturn { get; set; }
+        public System.Windows.Data.BindingExpression GetBindingExpression(DependencyProperty dp) => null;
         public void SelectAll() { }
         public void Clear() => Text = "";
     }
@@ -446,6 +461,10 @@ namespace System.Windows.Controls
     public class Panel : FrameworkElement { }
     public class Canvas : Panel { }
     public class Grid : Panel { }
+    public class ColumnDefinition
+    {
+        public GridLength Width { get; set; }
+    }
     public class StackPanel : Panel { }
     public class Decorator : FrameworkElement { }
     public class Border : Decorator { }
@@ -483,5 +502,11 @@ namespace System.Windows.Data
         public static readonly object DoNothing = new();
         public Binding() { }
         public Binding(string path) { }
+    }
+
+    public class BindingExpression
+    {
+        public void UpdateSource() { }
+        public void UpdateTarget() { }
     }
 }

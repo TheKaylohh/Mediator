@@ -9,12 +9,12 @@ public sealed class CliArgs
 {
     private static readonly HashSet<string> Flags = new(StringComparer.Ordinal)
     {
-        "headless", "interactive", "simulate", "yes", "json", "recursive", "allow-metered", "check-swx", "dry-run", "keep-subscription", "gemini-skip-trust",
+        "headless", "interactive", "simulate", "yes", "json", "recursive", "allow-metered", "check-swx", "dry-run", "keep-subscription",
         "unresolved", "done", "not-done",
     };
     private static readonly HashSet<string> Valued = new(StringComparer.Ordinal)
     {
-        "output", "rules", "criteria", "model", "max-turns", "data-dir", "bridge", "worker", "claude", "gemini", "batch", "job-id", "request", "provider", "b", "note",
+        "output", "rules", "criteria", "model", "max-turns", "data-dir", "bridge", "worker", "claude", "agy", "batch", "job-id", "request", "provider", "b", "note",
     };
 
     public string Command { get; private init; } = "";

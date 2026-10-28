@@ -168,25 +168,25 @@ static class LaunchTests
         Check.True(job5.Detail!.Contains("did not start", StringComparison.Ordinal), "reason given");
     }
 
-    // RECONSTRUCTED from Gemini CLI's headless documentation (stream-json), not captured from a run.
+    // Antigravity CLI (agy 1.4.7) stream-json shape, as in the real capture verify/fixtures/real/agy-1.4.7-ok.stream.jsonl,
+    // extended with tool steps from the documented step_update/tool_info fields.
     public const string GeminiRun =
         "\uFEFF" +
-        """{"type":"init","timestamp":"2026-10-22T10:00:00Z","session_id":"g-1","model":"gemini-2.5-pro"}""" + "\r\n" +
-        """{"type":"message","timestamp":"2026-10-22T10:00:00Z","role":"user","content":"Organize the folder"}""" + "\n" +
-        """{"type":"tool_use","timestamp":"2026-10-22T10:00:01Z","tool_name":"files_plan_by_rules","tool_id":"t-1","parameters":{"sourceFolder":"D:\\Downloads"}}""" + "\n" +
-        """{"type":"tool_result","timestamp":"2026-10-22T10:00:02Z","tool_id":"t-1","status":"success","output":"{\"batchId\":\"b1\",\"moves\":3}"}""" + "\n" +
-        """{"type":"tool_use","timestamp":"2026-10-22T10:00:03Z","tool_name":"files_execute_batch","tool_id":"t-2","parameters":{"batchId":"b1"}}""" + "\n" +
-        """{"type":"tool_result","timestamp":"2026-10-22T10:00:09Z","tool_id":"t-2","status":"error","error":{"type":"tool_error","message":"The user denied this action."}}""" + "\n" +
-        """{"type":"message","timestamp":"2026-10-22T10:00:10Z","role":"assistant","content":"The batch was not run ","delta":true}""" + "\n" +
-        """{"type":"message","timestamp":"2026-10-22T10:00:10Z","role":"assistant","content":"because you denied it.","delta":true}""" + "\n" +
-        """{"type":"result","timestamp":"2026-10-22T10:00:10Z","status":"success","stats":{"total_tokens":1900,"input_tokens":1500,"output_tokens":400,"duration_ms":10000,"tool_calls":2}}""";
+        """{"event":"init","conversation_id":"g-1","init":{"cwd":"C:/jobs/x","tools":["call_mcp_tool"],"permission_mode":"request-review","model":"gemini-3.8-flash-high"}}""" + "\r\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":0,"state":"DONE","step_type":"user_input"}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":1,"state":"ACTIVE","step_type":"tool","tool_name":"files_plan_by_rules","tool_info":{"name":"files_plan_by_rules","parameters":{"sourceFolder":"D:/Downloads"}}}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":1,"state":"DONE","step_type":"tool","tool_name":"files_plan_by_rules","tool_info":{"name":"files_plan_by_rules","output":"{\"batchId\":\"b1\",\"moves\":3}"}}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":2,"state":"DONE","step_type":"tool","tool_name":"files_execute_batch","tool_info":{"name":"files_execute_batch","parameters":{"batchId":"b1"},"error":{"type":"tool_error","message":"The user denied this action."}}}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"The batch was not run "}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-1","step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"because you denied it."}}""" + "\n" +
+        """{"event":"result","result":{"conversation_id":"g-1","status":"SUCCESS","response":"The batch was not run because you denied it.","duration_seconds":10.0,"num_turns":2,"usage":{"input_tokens":1500,"output_tokens":400,"total_tokens":1900}}}""";
 
     public const string GeminiQuota =
-        """{"type":"init","session_id":"g-2","model":"gemini-2.5-pro"}""" + "\n" +
-        """{"type":"error","severity":"error","message":"[API Error: 429 RESOURCE_EXHAUSTED] Quota exceeded for quota metric 'Gemini 2.5 Pro Requests'. Please retry in 37.2s."}""" + "\n";
+        """{"event":"init","conversation_id":"g-2","init":{"model":"gemini-3.8-flash-high"}}""" + "\n" +
+        """{"event":"step_update","step_update":{"conversation_id":"g-2","step_index":1,"state":"DONE","step_type":"tool","tool_info":{"name":"x","error":{"type":"api_error","message":"[API Error: 429 RESOURCE_EXHAUSTED] Quota exceeded. Please retry in 37.2s."}}}}""" + "\n";
 
-    public const string GeminiJsonMode =
-        """{"response":"Done.","stats":{"models":{"gemini-2.5-pro":{"tokens":{"prompt":800,"candidates":120,"cached":300}}}}}""";
+    public const string AgyResultOnly =
+        """{"event":"result","result":{"conversation_id":"g-3","status":"SUCCESS","response":"Done.\n","usage":{"input_tokens":800,"output_tokens":120,"cache_read_tokens":300}}}""";
 
     static List<CockpitStreamEvent> Parse(string text, int chunk, TimeProvider? time = null)
     {
@@ -204,8 +204,9 @@ static class LaunchTests
         string Shape(IEnumerable<CockpitStreamEvent> es) => string.Join(",", es.Select(e => e.GetType().Name));
         var whole = Parse(GeminiRun, GeminiRun.Length);
         foreach (int size in new[] { 1, 3, 17 }) Check.Equal(Shape(whole), Shape(Parse(GeminiRun, size)), $"same events in {size}-char chunks");
-        Check.Equal("SessionInitEvent,ToolUseEvent,ToolResultEvent,ToolUseEvent,ToolResultEvent,AssistantTextEvent,AssistantTextEvent,RunResultEvent", Shape(whole), "event sequence");
-        Check.Equal("gemini-2.5-pro", ((SessionInitEvent)whole[0]).Model, "BOM stripped, model read");
+        Check.Equal("SessionInitEvent,ToolUseEvent,ToolResultEvent,ToolUseEvent,ToolResultEvent,AssistantTextEvent,RunResultEvent", Shape(whole), "event sequence (agent deltas joined per step)");
+        Check.Equal("gemini-3.8-flash-high", ((SessionInitEvent)whole[0]).Model, "BOM stripped, model read");
+        Check.Equal("The batch was not run because you denied it.", ((AssistantTextEvent)whole[5]).Text, "deltas joined");
         Check.True(((ToolResultEvent)whole[4]).IsError && ((ToolResultEvent)whole[4]).Text == "The user denied this action.", "tool error status and message");
         var result = (RunResultEvent)whole[^1];
         Check.True(!result.IsError && result.Usage == new UsageTotals(1500, 400, null, null) && result.NumTurns == 2, "result stats (V6: cache fields Gemini did not report are unknown, not 0)");
@@ -216,12 +217,12 @@ static class LaunchTests
         Check.True(synthetic.IsError && synthetic.RateLimit is not null, "a stream that ends after a 429 yields a failed result with a rate limit");
         Check.Equal(now.AddSeconds(38), synthetic.RateLimit!.ResetsAt, "'retry in 37.2s' → reset time");
 
-        var daily = Parse("""{"type":"error","message":"You have exhausted your daily quota (RESOURCE_EXHAUSTED)"}""", 50, new FixedTime(now));
+        var daily = Parse("""{"event":"result","result":{"status":"ERROR","error":{"message":"You have exhausted your daily quota (RESOURCE_EXHAUSTED)"}}}""", 50, new FixedTime(now));
         Check.Equal(DateTimeOffset.Parse("2026-10-23T07:00:00Z", System.Globalization.CultureInfo.InvariantCulture), ((RunResultEvent)daily[^1]).RateLimit!.ResetsAt,
             "daily quota → next midnight Pacific (PDT in October = 07:00 UTC)");
 
-        var json = Parse(GeminiJsonMode, 9);
-        Check.True(json[0] is AssistantTextEvent { Text: "Done." } && ((RunResultEvent)json[1]).Usage == new UsageTotals(800, 120, 300, null), "--output-format json single object");
+        var noDeltas = Parse(AgyResultOnly, 9);
+        Check.True(noDeltas[0] is AssistantTextEvent { Text: "Done." } && ((RunResultEvent)noDeltas[1]).Usage == new UsageTotals(800, 120, 300, null), "result without deltas: response shown once");
         return Task.CompletedTask;
     }
 
@@ -271,15 +272,15 @@ static class LaunchTests
         var psi = launcher.Headless.Single();
         Check.Equal("/opt/fake/gemini", psi.FileName, "gemini launched");
         string[] args = [.. psi.ArgumentList];
-        // V10: the user's folder via --include-directories and an auto-selected model (-m) follow the V6 flags.
-        Check.True(args.Take(4).SequenceEqual(new[] { "--output-format", "stream-json", "--allowed-mcp-server-names", "cockpit" })
-            && args.Contains("--include-directories") && args[Array.IndexOf(args, "-m") + 1].StartsWith("gemini-", StringComparison.Ordinal), "gemini flags: " + string.Join(' ', args));
-        Check.Equal(job.Workspace.Root, psi.WorkingDirectory, "runs in the job workspace so .gemini/settings.json is found");
+        // Antigravity: stream-json in and out, no user folder in its workspace, an auto-selected model (--model).
+        Check.True(args.Take(4).SequenceEqual(new[] { "--input-format", "stream-json", "--output-format", "stream-json" })
+            && !args.Contains("--add-dir") && args[Array.IndexOf(args, "--model") + 1].StartsWith("gemini-3.8-", StringComparison.Ordinal), "agy flags: " + string.Join(' ', args));
+        Check.Equal(job.Workspace.Root, psi.WorkingDirectory, "runs in the job workspace so .agents/mcp_config.json is found");
         Check.True(!psi.Environment.ContainsKey("GEMINI_API_KEY") && !psi.Environment.ContainsKey("GOOGLE_GENAI_USE_VERTEXAI"), "Google billing variables scrubbed");
 
-        var settings = JsonNode.Parse(File.ReadAllText(Path.Combine(job.Workspace.Root, ".gemini", "settings.json")))!;
+        var settings = JsonNode.Parse(File.ReadAllText(Path.Combine(job.Workspace.Root, ".agents", "mcp_config.json")))!;
         var server = settings["mcpServers"]!["cockpit"]!;
-        Check.Equal(ComponentLocator.DotnetHost(), (string)server["command"]!, "settings.json runs the bridge");
+        Check.Equal(ComponentLocator.DotnetHost(), (string)server["command"]!, "mcp_config.json runs the bridge");
         var serverArgs = server["args"]!.AsArray().Select(a => (string)a!).ToList();
         Check.True(serverArgs[0] == bridgeDll && serverArgs.Contains("route-a") && !serverArgs.Contains(job.Grant.Token), "bridge args carry this job's id but not its token");
         Check.Equal(job.Grant.Token, (string?)server["env"]!["COCKPIT_JOB_TOKEN"], "the token travels in the bridge's environment");

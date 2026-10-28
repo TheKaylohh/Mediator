@@ -35,10 +35,18 @@ public partial class MainWindow : Window
         _vm = vm;
         DataContext = vm;
         _designMaxHeight = MaxHeight;
+        ComposerKeys.Attach(PromptBox, vm);
 
         vm.PropertyChanged += OnViewModelChanged;
         vm.FocusPromptRequested += () => Dispatcher.BeginInvoke(FocusPrompt, DispatcherPriority.Input);
         vm.BrowseForAttachmentsRequested += BrowseForAttachments;
+        vm.BrowseForSaveFolderRequested += BrowseForSaveFolder;
+        vm.BrowseForAllowFolderRequested += BrowseForAllowFolder;
+        vm.OpenFullViewRequested += () =>
+        {
+            _chat ??= new ChatWindow(vm, OnDragOver, OnDragLeave, OnDrop);
+            _chat.Open();
+        };
         Deactivated += (_, _) =>
         {
             LastDeactivatedUtc = DateTime.UtcNow;
@@ -162,6 +170,31 @@ public partial class MainWindow : Window
 
     // ── [ + Attach ] ─────────────────────────────────────────────────────────────────────────────────
 
+    private ChatWindow? _chat;
+
+    /// <summary>[ Save to… ]: a Windows folder picker; the choice is where every job saves until cleared.</summary>
+    private void BrowseForSaveFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Save job output to this folder" };
+        if (_vm.SaveFolder is { } current) dialog.InitialDirectory = current;
+        Window owner = _chat is { IsActive: true } ? _chat : this;
+        bool? ok;
+        using (_vm.BeginModal()) ok = dialog.ShowDialog(owner);
+        if (ok == true && dialog.FolderName.Length > 0) _vm.SetSaveFolder(dialog.FolderName);
+        owner.Activate();
+    }
+
+    /// <summary>Allow folder: any folder the user picks may be read and written by this chat's jobs (protected places are refused).</summary>
+    private void BrowseForAllowFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Allow this chat's jobs to read and write a folder" };
+        Window owner = _chat is { IsActive: true } ? _chat : this;
+        bool? ok;
+        using (_vm.BeginModal()) ok = dialog.ShowDialog(owner);
+        if (ok == true && dialog.FolderName.Length > 0) _ = _vm.AllowFolderAsync(dialog.FolderName);
+        owner.Activate();
+    }
+
     private void BrowseForAttachments()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
@@ -172,10 +205,11 @@ public partial class MainWindow : Window
             DereferenceLinks = false, // a shortcut is attached as itself, never silently followed
         };
         bool? ok;
-        using (_vm.BeginModal()) ok = dialog.ShowDialog(this);
+        Window owner = _chat is { IsActive: true } ? _chat : this;
+        using (_vm.BeginModal()) ok = dialog.ShowDialog(owner);
         if (ok == true && dialog.FileNames.Length > 0) _vm.AttachPaths(dialog.FileNames);
-        Activate();
-        FocusPrompt();
+        owner.Activate();
+        if (owner == this) FocusPrompt(); else _chat!.FocusPrompt();
     }
 
     /// <summary>

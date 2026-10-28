@@ -14,7 +14,10 @@
     <AssemblyName>AiCockpit</AssemblyName>
     <RootNamespace>Cockpit.Wpf</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <!-- Embedded in AiCockpit.exe: Explorer, Task Manager, Alt+Tab and the tray icon (TrayIcon.LoadIcon reads it back). -->
+    <ApplicationIcon>$(MSBuildThisFileDirectory)..\..\app.ico</ApplicationIcon>
+    <!-- No SupportedOSPlatformVersion: with plain net8.0-windows (TargetPlatformVersion 7.0) a 10.0.x value fails NETSDK1135,
+         and a versioned TFM would pull the Windows SDK projection from NuGet, breaking the offline shim build. -->
     <!-- LibraryImport (RegisterHotKey) generates unsafe marshalling code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -23,6 +26,14 @@
     <Using Remove="System.Drawing" />
     <ProjectReference Include="../Cockpit.UI/Cockpit.UI.csproj" />
     <ProjectReference Include="../Cockpit.Core/Cockpit.Core.csproj" />
+  </ItemGroup>
+  <!-- Full view renders Markdown + LaTeX in WebView2 (Edge runtime ships with Windows 11). Offline shim builds have no
+       NuGet, so they keep the plain-text view. -->
+  <PropertyGroup Condition="'$(CockpitVerify)' != 'true' And '$(CockpitUseShims)' != 'true'">
+    <DefineConstants>$(DefineConstants);COCKPIT_WEBVIEW</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CockpitVerify)' != 'true' And '$(CockpitUseShims)' != 'true'">
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
   <!--

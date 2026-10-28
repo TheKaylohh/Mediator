@@ -52,7 +52,7 @@ public sealed record BridgeOptions(
 }
 
 /// <summary>
-/// Stateless stdio-to-bus proxy that Claude Code, Gemini CLI or any MCP client spawns as a stdio server.
+/// Stateless stdio-to-bus proxy that Claude Code, Antigravity CLI or any MCP client spawns as a stdio server.
 ///
 /// It deliberately does NOT filter tools or decide approvals: the agent can read its own MCP config and
 /// run this program itself, so any check here is cosmetic. tools/list filtering, the approval gate,

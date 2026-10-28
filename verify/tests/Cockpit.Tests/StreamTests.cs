@@ -16,7 +16,7 @@ static class StreamTests
         """{"type":"assistant","session_id":"sess-1","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Reading the part cards… ✓ 🔩"},{"type":"tool_use","id":"toolu_1","name":"mcp__cockpit__swx_part_cards","input":{"folder":"D:\\Jetta\\parts"}},{"type":"tool_use","id":"toolu_2","name":"mcp__cockpit__fs_list","input":{"path":"D:\\Jetta"}}],"usage":{"input_tokens":12,"output_tokens":40}}}""" + "\n" +
         """{"type":"user","session_id":"sess-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"2 cards"}]},{"type":"tool_result","tool_use_id":"toolu_2","is_error":true,"content":"denied by user"}]}}""" + "\n" +
         "this line is not json\n" +
-        """{"type":"stream_event","session_id":"sess-1","event":{"type":"ping"}}""" + "\n" +
+        """{"type":"future_event","session_id":"sess-1","event":{"type":"ping"}}""" + "\n" +
         """{"type":"result","subtype":"success","is_error":false,"session_id":"sess-1","num_turns":3,"duration_ms":18234,"duration_api_ms":15002,"result":"Assembly saved.","total_cost_usd":0.0831,"usage":{"input_tokens":1520,"output_tokens":842,"cache_read_input_tokens":20480,"cache_creation_input_tokens":3072}}"""; // no trailing newline
 
     // RECONSTRUCTED: the subscription usage-limit message carries the reset time as "|<unix seconds>".
@@ -129,7 +129,7 @@ static class StreamTests
 
             var scrubbed = builder.ClaudeHeadless(ws, root, 10);
             Check.True(vars.All(v => !scrubbed.Environment.ContainsKey(v)), "headless: every billing variable removed");
-            string[] expectedArgs = ["-p", "--output-format", "stream-json", "--verbose", "--mcp-config", ws.ClaudeMcpConfigPath, "--strict-mcp-config"];
+            string[] expectedArgs = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--mcp-config", ws.ClaudeMcpConfigPath, "--strict-mcp-config"];
             Check.True(scrubbed.ArgumentList.Take(expectedArgs.Length).SequenceEqual(expectedArgs), "headless flags: " + string.Join(" ", scrubbed.ArgumentList));
 
             var metered = builder.ClaudeHeadless(ws, root, 10, allowMeteredBilling: true);

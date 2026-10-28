@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace Cockpit.Core.Jobs;
 
-/// <summary>Incremental parser of a CLI's newline-delimited JSON output (Claude Code or Gemini CLI).</summary>
+/// <summary>Incremental parser of a CLI's newline-delimited JSON output (Claude Code or Antigravity CLI).</summary>
 public interface ICliStreamParser
 {
     IReadOnlyList<CockpitStreamEvent> Feed(ReadOnlySpan<char> chunk);
@@ -27,6 +27,11 @@ public sealed record SessionInitEvent(string? SessionId, string? Model, string? 
 
 public sealed record McpServerStatus(string Name, string Status);
 public sealed record AssistantTextEvent(string? SessionId, string Text) : CockpitStreamEvent(SessionId);
+/// <summary>
+/// Live progress while a reply is being written (--include-partial-messages): Kind "text", "thinking" or "tool"; Tool is set
+/// when a tool call starts; Chars is the size of this piece. The finished text and tool call still arrive as their own events.
+/// </summary>
+public sealed record ProgressEvent(string? SessionId, string Kind, string? Tool, int Chars) : CockpitStreamEvent(SessionId);
 public sealed record ToolUseEvent(string? SessionId, string ToolUseId, string Name, JsonElement Input) : CockpitStreamEvent(SessionId);
 public sealed record ToolResultEvent(string? SessionId, string ToolUseId, bool IsError, string Text) : CockpitStreamEvent(SessionId);
 public sealed record SystemNoticeEvent(string? SessionId, string Subtype, string Raw) : CockpitStreamEvent(SessionId);
@@ -137,6 +142,7 @@ public sealed partial class ClaudeStreamParser : ICliStreamParser
                 "assistant" => ParseAssistant(root, session),
                 "user" => ParseUser(root, session),
                 "result" => [ParseResult(root, session)],
+                "stream_event" => ParseProgress(root, session),
                 _ => [new UnknownEvent(session, type, Truncate(line, 500))],
             };
         }
@@ -174,6 +180,32 @@ public sealed partial class ClaudeStreamParser : ICliStreamParser
             }
         }
         return events;
+    }
+
+    /// <summary>Partial-message deltas as progress; anything else in them is ignored (the full message follows).</summary>
+    private static IReadOnlyList<CockpitStreamEvent> ParseProgress(JsonElement root, string? session)
+    {
+        if (!root.TryGetProperty("event", out var ev) || ev.ValueKind != JsonValueKind.Object) return [];
+        switch (Str(ev, "type"))
+        {
+            case "content_block_start" when ev.TryGetProperty("content_block", out var block) && block.ValueKind == JsonValueKind.Object:
+                return Str(block, "type") switch
+                {
+                    "tool_use" => [new ProgressEvent(session, "tool", Str(block, "name"), 0)],
+                    "thinking" => [new ProgressEvent(session, "thinking", null, 0)],
+                    _ => [],
+                };
+            case "content_block_delta" when ev.TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object:
+                return Str(delta, "type") switch
+                {
+                    "text_delta" => [new ProgressEvent(session, "text", null, Str(delta, "text")?.Length ?? 0)],
+                    "input_json_delta" => [new ProgressEvent(session, "tool", null, Str(delta, "partial_json")?.Length ?? 0)],
+                    "thinking_delta" => [new ProgressEvent(session, "thinking", null, Str(delta, "thinking")?.Length ?? 0)],
+                    _ => [],
+                };
+            default:
+                return [];
+        }
     }
 
     private static IReadOnlyList<CockpitStreamEvent> ParseUser(JsonElement root, string? session)

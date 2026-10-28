@@ -45,8 +45,8 @@ public sealed class ThemeOptionViewModel(CockpitTheme theme) : ObservableObject
 }
 
 /// <summary>
-/// The first-run setup card (V7). Shown on the first launch, and on any launch where neither Claude Code nor Gemini
-/// CLI is found. Checks claude, gemini, python and git; offers Run on startup, the theme and the hotkey; saves them.
+/// The first-run setup card (V7). Shown on the first launch, and on any launch where neither Claude Code nor Antigravity
+/// CLI is found. Checks claude, agy, python and git; offers Run on startup, the theme and the hotkey; saves them.
 /// </summary>
 public sealed class OnboardingViewModel : ObservableObject
 {
@@ -71,7 +71,7 @@ public sealed class OnboardingViewModel : ObservableObject
         _theme = s.Theme;
         _runOnStartup = startup.IsSupported && startup.IsEnabled;
         foreach (var id in ConnectorProbe.Prerequisites)
-            Prerequisites.Add(new PrerequisiteViewModel(id, ConnectorProbe.DisplayName(id), required: id is "claude" or "gemini"));
+            Prerequisites.Add(new PrerequisiteViewModel(id, ConnectorProbe.DisplayName(id), required: id is "claude" or "agy"));
         foreach (var t in CockpitOverlayViewModel.Themes) ThemeOptions.Add(new ThemeOptionViewModel(t) { IsSelected = t == _theme });
         SelectThemeCommand = new RelayCommand(p => { if (p is ThemeOptionViewModel o) Theme = o.Theme; });
         UsePresetCommand = new RelayCommand(p => { if (p is string g) HotkeyText = g; });
@@ -161,7 +161,7 @@ public sealed class OnboardingViewModel : ObservableObject
             }
             Summary = AnyCliFound
                 ? "Ready. Jobs use your Claude Pro or Google AI Pro subscription through these CLIs."
-                : "Install Claude Code or Gemini CLI (or both) to run jobs; the overlay works meanwhile.";
+                : "Install Claude Code or Antigravity CLI (or both) to run jobs; the overlay works meanwhile.";
             OnPropertyChanged(nameof(AnyCliFound));
         }
         finally

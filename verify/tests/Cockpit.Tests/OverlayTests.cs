@@ -229,6 +229,7 @@ static class OverlayTests
         (string Prompt, string Action, string Tool, AiProvider Provider)[] cases =
         [
             ("assemble these SolidWorks parts", "assemble", SwxToolProvider.BuildTool, AiProvider.ClaudeCode),
+            ("Create a ferrari F40 in solidworks that I can 3d print in a 4 cubic inch box", "codecad", SwxPartToolProvider.BuildTool, AiProvider.ClaudeCode),
             ("design a brake disc and wheel hub for a Jetta", "codecad", CodeCadToolProvider.GenerateTool, AiProvider.ClaudeCode),
             ("/cad assemble the housing", "assemble", SwxToolProvider.PartCardsTool, AiProvider.ClaudeCode),
             ("/cad", "assemble", SwxToolProvider.BuildTool, AiProvider.ClaudeCode),
@@ -526,11 +527,11 @@ static class OverlayTests
 
         await c.RefreshAsync();
         var claude = c.Clis.Single(x => x.Id == "claude");
-        var gemini = c.Clis.Single(x => x.Id == "gemini");
+        var gemini = c.Clis.Single(x => x.Id == "agy");
         Check.Equal("v2.1.309", claude.VersionText, "claude version");
         Check.True(claude.IsSignedInLikely && claude.AuthText.StartsWith("signed in (credential file found", StringComparison.Ordinal), "sign-in shown honestly: " + claude.AuthText);
         Check.True(claude.HasCooldown && claude.CooldownText.StartsWith("usage limit until", StringComparison.Ordinal) && claude.NeedsAttention, "cooldown shown");
-        Check.True(!gemini.IsInstalled && gemini.VersionText == "not found on PATH" && gemini.AuthText.Contains("npm install -g @google/gemini-cli", StringComparison.Ordinal), "missing CLI with install hint");
+        Check.True(!gemini.IsInstalled && gemini.VersionText == "not found on PATH" && gemini.AuthText.Contains("antigravity.google/cli/install.ps1", StringComparison.Ordinal), "missing CLI with install hint");
         Check.True(!gemini.SignInCommand.CanExecute(null) && claude.SignInCommand.CanExecute(null), "Sign In only for installed CLIs");
         Check.True(c.Apps.Single(x => x.Id == "solidworks") is { IsAvailable: true } sw && sw.Detail.Contains("PID 4242", StringComparison.Ordinal), "SolidWorks PID");
         Check.True(!c.Apps.Single(x => x.Id == "blender").IsAvailable, "Blender missing");
@@ -576,7 +577,7 @@ static class OverlayTests
         var card = new OnboardingViewModel(probe, startup, overlay);
         Check.True(await card.StartAsync(), "opens on the first launch");
         Check.True(card.AnyCliFound && card.Prerequisites.Single(p => p.Id == "claude").Status.Contains("signed in", StringComparison.Ordinal), "claude found and signed in");
-        Check.True(card.Prerequisites.Single(p => p.Id == "gemini").IsMissing && card.Prerequisites.Single(p => p.Id == "git").IsMissing, "gemini and git missing");
+        Check.True(card.Prerequisites.Single(p => p.Id == "agy").IsMissing && card.Prerequisites.Single(p => p.Id == "git").IsMissing, "gemini and git missing");
         card.HotkeyText = "Shift+A";
         Check.True(card.HotkeyError.Length > 0 && !card.FinishCommand.CanExecute(null), "unsafe hotkey blocks Finish");
         card.UsePresetCommand.Execute("Ctrl+Alt+J");
@@ -795,8 +796,8 @@ static class OverlayTests
             && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Chat, "hi") == "haiku"
             && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Chat, new string('x', 200)) == "sonnet"
             && ProviderRouter.SelectModel(AiProvider.ClaudeCode, TaskCategory.Code, "fix the bug") == "sonnet"
-            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Files, "sort") == "gemini-2.5-flash"
-            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Tutor, "explain") == "gemini-2.5-pro", "SelectModel");
+            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Files, "sort") == "gemini-3.8-flash-low"
+            && ProviderRouter.SelectModel(AiProvider.GeminiCli, TaskCategory.Tutor, "explain") == "gemini-3.8-flash-high", "SelectModel");
         Check.True(ProviderRouter.Route(TaskCategory.Cad, null, false, _ => null, _ => true, RoutingPolicy.ConserveClaude).Provider == AiProvider.GeminiCli
             && ProviderRouter.Route(TaskCategory.Tutor, null, false, _ => null, _ => true, RoutingPolicy.PreferClaude).Provider == AiProvider.ClaudeCode
             && ProviderRouter.Route(TaskCategory.Chat, null, false, _ => null, _ => true).Provider == AiProvider.GeminiCli
@@ -804,6 +805,21 @@ static class OverlayTests
         Check.True(ProviderRouter.ParseProviderPrefix("/gemini sum this up") == (AiProvider.GeminiCli, "sum this up") && ProviderRouter.ParseProviderPrefix("hello") is null, "/gemini prefix");
         Check.True(JobSpecFactory.InferToolsAndCategory("what is a fillet?", null) is { Category: TaskCategory.Chat, Tools.Count: 0 }
             && JobSpecFactory.InferToolsAndCategory("check the mates", "SLDWORKS").Category == TaskCategory.Cad, "tool inference");
+
+        // (a2) routing table: the PowerPoint question that read files and failed on Antigravity is a web search with no local access
+        const string pptx = "I have a powerpoint with links to charts and tables. It is on a shared drive and the links are relative. A coworker wants to update the links when she opens the slideshow but all the charts and tables go blank instead of showing the latest data. Please diagnose and offer concise solutions";
+        Check.True(JobSpecFactory.InferToolsAndCategory(pptx, null) is { Category: TaskCategory.Search, Tools.Count: 0 }, "pptx troubleshooting → Search, no tools");
+        Check.True(ProviderRouter.Route(TaskCategory.Search, null, false, _ => null, _ => true).Provider == AiProvider.ClaudeCode, "Search → Claude Code first (allowable WebSearch)");
+        Check.True(JobSpecFactory.InferToolsAndCategory("estimate the climate impact, mostly in summer", null).Category == TaskCategory.Chat, "word-start keywords: estimate/mostly are not mate/stl");
+        Check.True(JobSpecFactory.InferToolsAndCategory("organize my downloads", null).Category == TaskCategory.Files
+            && JobSpecFactory.InferToolsAndCategory(@"summarise C:\reports\q3", null).Category == TaskCategory.Files, "explicit files or a path → Files");
+        Check.True(ProviderRouter.ParsePrefix("/search excel links blank") == (TaskCategory.Search, "excel links blank") && ProviderRouter.ParsePrefix("/ask hi") == (TaskCategory.Chat, "hi"), "/search and /ask");
+        string selected = TempDir();
+        Check.True(JobSpecFactory.Assistant(selected, pptx, LaunchMode.Headless, [], TaskCategory.Search, selected).Roots.Count == 0
+            && JobSpecFactory.Assistant(selected, "sort these files", LaunchMode.Headless, JobSpecFactory.FileTools, TaskCategory.Files).Roots.Count == 1, "an Explorer folder is never given to Chat/Search");
+        Check.True(!GeminiLaunchBuilder.StdinMessage("q", cockpitTools: false, webSearch: true).Contains("call_mcp_tool", StringComparison.Ordinal)
+            && GeminiLaunchBuilder.StdinMessage("q", cockpitTools: false, webSearch: true).Contains("search_web", StringComparison.Ordinal)
+            && GeminiLaunchBuilder.StdinMessage("q").Contains("call_mcp_tool", StringComparison.Ordinal), "agy: no MCP-tools preamble without tools");
 
         // (b) free text: headless assistant, no terminal, full answer streamed
         string answer = string.Concat(Enumerable.Repeat("A fillet rounds an edge between two faces. ", 20)); // > 500 chars
@@ -822,7 +838,8 @@ static class OverlayTests
         var turn = vm.Conversation[0];
         Check.True(launcher.Headless.Count == 1 && launcher.Interactive.Count == 0, "headless, never a terminal");
         var args = launcher.Headless[0].ArgumentList.ToList();
-        Check.True(args[args.IndexOf("--model") + 1] == "haiku" && turn.BadgeText == "Claude Code · haiku", $"Claude First + short chat → haiku ({turn.BadgeText})");
+        Check.True(args[args.IndexOf("--model") + 1] == "haiku" && turn.BadgeText == "Answer · Claude Code · haiku", $"Claude First + short chat → haiku ({turn.BadgeText})");
+        Check.True(args.Contains("--disallowedTools") && args[args.IndexOf("--disallowedTools") + 1].Contains("Read", StringComparison.Ordinal) && !args.Any(a => a.Contains("WebSearch", StringComparison.Ordinal)), "plain answer: no local file tools, no web search");
         Check.True(turn.ResponseText == answer && turn.ResponseText.Length > 500 && vm.SelectedTab == 0 && vm.HasConversation, "full answer, untruncated, on the Actions tab");
         Check.True(vm.Activity.Any(a => a.Detail.EndsWith("…", StringComparison.Ordinal)), "the Activity feed still truncates");
 
@@ -831,12 +848,12 @@ static class OverlayTests
         Check.True(native.NativeResume && native.LastResponseText == answer, "Claude run: native resume, answer kept");
         var toGemini = JobSpecFactory.Continue(native, "and a chamfer?", targetProvider: AiProvider.GeminiCli);
         Check.True(toGemini.ContinueSessionId is null && toGemini.Provider == AiProvider.GeminiCli
-            && toGemini.Prompt.StartsWith("Previous turn user: Explain what a fillet is in CAD", StringComparison.Ordinal)
-            && toGemini.Prompt.Contains("Previous turn assistant: A fillet", StringComparison.Ordinal) && toGemini.Prompt.EndsWith("Follow-up: and a chamfer?", StringComparison.Ordinal), "Claude → Gemini carries the turn as context");
+            && toGemini.Prompt.StartsWith(JobSpecFactory.ConversationHeader, StringComparison.Ordinal) && toGemini.Prompt.Contains("[Turn 1] User: Explain what a fillet is in CAD", StringComparison.Ordinal)
+            && toGemini.Prompt.Contains("[Turn 1] Assistant: A fillet", StringComparison.Ordinal) && toGemini.Prompt.EndsWith("Follow-up (now): and a chamfer?", StringComparison.Ordinal), "Claude → Gemini carries the turn as context");
         var gem = native with { SessionId = "turn-x", Provider = AiProvider.GeminiCli, NativeResume = false };
-        Check.True(JobSpecFactory.Continue(gem, "more") is { ContinueSessionId: null, Provider: null } g && g.Prompt.Contains("Previous turn assistant:", StringComparison.Ordinal), "Gemini session: routed normally with context");
+        Check.True(JobSpecFactory.Continue(gem, "more") is { ContinueSessionId: null, Provider: null } g && g.Prompt.Contains("[Turn 1] Assistant:", StringComparison.Ordinal), "Gemini session: routed normally with context");
         Check.True(JobSpecFactory.Continue(native, "more").ContinueSessionId == sid, "Claude → Claude still resumes natively");
-        var gl = new GeminiLaunchBuilder("/opt/fake/gemini").Headless(rt.Jobs.Single().Workspace, null, false, TempDir()).ArgumentList.ToList();
-        Check.True(gl.Contains("--include-directories"), "Gemini sees the user's folder");
+        var gl = new GeminiLaunchBuilder("/opt/fake/agy").Headless(rt.Jobs.Single().Workspace, null, false).ArgumentList.ToList();
+        Check.True(!gl.Contains("--add-dir"), "Antigravity never gets the user's folder as workspace (its in-workspace writes skip the gate)");
     }
 }
