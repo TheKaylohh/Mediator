@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Verify builds (no Windows desktop reference pack offline) compile as net8.0 marked Windows-only;
+         the worker uses only P/Invoke and COM, so the code is identical. It runs only on Windows. -->
+    <TargetFramework Condition="'$(CockpitVerify)' == 'true'">net8.0</TargetFramework>
+    <EnableWindowsTargeting Condition="'$(CockpitVerify)' != 'true'">true</EnableWindowsTargeting>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>cockpit-swx-worker</AssemblyName>
+    <RootNamespace>Cockpit.SwxWorker</RootNamespace>
+    <!-- Built-in COM interop (RCWs, a managed IOleMessageFilter) is incompatible with trimming/AOT. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- Real interop from $(SolidWorksInteropDir) in ship builds, the stub in verify builds (Directory.Build.targets). -->
+    <CockpitUsesSolidWorks>true</CockpitUsesSolidWorks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Cockpit.Protocol/Cockpit.Protocol.csproj" />
+  </ItemGroup>
+</Project>

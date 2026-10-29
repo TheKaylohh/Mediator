@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The overlay: a thin WPF view over Cockpit.UI's ViewModels. Windows only.
+    Verify builds (Linux, no WindowsDesktop reference pack) compile nothing here; the XAML is still checked by the
+    test suite (well-formed, every {Binding} resolves on the ViewModel types, every StaticResource exists).
+  -->
+  <PropertyGroup Condition="'$(CockpitVerify)' != 'true'">
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- NotifyIcon (tray) comes from Windows Forms; its global usings are removed so WPF types never become ambiguous. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>AiCockpit</AssemblyName>
+    <RootNamespace>Cockpit.Wpf</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <!-- LibraryImport (RegisterHotKey) generates unsafe marshalling code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CockpitVerify)' != 'true'">
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <ProjectReference Include="../Cockpit.UI/Cockpit.UI.csproj" />
+    <ProjectReference Include="../Cockpit.Core/Cockpit.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(CockpitVerify)' == 'true'">
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,402 @@
+<Window x:Class="Cockpit.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Cockpit.UI;assembly=Cockpit.UI"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:CockpitOverlayViewModel}"
+        Title="AI Cockpit"
+        Width="420" SizeToContent="Height" MaxHeight="680"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
+        FontFamily="{StaticResource UiFont}" FontSize="13" Foreground="{StaticResource TextBrush}">
+
+  <Window.InputBindings>
+    <KeyBinding Key="Escape" Command="{Binding HideCommand}" />
+  </Window.InputBindings>
+
+  <!-- Margin leaves room for the drop shadow. -->
+  <Border Margin="12" CornerRadius="10" Background="{StaticResource BgBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+    <Border.Effect>
+      <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.5" Color="Black" />
+    </Border.Effect>
+
+    <DockPanel LastChildFill="True">
+
+      <!-- ── Header: name, subscription pills, hide ── -->
+      <Grid DockPanel.Dock="Top" Margin="14,12,8,6">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Style="{StaticResource Icon}" Text="&#xE945;" Foreground="{StaticResource AccentBrush}" Margin="0,0,8,0" />
+          <TextBlock Text="AI Cockpit" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+        </StackPanel>
+        <ItemsControl Grid.Column="1" ItemsSource="{Binding Providers}" HorizontalAlignment="Right" VerticalAlignment="Center" Focusable="False">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="Horizontal" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="9" Padding="7,2" Margin="4,0,0,0" Background="{StaticResource PanelBrush}" BorderThickness="1" ToolTip="{Binding Status}">
+                <Border.Style>
+                  <Style TargetType="Border">
+                    <Setter Property="BorderBrush" Value="Transparent" />
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding IsActive}" Value="True">
+                        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Border.Style>
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="7" Height="7" Margin="0,0,5,0" VerticalAlignment="Center">
+                    <Ellipse.Style>
+                      <Style TargetType="Ellipse">
+                        <Setter Property="Fill" Value="{StaticResource SuccessBrush}" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsCoolingDown}" Value="True">
+                            <Setter Property="Fill" Value="{StaticResource WarningBrush}" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Ellipse.Style>
+                  </Ellipse>
+                  <TextBlock Text="{Binding Name}" FontSize="11" Foreground="{StaticResource MutedBrush}" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Button Grid.Column="2" Style="{StaticResource FlatButton}" Padding="6,4" Margin="6,0,0,0" ToolTip="Hide (Esc)" Command="{Binding HideCommand}">
+          <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE711;" />
+        </Button>
+      </Grid>
+
+      <!-- ── Footer: status, terminal mode, kill switch ── -->
+      <Grid DockPanel.Dock="Bottom" Margin="14,6,14,12">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Style="{StaticResource MutedText}" Text="{Binding StatusText}" ToolTip="{Binding StatusText}" VerticalAlignment="Center" />
+        <CheckBox Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="11.5"
+                  IsChecked="{Binding KeepSubscription}" Content="Keep sub."
+                  ToolTip="Never switch subscriptions: if the routed one is at its limit, refuse instead of failing over" />
+        <CheckBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="11.5"
+                  IsChecked="{Binding UseTerminal}" Content="Terminal"
+                  ToolTip="Run jobs as an interactive Claude Code terminal (billing-safe fallback) instead of headless" />
+        <Button Grid.Column="3" Style="{StaticResource DangerButton}" Padding="12,5" Command="{Binding KillAllCommand}"
+                ToolTip="Kill switch: end every running job now (grants revoked, processes terminated)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE71A;" Margin="0,0,6,0" />
+            <TextBlock Text="Kill all" />
+          </StackPanel>
+        </Button>
+      </Grid>
+
+      <!-- ── Billing banner ── -->
+      <Border DockPanel.Dock="Top" Margin="12,0,12,8" Padding="10,6" CornerRadius="6" Background="#33E55765" BorderBrush="{StaticResource DangerBrush}" BorderThickness="1"
+              Visibility="{Binding HasBillingBanner, Converter={StaticResource BoolToVisibility}}">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="4,2" Command="{Binding DismissBannerCommand}">
+            <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+          </Button>
+          <TextBlock Text="{Binding BillingBanner}" TextWrapping="Wrap" FontSize="12" />
+        </DockPanel>
+      </Border>
+
+      <!-- ── Prompt (Toolbox's search box) ── -->
+      <StackPanel DockPanel.Dock="Top" Margin="12,0,12,4">
+        <Border CornerRadius="8" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Style="{StaticResource Icon}" FontSize="13" Margin="10,0,4,0" Text="&#xE721;" Foreground="{StaticResource MutedBrush}" />
+            <TextBox x:Name="PromptBox" Grid.Column="1" Padding="4,8" Background="Transparent" BorderThickness="0"
+                     Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource TextBrush}" FontSize="14"
+                     AcceptsReturn="False" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto"
+                     Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}">
+              <TextBox.InputBindings>
+                <KeyBinding Key="Enter" Command="{Binding SubmitPromptCommand}" />
+              </TextBox.InputBindings>
+            </TextBox>
+            <TextBlock Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="14"
+                       Foreground="{StaticResource MutedBrush}" Text="Ask anything, or / to search actions"
+                       Visibility="{Binding PromptText, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+          </Grid>
+        </Border>
+        <TextBlock Style="{StaticResource MutedText}" Margin="4,4,0,0" Text="{Binding SuggestionText}"
+                   Visibility="{Binding SuggestionText, Converter={StaticResource EmptyToCollapsed}}" />
+        <TextBlock Margin="4,2,0,0" FontSize="11.5" TextWrapping="Wrap" Foreground="{StaticResource WarningBrush}" Text="{Binding RouteText}"
+                   Visibility="{Binding RouteText, Converter={StaticResource EmptyToCollapsed}}" />
+      </StackPanel>
+
+      <!-- ── Context chips ── -->
+      <ItemsControl DockPanel.Dock="Top" Margin="12,4,12,2" ItemsSource="{Binding ContextChips}" Focusable="False">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <ToggleButton Style="{StaticResource ChipToggle}" IsChecked="{Binding IsIncluded}" ToolTip="{Binding Value}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="0,0,5,0" Text="{Binding KindGlyph}" />
+                <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="220" TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+            </ToggleButton>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <!-- ── Body: tabs, with the approval card on top while one is pending ── -->
+      <Grid Margin="4,4,4,0" MinHeight="260">
+
+        <TabControl SelectedIndex="{Binding SelectedTab}"
+                    Visibility="{Binding HasPendingApproval, Converter={StaticResource InverseBoolToVisibility}}">
+
+          <!-- Actions: Toolbox's tool list -->
+          <TabItem Header="Actions">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="400">
+              <ItemsControl ItemsSource="{Binding FilteredActions}" Margin="8,6,8,6" Focusable="False">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border x:Name="Row" CornerRadius="8" Padding="10,8" Margin="0,0,0,2" Background="Transparent">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="36" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="28" Height="28" CornerRadius="7" Background="{StaticResource RaisedBrush}" VerticalAlignment="Top">
+                          <TextBlock Style="{StaticResource Icon}" HorizontalAlignment="Center" Text="{Binding Glyph}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="4,0,8,0">
+                          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" FontSize="11.5" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Provider}" Foreground="{StaticResource AccentBrush}" FontSize="10.5" Margin="0,2,0,0"
+                                     ToolTip="{Binding ToolsText}" />
+                          <TextBlock Text="{Binding DisabledReason}" Foreground="{StaticResource WarningBrush}" FontSize="10.5" TextWrapping="Wrap"
+                                     Visibility="{Binding IsEnabled, Converter={StaticResource InverseBoolToVisibility}}" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource AccentButton}" VerticalAlignment="Center" Content="Run"
+                                Command="{Binding DataContext.RunActionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding}" IsEnabled="{Binding IsEnabled}" />
+                      </Grid>
+                    </Border>
+                    <DataTemplate.Triggers>
+                      <Trigger SourceName="Row" Property="IsMouseOver" Value="True">
+                        <Setter TargetName="Row" Property="Background" Value="{StaticResource PanelBrush}" />
+                      </Trigger>
+                    </DataTemplate.Triggers>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </TabItem>
+
+          <!-- Jobs -->
+          <TabItem Header="{Binding JobsTabHeader}">
+            <Grid>
+              <TextBlock Style="{StaticResource MutedText}" Margin="16" Text="No jobs yet. Run an action or type a prompt."
+                         Visibility="{Binding Jobs.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+              <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="400">
+                <ItemsControl ItemsSource="{Binding Jobs}" Margin="8,6,8,6" Focusable="False">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border CornerRadius="8" Padding="10,8" Margin="0,0,0,4" Background="{StaticResource PanelBrush}">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <Ellipse Width="9" Height="9" Margin="0,5,10,0" VerticalAlignment="Top"
+                                   Fill="{Binding State, Converter={StaticResource JobStateBrush}}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal">
+                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding StateText}" />
+                              <TextBlock Style="{StaticResource MutedText}" Text="  ·  " />
+                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding Provider}" />
+                              <TextBlock Style="{StaticResource MutedText}" Text="  ·  " />
+                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding ElapsedText}" />
+                              <TextBlock Style="{StaticResource MutedText}" Text="  ·  " />
+                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding Launch}" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource MutedText}" Text="{Binding Detail}" TextWrapping="Wrap" MaxHeight="48"
+                                       Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="10" Text="{Binding JobId}" />
+                          </StackPanel>
+                          <Button Grid.Column="2" Style="{StaticResource OutlineButton}" VerticalAlignment="Center" Command="{Binding KillCommand}"
+                                  Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" ToolTip="Kill this job">
+                            <TextBlock Text="Kill" Foreground="{StaticResource DangerBrush}" />
+                          </Button>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </Grid>
+          </TabItem>
+
+          <!-- Activity -->
+          <TabItem Header="Activity">
+            <ListBox ItemsSource="{Binding Activity}" Background="Transparent" BorderThickness="0" Margin="6" MaxHeight="400"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="0,1">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="58" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource MutedText}" Text="{Binding TimeText}" />
+                    <StackPanel Grid.Column="1">
+                      <TextBlock TextTrimming="CharacterEllipsis" FontSize="12">
+                        <Run Text="{Binding Tool, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text="{Binding Phase, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                      </TextBlock>
+                      <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap" MaxHeight="44"
+                                 Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsProblem}" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </TabItem>
+        </TabControl>
+
+        <!-- ── Approval card ── -->
+        <Border Margin="8,4,8,8" Padding="12" CornerRadius="8" Background="{StaticResource PanelBrush}" BorderThickness="1"
+                DataContext="{Binding PendingApproval}"
+                Visibility="{Binding DataContext.HasPendingApproval, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+          <Border.Style>
+            <Style TargetType="Border">
+              <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDestructive}" Value="True">
+                  <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}" />
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Border.Style>
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top">
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}"
+                           Text="{Binding DataContext.QueuedApprovalsText, RelativeSource={RelativeSource AncestorType=Window}}" />
+                <TextBlock FontSize="11" Foreground="{StaticResource MutedBrush}">
+                  <Run Text="Approval needed" />
+                  <Run Text="·" />
+                  <Run Text="{Binding Tool, Mode=OneWay}" />
+                  <Run Text="·" />
+                  <Run Text="{Binding Risk, Mode=OneWay}" />
+                </TextBlock>
+              </DockPanel>
+              <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" Margin="0,4,0,2" />
+              <TextBlock Text="{Binding Summary}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                         Visibility="{Binding Summary, Converter={StaticResource EmptyToCollapsed}}" />
+              <TextBlock Style="{StaticResource MutedText}" FontSize="10" Margin="0,2,0,6" Text="{Binding JobId}" />
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+              <TextBlock Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,10,0" Text="{Binding SelectionText}" />
+              <Button Style="{StaticResource FlatButton}" Command="{Binding KillJobCommand}" Margin="0,0,6,0" ToolTip="Deny and end the whole job">
+                <TextBlock Text="Kill job" Foreground="{StaticResource DangerBrush}" />
+              </Button>
+              <Button Style="{StaticResource OutlineButton}" Content="Deny" Command="{Binding DenyCommand}" Margin="0,0,6,0" IsCancel="True" />
+              <Button Style="{StaticResource OutlineButton}" Content="Approve all" Command="{Binding ApproveAllCommand}" Margin="0,0,6,0"
+                      Visibility="{Binding IsSelectable, Converter={StaticResource BoolToVisibility}}" />
+              <Button Style="{StaticResource AccentButton}" Content="Approve selected" Command="{Binding ApproveSelectedCommand}"
+                      Visibility="{Binding IsSelectable, Converter={StaticResource BoolToVisibility}}" />
+              <Button Style="{StaticResource AccentButton}" Content="Approve" Command="{Binding ApproveAllCommand}"
+                      Visibility="{Binding IsSelectable, Converter={StaticResource InverseBoolToVisibility}}" />
+            </StackPanel>
+
+            <DataGrid ItemsSource="{Binding Rows}" AutoGenerateColumns="False" HeadersVisibility="Column" CanUserAddRows="False"
+                      CanUserDeleteRows="False" CanUserReorderColumns="False" CanUserResizeRows="False" SelectionMode="Single"
+                      GridLinesVisibility="None" Background="Transparent" RowBackground="Transparent" BorderThickness="0"
+                      Foreground="{StaticResource TextBrush}" MaxHeight="300" VerticalScrollBarVisibility="Auto"
+                      Visibility="{Binding HasRows, Converter={StaticResource BoolToVisibility}}">
+              <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                  <Setter Property="Background" Value="Transparent" />
+                  <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                  <Setter Property="FontSize" Value="11" />
+                  <Setter Property="Padding" Value="4,2" />
+                  <Setter Property="BorderThickness" Value="0" />
+                </Style>
+              </DataGrid.ColumnHeaderStyle>
+              <DataGrid.CellStyle>
+                <Style TargetType="DataGridCell">
+                  <Setter Property="BorderThickness" Value="0" />
+                  <Setter Property="Background" Value="Transparent" />
+                  <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                  <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                </Style>
+              </DataGrid.CellStyle>
+              <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsLowConfidence}" Value="True">
+                      <Setter Property="Background" Value="#22F2C55C" />
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsChecked}" Value="False">
+                      <Setter Property="Opacity" Value="0.5" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </DataGrid.RowStyle>
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Width="30">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
+                                IsChecked="{Binding IsChecked, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsSelectable}" />
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Item" Width="*">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <StackPanel Margin="2,3">
+                        <TextBlock Text="{Binding Primary}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Detail}" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap"
+                                   Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Conf." Width="44" Binding="{Binding ConfidenceText}" IsReadOnly="True" />
+              </DataGrid.Columns>
+            </DataGrid>
+          </DockPanel>
+        </Border>
+      </Grid>
+    </DockPanel>
+  </Border>
+</Window>

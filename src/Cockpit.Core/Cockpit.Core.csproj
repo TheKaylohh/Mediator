@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net8.0 (not net8.0-windows) so the bus, gate and journal tests run on any OS.
+         Windows-only code paths are guarded with OperatingSystem.IsWindows(). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Cockpit.Core</RootNamespace>
+    <!-- LibraryImport source-generated P/Invoke marshalling needs unsafe blocks. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <CockpitUsesSqlite>true</CockpitUsesSqlite>
+    <CockpitUsesHashing>true</CockpitUsesHashing>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Cockpit.Protocol/Cockpit.Protocol.csproj" />
+  </ItemGroup>
+</Project>
