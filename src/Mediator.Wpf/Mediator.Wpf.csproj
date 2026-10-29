@@ -79,4 +79,10 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Mediator.Tests" />
   </ItemGroup>
+  <!-- V13: Mediator for Chrome ships next to Mediator.exe (chrome-extension\); at start it is copied to
+       %LOCALAPPDATA%\Mediator\chrome-extension, the folder Chrome loads it from, with pairing.json. -->
+  <ItemGroup>
+    <None Include="..\..\chrome-extension\**\*" Exclude="..\..\chrome-extension\pairing.json"
+          Link="chrome-extension\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

@@ -187,6 +187,12 @@ public static partial class JobSpecFactory
     /// <summary>A Browser job runs Claude Code with --chrome (Claude in Chrome); no other CLI can drive the browser.</summary>
     public static bool UsesChrome(JobSpec spec) => spec.Category == TaskCategory.Browser;
 
+    /// <summary>V13: a Browser job on Mediator's own extension (it holds the browser_* tools); any CLI can run it.</summary>
+    public static bool UsesExtension(JobSpec spec) => spec.Tools.Contains(Browser.BrowserToolProvider.ReadTool, StringComparer.Ordinal);
+
+    /// <summary>A Browser job without the extension: Claude Code with --chrome (Claude in Chrome), Claude only.</summary>
+    public static bool UsesClaudeInChrome(JobSpec spec) => UsesChrome(spec) && !UsesExtension(spec);
+
     private static readonly string[] CreateIntent = ["create", "make", "model", "design", "build", "3d print", "stl", "print"];
 
     /// <summary>"cad" as a whole word only ("cadence", "decade" are not CAD).</summary>

@@ -228,7 +228,8 @@ $guide = Join-Path $root 'docs\Mediator-User-Guide.pdf'
 if (Test-Path $guide) { Copy-Item $guide $OutDir }
 
 $required = @('Mediator.exe', 'mediator-cli.exe', 'mediator-mcp-bridge.exe', 'mediator-swx-worker.exe',
-              'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs')
+              'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs',
+              'chrome-extension\manifest.json', 'chrome-extension\background.js')
 foreach ($r in $required) {
     if (-not (Test-Path (Join-Path $OutDir $r))) { throw "$r is missing from the package." }
 }
@@ -255,6 +256,9 @@ Mediator
 3. The first launch opens a setup card: it checks Claude Code, Gemini CLI, Python and Git, and lets you pick the theme,
    the hotkey and "Run on Windows startup". The Connectors tab shows SolidWorks, DaVinci Resolve and Blender, found
    through the registry and Program Files even when they are not on PATH.
+4. Optional, for "/chrome ..." prompts (Claude or Gemini working in your own Chrome): Connectors tab > Mediator for
+   Chrome > Set up. Chrome opens its extensions page and the folder path is copied: turn on Developer mode, click
+   Load unpacked, paste the path, Select Folder. Once per PC; the icon shows a green ON when connected.
 
 If Windows shows "Windows protected your PC" (SmartScreen) for the unsigned exe, choose More info > Run anyway, or
 unblock the downloaded zip (right-click > Properties > Unblock) before extracting it.

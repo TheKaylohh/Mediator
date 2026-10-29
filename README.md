@@ -33,6 +33,7 @@ Start with [CHANGELOG.md](CHANGELOG.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/R
 | `src/Mediator.UI` | Overlay ViewModels (no WPF; tested on any OS): overlay, approvals, Connectors, first-run card, settings, hotkey parser |
 | `src/Mediator.Wpf` | `Mediator`: the tray + Ctrl+Shift+Space overlay (Windows only); `Themes/` (3 dictionaries), `Controls/HudOrbControl` |
 | `scripts/publish-release.ps1` | Release package (V8): Release builds of all four executables (the worker with or without SolidWorks), Native AOT bridge, loose themes, `dist\Mediator\` with `launch.bat`, `install-shortcut.vbs`, `Create-Desktop-Shortcut.ps1`, checksums, a required-files check and a doctor smoke test |
+| `chrome-extension/` | V13 Mediator for Chrome (MV3, sideloaded): Connectors > Mediator for Chrome > Set up; paired to the app over 127.0.0.1 |
 | `scripts/launch-mediator.bat`, `scripts/install-shortcut.vbs` | V8 double-click launcher and shortcut installer (published as `launch.bat` / `install-shortcut.vbs`; no PowerShell, no admin) |
 | `scripts/check-windows-build.ps1` | Real build on Windows: finds the SolidWorks interop, publishes to `dist\`, runs `mediator-cli doctor` |
 | `scripts/run-tests.ps1` | Windows twin of `verify/run-tests.sh` (runs the NTFS and sharing-violation tests that Linux skips) |

@@ -10,13 +10,16 @@ namespace Mediator.Core.Bus;
 /// </summary>
 public enum ToolRisk { ReadOnly, Write, Destructive }
 
+/// <param name="Repeatable">V13: a side-effecting tool whose identical calls are normal (browser clicks and keys): the bus does not
+/// de-duplicate it through the operation store. The call is still gated and audited.</param>
 public sealed record ToolDescriptor(
     string Name,
     string Description,
     JsonObject InputSchema,
     ToolRisk Risk,
     string? LeaseResource,
-    TimeSpan ExecutionTimeout);
+    TimeSpan ExecutionTimeout,
+    bool Repeatable = false);
 
 /// <param name="ApprovedRows">After approval: the preview rows the user kept (null = all). Providers that offer selectable previews must honour it.</param>
 /// <param name="ApprovedPreview">After a user approval: the exact preview they approved (null when auto-approved).</param>

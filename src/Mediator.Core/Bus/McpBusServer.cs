@@ -614,7 +614,8 @@ internal sealed class BusConnection : IDisposable
 
         // Durable operation record for anything with side effects (V6). ReadOnly tools have none to protect.
         OperationRecord? op = null;
-        if (tool.Risk != ToolRisk.ReadOnly)
+        // Repeatable tools (V13: browser input) are UI actions where the same call twice is intended, so they are not de-duplicated.
+        if (tool.Risk != ToolRisk.ReadOnly && !tool.Repeatable)
         {
             var (created, existing) = await ops.BeginAsync(Job.JobId, tool.Name, OperationStore.RequestKey(Job.JobId, tool.Name, args), argsJson).ConfigureAwait(false);
             if (existing is not null)

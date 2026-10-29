@@ -622,6 +622,38 @@
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
 
+                  <TextBlock Style="{StaticResource SectionTitle}" Text="CHROME EXTENSION" />
+                  <Border Style="{StaticResource Card}" DataContext="{Binding Browser}">
+                    <DockPanel>
+                      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding OpenFolderCommand}"
+                                ToolTip="Opens the folder Chrome loads the extension from">
+                          <TextBlock Text="Folder" FontSize="11.5" />
+                        </Button>
+                        <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding SetUpCommand}"
+                                ToolTip="Copies the extension folder path and opens chrome://extensions: turn on Developer mode, Load unpacked, paste">
+                          <TextBlock Text="{Binding SetUpText}" FontSize="11.5" />
+                        </Button>
+                      </StackPanel>
+                      <Ellipse Width="9" Height="9" Margin="0,5,10,0" VerticalAlignment="Top">
+                        <Ellipse.Style>
+                          <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="{DynamicResource MutedBrush}" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </Ellipse.Style>
+                      </Ellipse>
+                      <StackPanel>
+                        <TextBlock Text="Mediator for Chrome" FontWeight="SemiBold" />
+                        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Detail}" />
+                      </StackPanel>
+                    </DockPanel>
+                  </Border>
+
                   <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,6,0,0" Command="{Binding ToggleAddCommand}">
                       <TextBlock Text="+ Add Custom MCP" FontSize="11.5" />

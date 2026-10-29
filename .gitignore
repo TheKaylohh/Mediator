@@ -2,3 +2,4 @@ bin/
 obj/
 dist/
 *.swp
+chrome-extension/pairing.json

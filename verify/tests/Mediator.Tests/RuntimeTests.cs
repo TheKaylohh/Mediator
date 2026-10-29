@@ -9,7 +9,7 @@ namespace Mediator.Tests;
 
 static class RuntimeTests
 {
-    static string TempDir()
+    internal static string TempDir()
     {
         string d = Path.Combine(Path.GetTempPath(), "mediator-tests", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(d);

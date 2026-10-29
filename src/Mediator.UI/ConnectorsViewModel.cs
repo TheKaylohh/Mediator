@@ -134,7 +134,8 @@ public sealed class ConnectorsViewModel : ObservableObject
     private bool _isAddOpen;
     private string _status = "";
 
-    public ConnectorsViewModel(IConnectorProbe probe, IMediatorRuntime runtime, CustomMcpService? mcp, IUiDispatcher ui, IProcessLauncher? launcher = null)
+    public ConnectorsViewModel(IConnectorProbe probe, IMediatorRuntime runtime, CustomMcpService? mcp, IUiDispatcher ui, IProcessLauncher? launcher = null,
+        Mediator.Core.Browser.BrowserExtensionHost? browser = null, Action<string>? copyText = null)
     {
         _probe = probe;
         _runtime = runtime;
@@ -146,6 +147,7 @@ public sealed class ConnectorsViewModel : ObservableObject
         Apps.Add(new AppConnectorViewModel("solidworks", "SolidWorks"));
         Apps.Add(new AppConnectorViewModel("resolve", "DaVinci Resolve"));
         Apps.Add(new AppConnectorViewModel("blender", "Blender"));
+        Browser = new BrowserExtensionViewModel(browser, ui, _launcher, copyText);
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync(), () => !IsBusy);
         ToggleAddCommand = new RelayCommand(() => IsAddOpen = !IsAddOpen, () => _mcp is not null);
         AddServerCommand = new RelayCommand(() => _ = AddServerAsync(), () => !IsBusy && NewName.Trim().Length > 0 && NewCommand.Trim().Length > 0);
@@ -160,6 +162,8 @@ public sealed class ConnectorsViewModel : ObservableObject
     public ObservableCollection<CliConnectorViewModel> Clis { get; } = new();
     public ObservableCollection<AppConnectorViewModel> Apps { get; } = new();
     public ObservableCollection<McpServerViewModel> McpServers { get; } = new();
+    /// <summary>V13: the Mediator for Chrome card.</summary>
+    public BrowserExtensionViewModel Browser { get; }
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand ToggleAddCommand { get; }
@@ -213,6 +217,7 @@ public sealed class ConnectorsViewModel : ObservableObject
             }
             foreach (var (app, status) in Apps.Zip(new[] { _probe.SolidWorks(), _probe.Resolve(), _probe.Blender() }))
                 _ui.Post(() => { app.Detail = status.Detail; app.IsAvailable = status.Available; });
+            _ui.Post(Browser.Update);
             _ui.Post(() => Status = "Checked " + DateTimeOffset.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
         }
         finally

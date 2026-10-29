@@ -193,6 +193,9 @@ public sealed record RuntimeOptions
     public IDesktopAppSession? SolidWorksSession { get; init; }
     /// <summary>V11: starts Chrome for Browser jobs. Null: the real Chrome on Windows unless simulating (tests), else nothing.</summary>
     public IDesktopAppSession? ChromeSession { get; init; }
+    /// <summary>V13: the Mediator for Chrome extension bridge (started by the overlay). Null: browser_* tools report it unavailable and
+    /// Browser jobs use Claude in Chrome.</summary>
+    public Browser.ChromeBridgeServer? BrowserBridge { get; init; }
     public TimeSpan BridgeTimeout { get; init; } = TimeSpan.FromMinutes(20);
     public IMediatorLog Log { get; init; } = NullLog.Instance;
     /// <summary>Null: Antigravity CLI (`agy`) located on PATH or in %LOCALAPPDATA%gybin when a job needs it.</summary>
@@ -325,6 +328,8 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     public IDesktopAppSession SolidWorks { get; }
     /// <summary>V11: the user's Chrome, for Browser jobs (Claude in Chrome).</summary>
     public IDesktopAppSession Chrome { get; }
+    /// <summary>V13: the Mediator for Chrome extension, when this host runs its bridge (the overlay does; mediator-cli does not).</summary>
+    public Browser.ChromeBridgeServer? BrowserBridge { get; }
     public MediatorPaths Paths => _options.Paths;
 
     public IReadOnlyList<RunningJob> Jobs => _jobs.Values.OrderBy(j => j.StartedAt).ToList();
@@ -392,6 +397,9 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         Tools.Register(new OperationsToolProvider(operations));
         Tools.Register(Briefs);
         Tools.Register(Attachments);
+        BrowserBridge = options.BrowserBridge;
+        Tools.Register(new Browser.BrowserToolProvider(BrowserBridge));
+        if (BrowserBridge is not null) BrowserBridge.ConnectionChanged += up => { if (up) Browser.BrowserExtension.MarkConnected(options.Paths.DataDirectory); };
         AttachmentStore = new AttachmentStore(options.Paths.AttachmentsDirectory);
         try { AttachmentStore.Prune(); } catch (IOException ex) { options.Log.Warn("Old attachments could not be pruned: " + ex.Message); }
         CustomMcp = new Connectors.CustomMcpService(options.Paths.CustomMcpFile, Tools, _workerGroup);
@@ -479,7 +487,22 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             // (and each extra run costs Chrome memory).
             if (_jobs.Values.Any(j => j.State is JobState.Starting or JobState.Running && JobSpecFactory.UsesChrome(j.Spec)))
                 throw new InvalidOperationException("A Chrome job is already running. Wait for it to finish (or stop it), then try again.");
-            spec = spec with { Provider = AiProvider.ClaudeCode, NeverDowngrade = true };
+            if (ExtensionAvailable())
+            {
+                // V13: Mediator's own extension: the browser_* tools on the bus, so Claude Code and Antigravity can both do it.
+                spec = spec with
+                {
+                    Tools = spec.Tools.Concat(Browser.BrowserToolProvider.JobTools).Distinct(StringComparer.Ordinal).ToList(),
+                    ToolModes = Browser.BrowserToolProvider.AutoInBrowserJobs.Where(t => spec.ToolModes?.ContainsKey(t) != true)
+                        .Select(t => KeyValuePair.Create(t, ApprovalMode.Auto)).Concat(spec.ToolModes ?? new Dictionary<string, ApprovalMode>())
+                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal),
+                    Prompt = spec.Prompt.Replace(Browser.ClaudeInChrome.Guidance, Browser.BrowserToolProvider.Guidance, StringComparison.Ordinal),
+                };
+            }
+            else
+            {
+                spec = spec with { Provider = AiProvider.ClaudeCode, NeverDowngrade = true };
+            }
             Chrome.WarmUp(); // Chrome loads while the job is set up
         }
         RouteDecision? route = null;
@@ -694,8 +717,10 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     }
 
     /// <summary>V10: a Chat or Search job with no folder, tools or attachments: the CLI gets no access to local files.</summary>
+    /// V13: the browser_* tools touch Chrome, not the disk, so a Browser job with only those still gets no local file tools.
     internal static bool NoLocalAccess(JobSpec spec) =>
-        JobSpecFactory.IsNoLocalAccess(spec.Category) && spec.Roots.Count == 0 && spec.Tools.Count == 0 && spec.Attachments.Count == 0;
+        JobSpecFactory.IsNoLocalAccess(spec.Category) && spec.Roots.Count == 0 && spec.Attachments.Count == 0
+        && spec.Tools.All(t => Browser.BrowserToolProvider.Names.Contains(t));
 
     private ProcessStartInfo HeadlessStartInfo(RunningJob job)
     {
@@ -715,7 +740,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
                 .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, job.Model, spec.AllowMeteredBilling, spec.ContinueSessionId,
                     webSearch: spec.Category == TaskCategory.Search, noLocalFiles: NoLocalAccess(spec), effort: job.Effort,
-                    chrome: JobSpecFactory.UsesChrome(spec));
+                    chrome: JobSpecFactory.UsesClaudeInChrome(spec));
     }
 
     private async Task LaunchHeadlessAsync(RunningJob job, CancellationToken ct)
@@ -724,6 +749,9 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         string cli = provider == AiProvider.ClaudeCode ? "claude" : "agy";
         // The CLI looks for the Claude in Chrome extension once, at start: Chrome must be open first.
         if (JobSpecFactory.UsesChrome(job.Spec)) await Chrome.EnsureReadyAsync(ct).ConfigureAwait(false);
+        // V13: the extension reconnects within seconds of Chrome starting; a job that started without it would fail every call.
+        if (JobSpecFactory.UsesExtension(job.Spec) && BrowserBridge is { } ext && !await ext.WaitForConnectionAsync(ExtensionWait, ct).ConfigureAwait(false))
+            throw new InvalidOperationException("The Mediator for Chrome extension did not connect. In Mediator open Connectors > Chrome extension and press Set up.");
         var process = _options.Launcher.StartHeadless(HeadlessStartInfo(job));
         job.Process = process;
         job.ProcessGroup.Assign(process);
@@ -738,7 +766,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         process.BeginErrorReadLine();
 
         string stdin = provider == AiProvider.GeminiCli
-            ? GeminiLaunchBuilder.StdinMessage(job.Spec.Prompt, mediatorTools: !NoLocalAccess(job.Spec), webSearch: job.Spec.Category == TaskCategory.Search)
+            ? GeminiLaunchBuilder.StdinMessage(job.Spec.Prompt, mediatorTools: !NoLocalAccess(job.Spec) || JobSpecFactory.UsesExtension(job.Spec), webSearch: job.Spec.Category == TaskCategory.Search)
             : job.Spec.Prompt;
         await process.StandardInput.WriteAsync(stdin.AsMemory(), ct).ConfigureAwait(false);
         process.StandardInput.Close();
@@ -838,7 +866,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             ? AllowMediatorTools(new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli))).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
                 .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling, spec.ContinueSessionId,
-                    chrome: JobSpecFactory.UsesChrome(spec));
+                    chrome: JobSpecFactory.UsesClaudeInChrome(spec));
         job.Interactive = session;
         _options.Launcher.StartInteractive(psi, job.Workspace);
         // Never watch the launcher: wt.exe exits within milliseconds. The script's sentinel files tell us what happens.
@@ -927,7 +955,26 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     {
         if (job.TryFinish(state, detail, j => { if (ContinuableSession.From(j) is { } session) LastContinuableSession = session; }))
             Changed(job);
+        ReleaseBrowser(job);
         Registry.Revoke(job.JobId);
+    }
+
+    /// <summary>V13: how long a Browser job waits for the extension after Chrome is up (its worker reconnects within seconds).</summary>
+    internal static readonly TimeSpan ExtensionWait = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// V13: a Browser job uses Mediator's own extension when it is connected, or has paired on this PC before (it will connect
+    /// once Chrome is up). Otherwise it falls back to Claude Code's Claude in Chrome.
+    /// </summary>
+    private bool ExtensionAvailable() =>
+        BrowserBridge is { } b && (b.IsConnected || Browser.BrowserExtension.EverConnected(Paths.DataDirectory));
+
+    /// <summary>V13: when an extension job ends, the extension detaches from its tabs (Chrome's "is debugging" bar goes away).</summary>
+    private void ReleaseBrowser(RunningJob job)
+    {
+        if (!JobSpecFactory.UsesExtension(job.Spec) || BrowserBridge is not { IsConnected: true } b) return;
+        _ = b.CallAsync("release", null, TimeSpan.FromSeconds(5)).ContinueWith(t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     /// <summary>V9: the most recent finished headless Claude run that a follow-up can continue (`--resume`), or null.</summary>
@@ -940,6 +987,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     {
         Briefs.Remove(jobId);
         Attachments.Remove(jobId);
+        if (_jobs.TryGetValue(jobId, out var ended)) ReleaseBrowser(ended);
         // Expiry (bus sweep) or an external revoke ends the job too.
         if (_jobs.TryGetValue(jobId, out var job) && job.TryFinish(JobState.Ended, "grant revoked or expired"))
         {

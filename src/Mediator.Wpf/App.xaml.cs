@@ -19,6 +19,7 @@ public partial class App : Application
 {
     private const string MutexName = @"Local\Mediator.Overlay";
     private Mutex? _single;
+    private Mediator.Core.Browser.BrowserExtensionHost? _browser;
     private MediatorRuntime? _runtime;
     private HotkeyManager? _hotkey;
     private TrayIcon? _tray;
@@ -39,7 +40,10 @@ public partial class App : Application
         var log = new StderrLog("mediator");
         try
         {
-            _runtime = await MediatorRuntime.CreateAsync(new RuntimeOptions { Log = log });
+            // V13: the Chrome extension bridge (127.0.0.1, paired) starts first, so Browser jobs can use it from the first prompt.
+            var paths = MediatorPaths.Default();
+            _browser = Mediator.Core.Browser.BrowserExtensionHost.TryStart(paths.DataDirectory, log);
+            _runtime = await MediatorRuntime.CreateAsync(new RuntimeOptions { Log = log, Paths = paths, BrowserBridge = _browser?.Bridge });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -66,7 +70,8 @@ public partial class App : Application
         vm.ThemeChanged += ThemeManager.Apply;
 
         var probe = new ConnectorProbe(DefaultProcessRunner.Instance);
-        vm.Connectors = new ConnectorsViewModel(probe, _runtime, _runtime.CustomMcp, dispatcher);
+        vm.Connectors = new ConnectorsViewModel(probe, _runtime, _runtime.CustomMcp, dispatcher, browser: _browser,
+            copyText: text => Clipboard.SetText(text));
         var onboarding = new OnboardingViewModel(probe, new StartupRegistration(), vm);
         vm.Onboarding = onboarding;
 
@@ -120,6 +125,7 @@ public partial class App : Application
         _hotkey?.Dispose();
         _tray?.Dispose();
         if (_runtime is not null) await _runtime.DisposeAsync(); // kills running jobs, stops the bus, closes databases
+        if (_browser is not null) await _browser.DisposeAsync();
         _single?.ReleaseMutex();
         Shutdown();
     }
