@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- VERIFY ONLY. Compile-time stand-in for SolidWorks.Interop.sldworks and SolidWorks.Interop.swconst.
-       It declares only the members Cockpit.SwxWorker uses, written from the SolidWorks API documentation.
+       It declares only the members Mediator.SwxWorker uses, written from the SolidWorks API documentation.
        Compiling against it proves the worker is internally consistent, NOT that every member name and
        signature matches your SolidWorks version. A ship build against your real interop assemblies is
        the real check (see SPEC.md, "SolidWorks API surface to verify"). -->

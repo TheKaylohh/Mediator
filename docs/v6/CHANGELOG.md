@@ -1,18 +1,18 @@
 # Changelog: V5 → V6
 
-V6 is a hardening release. It adds no new end-user features beyond `cockpit operations` and `cockpit support-bundle`.
+V6 is a hardening release. It adds no new end-user features beyond `mediator-cli operations` and `mediator-cli support-bundle`.
 
 ## Security
 
 - **Filesystem containment**: every provider and the journal now go through `PathAuthorizer`. It applies lexical rules, walks each path component, refuses reparse points and mounts, and protects the roots themselves. It opens files through kernel-checked calls (openat2 on Linux, handle checks on Windows) and moves them without replacing anything. This fixes B1: a link inside a granted root reached outside it. See FILESYSTEM_SECURITY.md.
-- **Custom CAD code** now runs only in a sandbox. On Linux and WSL that is bubblewrap with prlimit, plus setpriv when Cockpit runs as root. If no sandbox is available the call is refused; it never falls back to the host interpreter. The approval is bound to the script hash, the arguments, the folder, the policy and the limits. Outputs are staged, inspected, structurally validated and re-imported in a fresh sandbox. See ISOLATION.md.
+- **Custom CAD code** now runs only in a sandbox. On Linux and WSL that is bubblewrap with prlimit, plus setpriv when Mediator runs as root. If no sandbox is available the call is refused; it never falls back to the host interpreter. The approval is bound to the script hash, the arguments, the folder, the policy and the limits. Outputs are staged, inspected, structurally validated and re-imported in a fresh sandbox. See ISOLATION.md.
 - **Revocation race fixed**: a Write call that was approved after its job was revoked used to run. It no longer does.
 - **Bus hardening**:
   - an 8 KiB limit on the pre-authentication hello frame;
   - UTF-8 validated up front (invalid bytes used to drop the connection);
   - 32 requests in flight per connection.
 - **Job token** is passed to the bridge in its environment. It is no longer in `--scope` on the command line. MCP config files are owner-only.
-- **Interactive prompts** are never placed on a command line. The CLI fetches the task with the `cockpit_job_brief` tool.
+- **Interactive prompts** are never placed on a command line. The CLI fetches the task with the `mediator_job_brief` tool.
 - **PDF reader**:
   - a nesting bound (a crafted PDF used to overflow the stack and kill the process);
   - decompression caps (per stream and per document);
@@ -32,13 +32,13 @@ V6 is a hardening release. It adds no new end-user features beyond `cockpit oper
 - **Provider outcomes**: succeeded, result error, rate limited, auth failed, no result, or result followed by an abnormal exit.
 - **Failover**:
   - mid-job only before any side effect, with the same grant, and at most once;
-  - every decision is audited as `cockpit/route`.
+  - every decision is audited as `mediator/route`.
 - **Usage**: tokens a CLI did not report are recorded as unknown, never 0. A duplicate result counts once, and a run with no result is still recorded.
 - **SolidWorks STEP import**:
   - the worker never saves or closes a document it did not create;
   - it refuses surface-only imports, duplicate target names and files that are already open;
   - each saved file is checked on disk.
-- **Gemini CLI 0.65**: headless runs need a trusted folder. Cockpit trusts only its own job folder (`GEMINI_CLI_TRUST_WORKSPACE`), and only for that process.
+- **Gemini CLI 0.65**: headless runs need a trusted folder. Mediator trusts only its own job folder (`GEMINI_CLI_TRUST_WORKSPACE`), and only for that process.
 
 ## Observability
 
@@ -51,8 +51,8 @@ V6 is a hardening release. It adds no new end-user features beyond `cockpit oper
   - a call whose outcome is unknown is shown in amber;
   - a killed job says a call may still finish in the app;
   - the routing history and the run outcome are shown on each job row.
-- New CLI commands: `cockpit operations [--unresolved]`, `cockpit operations resolve <id> --done|--not-done --note …` and `cockpit support-bundle`.
-- New MCP tools: `cockpit_operation_status` (granted to every job) and `cockpit_job_brief` (interactive jobs).
+- New CLI commands: `mediator-cli operations [--unresolved]`, `mediator-cli operations resolve <id> --done|--not-done --note …` and `mediator-cli support-bundle`.
+- New MCP tools: `mediator_operation_status` (granted to every job) and `mediator_job_brief` (interactive jobs).
 
 ## Migrations (automatic, on first open)
 
@@ -65,7 +65,7 @@ V6 is a hardening release. It adds no new end-user features beyond `cockpit oper
 
 ## Compatibility notes
 
-- **Bridge arguments.** `cockpit-mcp-bridge` no longer accepts `--scope`. It reads `COCKPIT_JOB_TOKEN` from its environment instead. MCP configs written by V5 jobs will not work with a V6 bridge, but jobs are short-lived, so nothing persistent breaks.
+- **Bridge arguments.** `mediator-mcp-bridge` no longer accepts `--scope`. It reads `MEDIATOR_JOB_TOKEN` from its environment instead. MCP configs written by V5 jobs will not work with a V6 bridge, but jobs are short-lived, so nothing persistent breaks.
 - **Code-CAD.**
   - `cad_generate_custom_step` is refused on Windows unless the WSL sandbox is configured.
   - On Linux it needs bubblewrap.
@@ -77,5 +77,5 @@ V6 is a hardening release. It adds no new end-user features beyond `cockpit oper
   - `ToolCallContext` has `ApprovedPreview`.
 - **Tests.**
   - The test runner now reports PASS, FAIL and SKIP.
-  - `COCKPIT_ONLY` accepts a comma-separated list.
-  - With `COCKPIT_REQUIRE_ALL=1`, any skip counts as a failure.
+  - `MEDIATOR_ONLY` accepts a comma-separated list.
+  - With `MEDIATOR_REQUIRE_ALL=1`, any skip counts as a failure.

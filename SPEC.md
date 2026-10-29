@@ -1,4 +1,4 @@
-# AI Cockpit V5 — spec and implementation
+# Mediator V5 — spec and implementation
 
 Status as of 22 Oct 2026. Code: .NET 8, C# 12. V5 fixes Gemini's three "must fix" items, adds the Gemini CLI as a second engine with automatic failover, and adds the four missing tool providers (DaVinci Resolve, Blender, Code-CAD with build123d, linear algebra tutor), so every action in the overlay is live.
 
@@ -6,28 +6,28 @@ Status as of 22 Oct 2026. Code: .NET 8, C# 12. V5 fixes Gemini's three "must fix
 
 | Part | Where | Compiled | Tested here (Linux) |
 | --- | --- | --- | --- |
-| Bus, bridge, gate, leases, audit, journal | `Cockpit.Protocol`, `Cockpit.Bridge`, `Cockpit.Core/Bus`, `Files` | Yes | Yes, end to end through the real bridge process |
-| Claude + Gemini launch, stream parsers, usage ledger, router | `Cockpit.Core/Jobs` | Yes | Yes (stand-in CLI processes print fixtures; real CLIs not run) |
+| Bus, bridge, gate, leases, audit, journal | `Mediator.Protocol`, `Mediator.Bridge`, `Mediator.Core/Bus`, `Files` | Yes | Yes, end to end through the real bridge process |
+| Claude + Gemini launch, stream parsers, usage ledger, router | `Mediator.Core/Jobs` | Yes | Yes (stand-in CLI processes print fixtures; real CLIs not run) |
 | Interactive sessions (sentinels, watcher, kill) | `Jobs/InteractiveSession.cs`, `Runtime` | Yes | Yes, with real child processes as the "terminal" |
-| Resolve: probe, FCPXML 1.9 + EDL, Studio script | `Cockpit.Core/Resolve` | Yes | Yes; FCPXML **validated against Apple's FCPXML 1.9 DTD**; built-in reader **matches ffprobe** on real clips; Resolve itself not run |
-| Blender scene + preview render | `Cockpit.Core/Blender` | Yes | Script **run on the real Blender 5.2.3 API** (bpy module): car moves 33.2 m of the planned 33.3 m, wheels roll within 0.01 rad, frame rendered with Cycles. Blender app CLI and 4.x not run |
-| Code-CAD templates → STEP | `Cockpit.Core/CadCode` | Yes | **All 7 templates built by build123d 0.13** into STEP files inside their envelopes; oversize part refused |
-| Tutor: PDF chapter, exact matrix checks | `Cockpit.Core/Tutor` | Yes | Yes; built-in PDF reader **matches PyMuPDF** (object streams, Type0 + ToUnicode); SymPy agrees with the exact results |
+| Resolve: probe, FCPXML 1.9 + EDL, Studio script | `Mediator.Core/Resolve` | Yes | Yes; FCPXML **validated against Apple's FCPXML 1.9 DTD**; built-in reader **matches ffprobe** on real clips; Resolve itself not run |
+| Blender scene + preview render | `Mediator.Core/Blender` | Yes | Script **run on the real Blender 5.2.3 API** (bpy module): car moves 33.2 m of the planned 33.3 m, wheels roll within 0.01 rad, frame rendered with Cycles. Blender app CLI and 4.x not run |
+| Code-CAD templates → STEP | `Mediator.Core/CadCode` | Yes | **All 7 templates built by build123d 0.13** into STEP files inside their envelopes; oversize part refused |
+| Tutor: PDF chapter, exact matrix checks | `Mediator.Core/Tutor` | Yes | Yes; built-in PDF reader **matches PyMuPDF** (object streams, Type0 + ToUnicode); SymPy agrees with the exact results |
 | STEP import into SolidWorks | `SwxWorker` (`LoadFile4` + `SaveAs3`) | Against the stub | Against the strict fake only |
-| Console host, overlay ViewModels | `Cockpit.CliHost`, `Cockpit.UI` | Yes | Yes |
-| WPF overlay incl. cursor-monitor placement | `Cockpit.Wpf` | **No** (needs Windows) | XAML bindings/resources checked statically |
+| Console host, overlay ViewModels | `Mediator.CliHost`, `Mediator.UI` | Yes | Yes |
+| WPF overlay incl. cursor-monitor placement | `Mediator.Wpf` | **No** (needs Windows) | XAML bindings/resources checked statically |
 
-**40 offline tests pass with zero warnings** (`bash verify/run-tests.sh`, warnings as errors), plus **4 live tests** that run the generated scripts for real when `COCKPIT_LIVE_PYTHON` points to a Python with build123d, bpy, PyMuPDF and sympy (`verify/live-requirements.txt`); all 44 pass here. The live tests found two real bugs that the fakes could not: QuickTime `.mov` handler parsing and a bfchar/bfrange regex in the PDF reader (both fixed, both now covered offline). Still unverified: anything on Windows (WPF, pipes ACL, job objects, `wt.exe`, `RegisterHotKey`, multi-monitor DPI), real SolidWorks, real Resolve, real `claude`/`gemini` runs.
+**40 offline tests pass with zero warnings** (`bash verify/run-tests.sh`, warnings as errors), plus **4 live tests** that run the generated scripts for real when `MEDIATOR_LIVE_PYTHON` points to a Python with build123d, bpy, PyMuPDF and sympy (`verify/live-requirements.txt`); all 44 pass here. The live tests found two real bugs that the fakes could not: QuickTime `.mov` handler parsing and a bfchar/bfrange regex in the PDF reader (both fixed, both now covered offline). Still unverified: anything on Windows (WPF, pipes ACL, job objects, `wt.exe`, `RegisterHotKey`, multi-monitor DPI), real SolidWorks, real Resolve, real `claude`/`gemini` runs.
 
 ## 1. V5 changes, item by item
 
 1. **Interactive sessions.** The claimed race did not exist in V4 — V4 never watched `wt.exe` (it disposed the launcher and kept the job until End/Kill/expiry) — but the two real gaps behind it did: the job never ended when Claude exited, and Kill could not close the tab. Fixed with sentinel files, a watcher and terminal-tree kill (section 4). Test: the launcher exits immediately, the bridge connects 200 ms later and runs a tool call, the job stays Running until `interactive.done`; Kill ends the terminal; a closed tab, a recycled PID and a terminal that never starts are each handled.
 2. **SolidWorks.** `SaveAs3(name, version, options, exportData, advancedOptions, ref errors, ref warnings)` replaces `SaveAs` (stub updated so the old call no longer compiles; **SaveAs3 needs SOLIDWORKS 2021 or later** — I believe that is when it was added; check your API help). Two of Gemini's three points were already true in V4: the base component was already selected (`Select4`) before `FixComponent`, and `SelectionManager` was already `object` in the stub with an explicit cast. V5 adds `ClearSelection2` after fixing and makes the fake strict (FixComponent with nothing selected does nothing and is counted); a mutation that skips the selection fails test #13. **New:** `swx_import_step` (`GetImportFileData` + `LoadFile4` + `SaveAs3`), because generated STEP files must become `.SLDPRT` before `swx_part_cards` can read them.
-3. **Gemini CLI + failover.** `GeminiLaunchBuilder` runs `gemini --output-format stream-json --allowed-mcp-server-names cockpit [-m model] [--skip-trust]` in the job workspace (where `.gemini/settings.json` wires the bridge), prompt on stdin (non-TTY input runs Gemini headless). `GeminiStreamParser` reads init / message / tool_use / tool_result / error / result and the single-object `json` format; 429 / RESOURCE_EXHAUSTED becomes a cooldown ("retry in Ns", or next midnight Pacific for daily quotas, else 1 h), synthesized if the stream ends without a result. `ProviderRouter`: explicit provider or prefix first; cad, code, blender → Claude Code (fallback Gemini); tutor, files, resolve → Gemini (fallback Claude); a provider at its limit or not installed is replaced by the other with a notice, unless `NeverDowngrade`. Tests: Claude cooling → a CAD job runs on Gemini with settings.json wired to the bridge, Google variables scrubbed, the stream parsed and usage recorded; NeverDowngrade refuses with the reason and issues nothing; a Gemini 429 then leaves both limited and the error names both. Ledger keys are `claude-code` / `gemini-cli` (Gemini's spec said `claude` / `gemini`).
+3. **Gemini CLI + failover.** `GeminiLaunchBuilder` runs `gemini --output-format stream-json --allowed-mcp-server-names mediator [-m model] [--skip-trust]` in the job workspace (where `.gemini/settings.json` wires the bridge), prompt on stdin (non-TTY input runs Gemini headless). `GeminiStreamParser` reads init / message / tool_use / tool_result / error / result and the single-object `json` format; 429 / RESOURCE_EXHAUSTED becomes a cooldown ("retry in Ns", or next midnight Pacific for daily quotas, else 1 h), synthesized if the stream ends without a result. `ProviderRouter`: explicit provider or prefix first; cad, code, blender → Claude Code (fallback Gemini); tutor, files, resolve → Gemini (fallback Claude); a provider at its limit or not installed is replaced by the other with a notice, unless `NeverDowngrade`. Tests: Claude cooling → a CAD job runs on Gemini with settings.json wired to the bridge, Google variables scrubbed, the stream parsed and usage recorded; NeverDowngrade refuses with the reason and issues nothing; a Gemini 429 then leaves both limited and the error names both. Ledger keys are `claude-code` / `gemini-cli` (Gemini's spec said `claude` / `gemini`).
 4. **DaVinci Resolve** — section 3.
 5. **Blender** — section 3. The render tool does not pass `-E`: the `.blend` keeps the engine chosen when it was built, and the engine id differs between Blender versions (`BLENDER_EEVEE_NEXT` in 4.2–4.x, `BLENDER_EEVEE` in 5.x; the script picks whichever the running Blender offers).
 6. **Code-CAD and Tutor** — section 3. Gemini's pipeline "STEP → swx_part_cards" needed the new import step (item 2).
-7. **Overlay and CLI.** All seven actions are enabled (SolidWorks assembly, parametric parts, organize, Resolve rough cut, Blender scene, tutor, Claude Code terminal). The prompt router takes prefixes (`/cad /code /files /tutor /resolve /blender`) and keywords, picks the action, its tool allow-list and — through the runtime — the subscription; the matching header pill lights up and a warning line explains a failover before anything starts. A "Keep sub." toggle sets NeverDowngrade. The panel opens on the monitor under the mouse (GetCursorPos → MonitorFromPoint → GetMonitorInfo, placed with SetWindowPos in physical pixels and re-placed after a DPI change). CLI: `cockpit cad|resolve|blender|tutor <folder> --request "…"`, `cockpit matrix "[[…]]"`, `--provider`, `--keep-subscription`, `--gemini-skip-trust`; `doctor` checks Python modules, Blender, ffmpeg, Resolve's scripting folder and Gemini's stream-json / folder-trust support.
+7. **Overlay and CLI.** All seven actions are enabled (SolidWorks assembly, parametric parts, organize, Resolve rough cut, Blender scene, tutor, Claude Code terminal). The prompt router takes prefixes (`/cad /code /files /tutor /resolve /blender`) and keywords, picks the action, its tool allow-list and — through the runtime — the subscription; the matching header pill lights up and a warning line explains a failover before anything starts. A "Keep sub." toggle sets NeverDowngrade. The panel opens on the monitor under the mouse (GetCursorPos → MonitorFromPoint → GetMonitorInfo, placed with SetWindowPos in physical pixels and re-placed after a DPI change). CLI: `mediator-cli cad|resolve|blender|tutor <folder> --request "…"`, `mediator-cli matrix "[[…]]"`, `--provider`, `--keep-subscription`, `--gemini-skip-trust`; `doctor` checks Python modules, Blender, ffmpeg, Resolve's scripting folder and Gemini's stream-json / folder-trust support.
 
 ## 2. The overlay (Toolbox style)
 
@@ -59,9 +59,9 @@ Status as of 22 Oct 2026. Code: .NET 8, C# 12. V5 fixes Gemini's three "must fix
 
 ```text
                       ┌───────────────────────────── Windows user session (medium integrity) ─────────────────────────────┐
-  hotkey ──► AiCockpit.exe: Overlay (WPF view ─ CockpitOverlayViewModel) ──► CockpitRuntime (same process)               │
+  hotkey ──► Mediator.exe: Overlay (WPF view ─ MediatorOverlayViewModel) ──► MediatorRuntime (same process)               │
                                      ├─ JobRegistry (grants, tokens)      ├─ PermissionGate ──► approval UI (mate table)   │
-                                     ├─ McpBusServer  \\.\pipe\ai-cockpit-bus (ACL: user only, network denied)              │
+                                     ├─ McpBusServer  \\.\pipe\mediator-bus (ACL: user only, network denied)              │
                                      │                 tcp 127.0.0.1:<ephemeral> only while a LoopbackTcp job exists        │
                                      ├─ LeaseManager (solidworks, resolve, …) ├─ AuditLog (SQLite, append-only)             │
                                      ├─ FileJournalService (SQLite WAL, synchronous=FULL)                                   │
@@ -69,23 +69,23 @@ Status as of 22 Oct 2026. Code: .NET 8, C# 12. V5 fixes Gemini's three "must fix
                                             │                                                                              │
           ┌─────────────────────────────────┼──────────────────────────────────┐                                           │
           ▼                                 ▼                                  ▼                                           │
-   claude -p (headless,            Windows Terminal tab                 cockpit-swx-worker.exe                             │
+   claude -p (headless,            Windows Terminal tab                 mediator-swx-worker.exe                             │
    stream-json → ClaudeRunMonitor)
    gemini (headless, in the job     └ powershell launch-*.ps1 writes      └ STA thread + IOleMessageFilter ──COM──► SLDWORKS │
    workspace, stream-json)            interactive.pid / interactive.done
           │ spawns (stdio)           └ claude (interactive) spawns         (worker restarts on wedge; SolidWorks never      │
           ▼                            ▼                                     killed, never in the job object)              │
-   cockpit-mcp-bridge.exe ───────── frames over the pipe ──────────► McpBusServer                                          │
+   mediator-mcp-bridge.exe ───────── frames over the pipe ──────────► McpBusServer                                          │
    (--job-id, --scope from the generated MCP config)                                                                       │
                       └────────────────────────────────────────────────────────────────────────────────────────────────────┘
-   WSL2 distro "cockpit" (automount off, interop off, /mnt/cockpit = exchange folder, memory capped):
-      claude / gemini ─ spawns ─► cockpit-mcp-bridge (linux-x64) ── tcp 127.0.0.1 ──► McpBusServer
+   WSL2 distro "mediator" (automount off, interop off, /mnt/mediator = exchange folder, memory capped):
+      claude / gemini ─ spawns ─► mediator-mcp-bridge (linux-x64) ── tcp 127.0.0.1 ──► McpBusServer
    Windows Sandbox (.wsb, networking off): untrusted scripts only; inputs read-only, one writable output folder.
    Helpers run to completion in their own job object (DefaultProcessRunner): ffprobe, ffmpeg, blender -b, python -I
    (build123d — optionally inside the WSL distro —, PyMuPDF, the Resolve scripting API).
 ```
 
-`cockpit.exe` (Cockpit.CliHost) hosts the same `CockpitRuntime` without the overlay, on a private pipe `ai-cockpit-cli-<pid>` so it can run while the overlay owns `ai-cockpit-bus`; its approvals are asked in the console.
+`mediator-cli.exe` (Mediator.CliHost) hosts the same `MediatorRuntime` without the overlay, on a private pipe `mediator-cli-<pid>` so it can run while the overlay owns `mediator-bus`; its approvals are asked in the console.
 
 A tab opened by `wt.exe` is a child of Windows Terminal, not of the Core, so it is outside the job object, and `wt.exe` itself exits within milliseconds. The Core therefore never watches the launcher: the generated script records its own PID and start time in `interactive.pid` and writes `interactive.done` (the CLI's exit code) in a `finally` block. A watcher ends the job on `done`, on a closed tab (PID gone, no `done`), when the terminal never starts (2 min), or after 2 h without tool calls; Kill revokes the token **and** ends the recorded PowerShell's process tree (PID and start time must both match, so a recycled PID is never killed).
 
@@ -96,9 +96,9 @@ sequenceDiagram
     autonumber
     actor U as User
     participant O as Overlay (STA)
-    participant C as Cockpit Core
+    participant C as Mediator Core
     participant CLI as Claude Code (headless or interactive)
-    participant B as cockpit-mcp-bridge
+    participant B as mediator-mcp-bridge
     participant G as Bus + Gate
     participant UI as Approval table
     participant W as swx worker (STA)
@@ -147,7 +147,7 @@ sequenceDiagram
 
 ## 6. Bus protocol
 
-**Transport.** `\\.\pipe\ai-cockpit-bus` (byte mode) or loopback TCP. Each grant is bound to one transport (`BusTransport.NamedPipe` or `LoopbackTcp`); a valid token presented over the other one is rejected and audited (`bus/handshake`, token not logged). The TCP listener is **off by default**: it binds `127.0.0.1:0` (an ephemeral port) when the first LoopbackTcp grant is issued and stops when the last one is revoked or expires; the port goes into that job's MCP config. Unauthenticated TCP sockets get **2 s** to send hello (pipes 10 s), and at most 8 may be in the handshake at once. Each frame is a 4-byte little-endian length followed by that many bytes of UTF-8 JSON without a BOM; the maximum is 16 MiB. One frame carries one JSON-RPC message.
+**Transport.** `\\.\pipe\mediator-bus` (byte mode) or loopback TCP. Each grant is bound to one transport (`BusTransport.NamedPipe` or `LoopbackTcp`); a valid token presented over the other one is rejected and audited (`bus/handshake`, token not logged). The TCP listener is **off by default**: it binds `127.0.0.1:0` (an ephemeral port) when the first LoopbackTcp grant is issued and stops when the last one is revoked or expires; the port goes into that job's MCP config. Unauthenticated TCP sockets get **2 s** to send hello (pipes 10 s), and at most 8 may be in the handshake at once. Each frame is a 4-byte little-endian length followed by that many bytes of UTF-8 JSON without a BOM; the maximum is 16 MiB. One frame carries one JSON-RPC message.
 
 **Handshake.** The first frame from the bridge is `{"type":"hello","protocolVersion":1,"jobId","token","bridgePid","transport"}`. The Core answers `{"type":"welcome","ok":true|false,"error","serverVersion"}` and closes on failure. A rejected bridge exits with code 3 and tells the client why on stderr.
 
@@ -181,16 +181,16 @@ A client-side timeout after approval does not stop a SolidWorks build that has a
 | Prompt injection calls a write tool | Write and Destructive ask; Destructive can never be auto (also not with `--yes`); denial is final for that call | `PermissionGate`, `AutoApprovalPrompt` |
 | The user approves more than they meant | Selectable previews; only ticked rows execute | providers via `ApprovedRows` |
 | Model fabricates SolidWorks references | The model only sees face IDs; references stay in the Core's cache | `SwxToolProvider` |
-| File loss | Same-volume renames only; no overwrite; no delete except empty folders the batch created; protected paths; write-ahead journal; `cockpit rollback` | `FileJournalService` |
-| Silent API billing | Variables scrubbed from every child incl. both interactive scripts (Claude: API keys, Bedrock/Vertex; Gemini: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS`); Claude's `apiKeySource` checked on every headless run (Gemini reports no equivalent, so the scrub is its only guard); opt-in per job only | `CliLaunchBuilder`, `ClaudeRunMonitor`, `CockpitRuntime` |
+| File loss | Same-volume renames only; no overwrite; no delete except empty folders the batch created; protected paths; write-ahead journal; `mediator-cli rollback` | `FileJournalService` |
+| Silent API billing | Variables scrubbed from every child incl. both interactive scripts (Claude: API keys, Bedrock/Vertex; Gemini: `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS`); Claude's `apiKeySource` checked on every headless run (Gemini reports no equivalent, so the scrub is its only guard); opt-in per job only | `CliLaunchBuilder`, `ClaudeRunMonitor`, `MediatorRuntime` |
 | Model-written code | Templates take numbers only; custom build123d code is a separate **Destructive** tool (always asks, shows the code); Python runs with `-I`; build123d can run inside the restricted WSL distro | `CodeCadToolProvider`, `WslPythonRunner` |
 | Model invents media or cut points | Clips are referenced by probe ids; cuts outside a clip are refused; the Resolve script takes media from the exported timeline, not from the model | `ResolveToolProvider` |
 | Helper programs hang | Every helper runs with a timeout in its own kill-on-close job object; Blender with `--factory-startup` (no user add-ons) | `DefaultProcessRunner` |
-| Runaway job | Kill switch: revoke grant (calls cancelled, leases released, connections closed) + terminate the job object | `CockpitRuntime.KillJob` |
+| Runaway job | Kill switch: revoke grant (calls cancelled, leases released, connections closed) + terminate the job object | `MediatorRuntime.KillJob` |
 | Orphaned children | Job object with kill-on-close | `ChildProcessJob` |
 | Audit tampering by the agent | Append-only triggers; no tool touches the audit DB | `AuditLog` |
 
-**Terms of service.** The Cockpit only drives the official `claude` and `gemini` CLIs, signed in by you, and never reads, copies or replays their OAuth tokens. Whether scripted or headless use of a consumer subscription (Claude Pro, Google AI Pro for students) is permitted, and what usage limits apply, is set by the providers' current terms and can change: **verify the current Anthropic consumer terms / Claude Code usage policy and the Google AI Pro and Gemini CLI terms before relying on headless jobs.** The interactive terminal mode is the conservative choice. Media generation (Nano Banana, Veo) is not automated. Automatic failover moves work between your two subscriptions; it never switches to an API key.
+**Terms of service.** The Mediator only drives the official `claude` and `gemini` CLIs, signed in by you, and never reads, copies or replays their OAuth tokens. Whether scripted or headless use of a consumer subscription (Claude Pro, Google AI Pro for students) is permitted, and what usage limits apply, is set by the providers' current terms and can change: **verify the current Anthropic consumer terms / Claude Code usage policy and the Google AI Pro and Gemini CLI terms before relying on headless jobs.** The interactive terminal mode is the conservative choice. Media generation (Nano Banana, Veo) is not automated. Automatic failover moves work between your two subscriptions; it never switches to an API key.
 
 ## 8. Isolation configuration
 
@@ -202,7 +202,7 @@ A client-side timeout after approval does not stop a SolidWorks build that has a
 
 | # | Bug you will hit | Symptom | How the code prevents it |
 | --- | --- | --- | --- |
-| 1 | **Zombie `SLDWORKS.exe`** after a crash or an automation-launched instance | Hidden SolidWorks holding licences and RAM; next attach grabs the wrong instance | Attach to the user's instance by default (`AllowLaunch` off). A launched instance is made `Visible = true`, so it is never hidden. `ShutdownAsync` closes only documents the Cockpit opened and calls `ExitApp` only if the Cockpit launched SolidWorks and nothing is open. RCWs are released (`FinalReleaseComObject`, GC after each STA item). The worker is in a kill-on-close job; SolidWorks is not. |
+| 1 | **Zombie `SLDWORKS.exe`** after a crash or an automation-launched instance | Hidden SolidWorks holding licences and RAM; next attach grabs the wrong instance | Attach to the user's instance by default (`AllowLaunch` off). A launched instance is made `Visible = true`, so it is never hidden. `ShutdownAsync` closes only documents the Mediator opened and calls `ExitApp` only if the Mediator launched SolidWorks and nothing is open. RCWs are released (`FinalReleaseComObject`, GC after each STA item). The worker is in a kill-on-close job; SolidWorks is not. |
 | 2 | **Elevation (UIPI) mismatch** | `GetActiveObject` returns `MK_E_UNAVAILABLE` although SolidWorks is visibly running | `ProcessIntegrity.IsInaccessibleOrMoreElevated` detects an elevated or other-user `SLDWORKS.exe` and reports "restart SolidWorks normally". The worker refuses to run elevated (`Environment.IsPrivilegedProcess`). A genuinely still-starting SolidWorks is retried for `AttachWait`, since it registers in the ROT only after startup. |
 | 3 | **BOM and code-page corruption on stdio** | Claude Code or Gemini rejects the first message; non-ASCII paths garbled | Raw stdin/stdout streams with BOM-free UTF-8 (`StdioJsonLines`); a leading BOM on input is stripped; `Console.Out` is redirected to stderr so stray `Console.WriteLine` cannot corrupt the stream; child processes get explicit BOM-free `Standard*Encoding`. The reverse case: the interactive `.ps1` is written **with** a BOM because Windows PowerShell 5.1 reads BOM-less scripts as ANSI. |
 | 4 | **Named-pipe deadlock or torn frames** | Bridge and Core both block; random JSON parse errors under load | One read loop per connection and a separate `FrameWriter` that writes header and payload in one call and never waits for a reply while holding the lock. Each request runs as its own task. Writes are not cancelled midway. Frames are length-prefixed and size-capped. |
@@ -227,7 +227,7 @@ Also handled: Windows 11 Explorer tabs share one window handle (disambiguated by
 - `PartDoc`, `AssemblyDoc` (`AddComponent5`, `FixComponent`, `AddMate5`), `Component2` (`GetCorrespondingEntity`, `Select4`), surfaces and features as in V4.
 - Whether your student/educational licence permits API automation, and whether STEP import produces solid bodies for the generated parts.
 
-**Claude Code:** `-p --output-format stream-json --verbose --mcp-config <file> --strict-mcp-config --allowedTools mcp__cockpit --max-turns N` (prompt on stdin) and its stream-json field names (fixture reconstructed, not captured). **Gemini CLI:** flags confirmed against the current CLI reference (`--output-format stream-json`, `--allowed-mcp-server-names`, `-i`, `-m`; non-TTY input runs headless); event names confirmed (`init`, `message`, `tool_use`, `tool_result`, `error`, `result`; fields `session_id`, `role`, `content`, `tool_name`, `status`, `error.message`, `severity`); **token-stat field names are not documented** — the parser accepts flat `stats.input_tokens/output_tokens` and per-model `stats.models.<m>.tokens.{prompt,candidates,cached}`; capture a real run and add it as a fixture. If Gemini's folder trust is on, pass `--gemini-skip-trust` or trust the jobs folder, otherwise Gemini ignores the job's MCP config. Headless Gemini on a Google AI Pro login uses that plan's Gemini CLI quota; check Google's current terms and limits.
+**Claude Code:** `-p --output-format stream-json --verbose --mcp-config <file> --strict-mcp-config --allowedTools mcp__mediator --max-turns N` (prompt on stdin) and its stream-json field names (fixture reconstructed, not captured). **Gemini CLI:** flags confirmed against the current CLI reference (`--output-format stream-json`, `--allowed-mcp-server-names`, `-i`, `-m`; non-TTY input runs headless); event names confirmed (`init`, `message`, `tool_use`, `tool_result`, `error`, `result`; fields `session_id`, `role`, `content`, `tool_name`, `status`, `error.message`, `severity`); **token-stat field names are not documented** — the parser accepts flat `stats.input_tokens/output_tokens` and per-model `stats.models.<m>.tokens.{prompt,candidates,cached}`; capture a real run and add it as a fixture. If Gemini's folder trust is on, pass `--gemini-skip-trust` or trust the jobs folder, otherwise Gemini ignores the job's MCP config. Headless Gemini on a Google AI Pro login uses that plan's Gemini CLI quota; check Google's current terms and limits.
 
 **DaVinci Resolve:** scripting names from Resolve's scripting README (`scriptapp`, `GetProjectManager`, `CreateProject`, `GetMediaPool`, `ImportMedia`, `ImportTimelineFromFile` with `timelineName`/`importSourceClips`, `CreateEmptyTimeline`, `AppendToTimeline`, `SaveProject`, `OpenPage`); FCPXML 1.9 import in your Resolve version (validated against Apple's DTD, not imported); dissolves need media handles beyond the cut points. To repeat the DTD check: get `FCPXMLv1_9.dtd` (Apple; e.g. from the CommandPost project) and validate an exported file with `xmllint --dtdvalid`.
 
@@ -248,20 +248,20 @@ powershell -ExecutionPolicy Bypass -File scripts\check-windows-build.ps1 -RunVer
 bash verify/run-tests.sh
 # … plus the 4 live tests that run the generated scripts for real
 python -m venv .venv && .venv/bin/pip install -r verify/live-requirements.txt
-COCKPIT_LIVE_PYTHON=$PWD/.venv/bin/python bash verify/run-tests.sh
+MEDIATOR_LIVE_PYTHON=$PWD/.venv/bin/python bash verify/run-tests.sh
 ```
 
 ```text
-cockpit doctor [--check-swx]
-cockpit assemble D:\Jetta\parts                                     # SolidWorks assembly (Claude Pro by default)
-cockpit cad D:\Jetta\parts --request "front corner: hub 5x112, 288 mm disc, spring"
-cockpit resolve D:\Videos\trip --request "60 s teaser, music under"   # Google AI Pro by default, Claude if Gemini is limited
-cockpit blender D:\Renders --request "red car through a neon city at night, 8 s"
-cockpit tutor D:\Books --request "chapter 3 (pages 41-58), eigenvalues"
-cockpit matrix "[[2,1,1],[1,2,1],[1,1,2]]"                           # exact, no AI
-cockpit organize D:\Downloads --criteria "group by type" --provider claude --keep-subscription
-cockpit rollback <jobId>
-AiCockpit.exe                                                        # the overlay: tray icon + Ctrl+Shift+Space
+mediator-cli doctor [--check-swx]
+mediator-cli assemble D:\Jetta\parts                                     # SolidWorks assembly (Claude Pro by default)
+mediator-cli cad D:\Jetta\parts --request "front corner: hub 5x112, 288 mm disc, spring"
+mediator-cli resolve D:\Videos\trip --request "60 s teaser, music under"   # Google AI Pro by default, Claude if Gemini is limited
+mediator-cli blender D:\Renders --request "red car through a neon city at night, 8 s"
+mediator-cli tutor D:\Books --request "chapter 3 (pages 41-58), eigenvalues"
+mediator-cli matrix "[[2,1,1],[1,2,1],[1,1,2]]"                           # exact, no AI
+mediator-cli organize D:\Downloads --criteria "group by type" --provider claude --keep-subscription
+mediator-cli rollback <jobId>
+Mediator.exe                                                        # the overlay: tray icon + Ctrl+Shift+Space
 ```
 
 Recommended for Code-CAD: install build123d inside the restricted WSL distro and configure `CadPython` as a `WslPythonRunner` (outputs under the exchange folder), so model-chosen parameters and any approved custom script run away from your Windows files.

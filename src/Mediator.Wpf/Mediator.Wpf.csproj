@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The overlay: a thin WPF view over Mediator.UI's ViewModels. Windows only.
+    Verify builds (Linux, no WindowsDesktop reference pack) compile every .cs file here against a WPF stand-in (see
+    below); the XAML is checked by the test suite (well-formed, every {Binding} resolves on the ViewModel types, every
+    StaticResource exists, every pack URI resolves).
+  -->
+  <PropertyGroup Condition="'$(MediatorVerify)' != 'true'">
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- NotifyIcon (tray) comes from Windows Forms; its global usings are removed so WPF types never become ambiguous. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Mediator</AssemblyName>
+    <RootNamespace>Mediator.Wpf</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Embedded in Mediator.exe: Explorer, Task Manager, Alt+Tab and the tray icon (TrayIcon.LoadIcon reads it back). -->
+    <ApplicationIcon>$(MSBuildThisFileDirectory)..\..\app.ico</ApplicationIcon>
+    <!-- No SupportedOSPlatformVersion: with plain net8.0-windows (TargetPlatformVersion 7.0) a 10.0.x value fails NETSDK1135,
+         and a versioned TFM would pull the Windows SDK projection from NuGet, breaking the offline shim build. -->
+    <!-- LibraryImport (RegisterHotKey) generates unsafe marshalling code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MediatorVerify)' != 'true'">
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <ProjectReference Include="../Mediator.UI/Mediator.UI.csproj" />
+    <ProjectReference Include="../Mediator.Core/Mediator.Core.csproj" />
+  </ItemGroup>
+  <!-- Full view renders Markdown + LaTeX in WebView2 (Edge runtime ships with Windows 11). Offline shim builds have no
+       NuGet, so they keep the plain-text view. -->
+  <PropertyGroup Condition="'$(MediatorVerify)' != 'true' And '$(MediatorUseShims)' != 'true'">
+    <DefineConstants>$(DefineConstants);MEDIATOR_WEBVIEW</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MediatorVerify)' != 'true' And '$(MediatorUseShims)' != 'true'">
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!--
+    V8: the theme dictionaries are compiled into Mediator.exe (Page items, loaded by pack URI) AND copied loose to
+    <output>\Themes\ for ThemeManager's fallback. Both copies come from the same files, so they cannot drift.
+  -->
+  <ItemGroup Condition="'$(MediatorVerify)' != 'true'">
+    <MediatorLooseTheme Include="$(MSBuildProjectDirectory)\Themes\*.xaml" />
+  </ItemGroup>
+  <Target Name="MediatorCopyLooseThemes" AfterTargets="Build" Condition="'$(MediatorVerify)' != 'true'">
+    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFolder="$(OutDir)Themes" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="MediatorPublishLooseThemes" AfterTargets="Publish" Condition="'$(MediatorVerify)' != 'true'">
+    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFolder="$(PublishDir)Themes" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!--
+    Verify builds (V9): EVERY .cs file of the overlay is compiled by csc, against Mediator.UI, Mediator.Core and
+    verify/stubs/WpfCompileStub (a compile-only stand-in for WPF / Windows Forms, since the WindowsDesktop reference
+    pack does not exist on Linux). XamlPartials.targets generates the InitializeComponent()/named-field partials the
+    markup compiler would. The output is Mediator.dll (a library: there is no window to show), with warnings as errors
+    like every verify build. Implicit usings mirror a WPF project: no System.IO or System.Net.Http (WPF removes them,
+    because System.IO.Path would clash with System.Windows.Shapes.Path), so a file that forgets `using System.IO;`
+    fails here too.
+  -->
+  <PropertyGroup Condition="'$(MediatorVerify)' == 'true'">
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Mediator</AssemblyName>
+    <RootNamespace>Mediator.Wpf</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MediatorVerify)' == 'true'">
+    <Using Remove="System.IO" />
+    <Using Remove="System.Net.Http" />
+    <ProjectReference Include="../Mediator.UI/Mediator.UI.csproj" />
+    <ProjectReference Include="../Mediator.Core/Mediator.Core.csproj" />
+    <ProjectReference Include="$(MediatorRoot)verify/stubs/WpfCompileStub/WpfCompileStub.csproj" />
+    <MediatorXamlPage Include="**/*.xaml" Exclude="bin/**;obj/**" />
+  </ItemGroup>
+  <Import Project="$(MediatorRoot)verify/stubs/WpfCompileStub/XamlPartials.targets" Condition="'$(MediatorVerify)' == 'true'" />
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mediator.Tests" />
+  </ItemGroup>
+</Project>

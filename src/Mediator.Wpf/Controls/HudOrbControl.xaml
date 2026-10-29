@@ -1,0 +1,66 @@
+<!--
+  The header orb: three concentric segmented rings that counter-rotate around a pulsing core, inside a reticle.
+  Vector only (Canvas, Ellipse, Path); every animation is a RenderTransform or Opacity animation, which WPF composes
+  on the GPU without re-laying out anything. The code-behind picks the animations for State (Idle, Active,
+  AwaitingApproval, Error) and points RingBrush at the theme's Orb*Brush with a resource reference, so a theme
+  switch recolours it live. Animations stop while Windows' "Show animations" setting is off.
+-->
+<UserControl x:Class="Mediator.Wpf.Controls.HudOrbControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root" Width="44" Height="44" Focusable="False" SnapsToDevicePixels="False">
+  <Canvas Width="44" Height="44" ClipToBounds="False">
+    <!-- Soft glow behind everything (static in Error). -->
+    <Ellipse x:Name="Glow" Canvas.Left="4" Canvas.Top="4" Width="36" Height="36" Opacity="0.22" IsHitTestVisible="False"
+             Fill="{Binding RingBrush, ElementName=Root}">
+      <Ellipse.Effect>
+        <BlurEffect Radius="9" />
+      </Ellipse.Effect>
+    </Ellipse>
+
+    <!-- Radial pulse used while awaiting approval: expands and fades from the core outwards. -->
+    <Ellipse x:Name="PulseRing" Canvas.Left="10" Canvas.Top="10" Width="24" Height="24" StrokeThickness="1.5" Opacity="0"
+             RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False" Stroke="{Binding RingBrush, ElementName=Root}">
+      <Ellipse.RenderTransform>
+        <ScaleTransform x:Name="PulseScale" ScaleX="1" ScaleY="1" />
+      </Ellipse.RenderTransform>
+    </Ellipse>
+
+    <!-- Reticle: four short ticks at 12, 3, 6 and 9 o'clock. -->
+    <Path Opacity="0.55" StrokeThickness="1" Stroke="{Binding RingBrush, ElementName=Root}"
+          Data="M22,0 L22,4 M44,22 L40,22 M22,44 L22,40 M0,22 L4,22" />
+
+    <!-- Outer ring: long dashes. -->
+    <Ellipse x:Name="OuterRing" Canvas.Left="3" Canvas.Top="3" Width="38" Height="38" StrokeThickness="1.4"
+             StrokeDashArray="7 3" RenderTransformOrigin="0.5,0.5" Stroke="{Binding RingBrush, ElementName=Root}">
+      <Ellipse.RenderTransform>
+        <RotateTransform x:Name="OuterSpin" Angle="0" />
+      </Ellipse.RenderTransform>
+    </Ellipse>
+
+    <!-- Middle ring: three 90° arcs with gaps, turning the other way. -->
+    <Path x:Name="MiddleRing" Canvas.Left="8" Canvas.Top="8" StrokeThickness="2.2" Opacity="0.85" RenderTransformOrigin="0.5,0.5"
+          Stroke="{Binding RingBrush, ElementName=Root}"
+          Data="M14,0 A14,14 0 0 1 28,14 M24.12,23.9 A14,14 0 0 1 4.1,23.9 M0,14 A14,14 0 0 1 9.2,0.85">
+      <Path.RenderTransform>
+        <RotateTransform x:Name="MiddleSpin" Angle="0" />
+      </Path.RenderTransform>
+    </Path>
+
+    <!-- Inner ring: fine dots. -->
+    <Ellipse x:Name="InnerRing" Canvas.Left="13" Canvas.Top="13" Width="18" Height="18" StrokeThickness="1" Opacity="0.75"
+             StrokeDashArray="1 2" RenderTransformOrigin="0.5,0.5" Stroke="{Binding RingBrush, ElementName=Root}">
+      <Ellipse.RenderTransform>
+        <RotateTransform x:Name="InnerSpin" Angle="0" />
+      </Ellipse.RenderTransform>
+    </Ellipse>
+
+    <!-- Core. -->
+    <Ellipse x:Name="Core" Canvas.Left="17" Canvas.Top="17" Width="10" Height="10" RenderTransformOrigin="0.5,0.5"
+             Fill="{Binding RingBrush, ElementName=Root}">
+      <Ellipse.RenderTransform>
+        <ScaleTransform x:Name="CoreScale" ScaleX="1" ScaleY="1" />
+      </Ellipse.RenderTransform>
+    </Ellipse>
+  </Canvas>
+</UserControl>

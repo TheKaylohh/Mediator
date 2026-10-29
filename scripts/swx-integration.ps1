@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Real-SolidWorks integration procedure for V6. It drives cockpit-swx-worker.exe over its stdin/stdout JSON
+  Real-SolidWorks integration procedure for V6. It drives mediator-swx-worker.exe over its stdin/stdout JSON
   protocol against your running SolidWorks, using disposable copies of verify/fixtures/swx. It never touches
   your own files.
 
@@ -30,12 +30,12 @@
   ISldWorks.GetDocuments (new in V6, used for ownership) is assumed and must be confirmed by this run.
 #>
 [CmdletBinding()]
-param([string]$Worker = (Join-Path $PSScriptRoot '..\dist\cockpit-swx-worker.exe'))
+param([string]$Worker = (Join-Path $PSScriptRoot '..\dist\mediator-swx-worker.exe'))
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $log = Join-Path $root "docs\v6\swx-integration-$stamp.txt"
-$work = Join-Path $env:TEMP "cockpit-swx-$stamp"
+$work = Join-Path $env:TEMP "mediator-swx-$stamp"
 New-Item -ItemType Directory -Path $work, "$work\out", "$work\a", "$work\b" | Out-Null
 Copy-Item (Join-Path $root 'verify\fixtures\swx\*.step') $work
 Copy-Item "$work\plate_solid.step" "$work\a\bracket.step"; Copy-Item "$work\plate_solid.step" "$work\b\bracket.step"
@@ -87,7 +87,7 @@ Read-Host "Check that shaft_d25 is still open in SolidWorks and unchanged; close
 $r = Call 'import_step' @{ paths = @("$work\shaft_d25.step"); outputFolder = "$work\out" }
 $shaft = $r.result.results[0].partPath
 Expect ($shaft -and (Test-Path $shaft)) "shaft imported for the assembly test"
-Note "INFO  assembly cases: run 'cockpit assemble $work\out --interactive' and approve one concentric mate (expect saved), then a concentric mate on two planar faces (expect a reported mate error)."
+Note "INFO  assembly cases: run 'mediator-cli assemble $work\out --interactive' and approve one concentric mate (expect saved), then a concentric mate on two planar faces (expect a reported mate error)."
 
 $script:p.Kill(); $script:p.WaitForExit()
 $script:p = [System.Diagnostics.Process]::Start($psi)

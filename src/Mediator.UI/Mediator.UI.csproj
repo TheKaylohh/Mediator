@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- ViewModels only: no WPF reference, so the overlay's behaviour (approvals, kill switch, routing) is tested on any OS.
+         Mediator.Wpf is a thin view over these types. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.UI</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Mediator.Core/Mediator.Core.csproj" />
+  </ItemGroup>
+</Project>

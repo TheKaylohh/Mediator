@@ -6,7 +6,7 @@ Two durable state machines make side effects safe to retry, safe to crash, and s
 
 Both are SQLite in WAL mode with `synchronous=FULL`. Every state write completes before the action it describes.
 
-## 1. Operation store (`Cockpit.Core.Bus.OperationStore`, `operations.db`)
+## 1. Operation store (`Mediator.Core.Bus.OperationStore`, `operations.db`)
 
 ```
 pending ─► validated ─► approved ─► executing ─► committed
@@ -27,26 +27,26 @@ cancelled   cancelled
 | An identical call arrives while the latest attempt is… | Result |
 |---|---|
 | `committed` | The stored result is returned with "already completed (operation X); not run again". Audit decision: `replayed`. |
-| `pending` / `validated` / `approved` / `executing` / `cancellation_requested` / `outcome_unknown` / `recovery_required` | Refused: "may already have taken effect… do not retry; check with `cockpit_operation_status`". Audited. |
+| `pending` / `validated` / `approved` / `executing` / `cancellation_requested` / `outcome_unknown` / `recovery_required` | Refused: "may already have taken effect… do not retry; check with `mediator_operation_status`". Audited. |
 | `failed` / `denied` / `rejected` / `cancelled` | A new attempt starts. These outcomes are known, and nothing was committed. |
 
 **Timeouts and cancellation never claim the tool stopped:**
 
-| Situation | What Cockpit records | What the caller gets |
+| Situation | What Mediator records | What the caller gets |
 |---|---|---|
 | Time limit exceeded | `outcome_unknown`. The provider is asked to stop and keeps being observed; a late result moves the operation to `committed` or `failed` and is audited as `late`. | "Outcome unknown, do not retry" |
 | Client cancels or the bridge disconnects | `cancellation_requested`, then whatever really happened. If nothing is known after 5 s, `outcome_unknown` and observed late. | No response (MCP) |
 | Provider throws | `outcome_unknown`, because partial effects are possible | "May have partly taken effect" |
 
-**Restart reconciliation** runs in `CockpitRuntime.CreateAsync`, before the bus accepts connections:
-- `pending`, `validated` and `approved` become `cancelled` with the note "Cockpit stopped before this call ran; it was not run". This is safe because `executing` had not been written.
+**Restart reconciliation** runs in `MediatorRuntime.CreateAsync`, before the bus accepts connections:
+- `pending`, `validated` and `approved` become `cancelled` with the note "Mediator stopped before this call ran; it was not run". This is safe because `executing` had not been written.
 - `executing` and `cancellation_requested` become `outcome_unknown`. The provider's `IOperationReconciler` then gets a chance to settle them.
   - The Files provider settles `files_execute_batch` and `files_rollback_batch` from the journal.
-  - Anything still unsettled becomes `recovery_required`. The runtime logs a warning, `cockpit operations --unresolved` lists it, and `cockpit operations resolve <id> --done|--not-done --note …` records the user's verdict (audited).
+  - Anything still unsettled becomes `recovery_required`. The runtime logs a warning, `mediator-cli operations --unresolved` lists it, and `mediator-cli operations resolve <id> --done|--not-done --note …` records the user's verdict (audited).
 
 Job grants are in memory, so a Core restart invalidates every token (fail-closed). The operation records survive the restart. A job started again with the same id cannot replay an unresolved call.
 
-## 2. File journal (`Cockpit.Core.Files.FileJournalService`, `journal.db`)
+## 2. File journal (`Mediator.Core.Files.FileJournalService`, `journal.db`)
 
 **Batch states:**
 - `planned` → `executing` → `committed` | `partially_committed`

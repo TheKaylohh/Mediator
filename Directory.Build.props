@@ -7,29 +7,29 @@
     <WarningLevel>5</WarningLevel>
     <!--
       Two switches (Directory.Build.targets applies them):
-        CockpitVerify   false (default, ship): the real products: net8.0-windows WPF overlay and worker, the SolidWorks
-                        interop from $(SolidWorksInteropDir) (or the no-SolidWorks worker, COCKPIT001).
+        MediatorVerify   false (default, ship): the real products: net8.0-windows WPF overlay and worker, the SolidWorks
+                        interop from $(SolidWorksInteropDir) (or the no-SolidWorks worker, MEDIATOR001).
                         true (verify, any OS): everything builds as net8.0 against the stand-ins in verify/stubs (SolidWorks
                         interop stub, WpfCompileStub), so the test suite runs on Linux.
-        CockpitUseShims V9. Where Microsoft.Data.Sqlite and System.IO.Hashing come from, decoupled from CockpitVerify:
+        MediatorUseShims V9. Where Microsoft.Data.Sqlite and System.IO.Hashing come from, decoupled from MediatorVerify:
                         false: NuGet (default for ship builds);
                         true:  verify/stubs/SqliteShim (P/Invoke to the OS SQLite: System32\winsqlite3.dll on Windows 10/11,
                                libsqlite3 elsewhere) and verify/stubs/HashingShim. NO NuGet download at all: restore uses only the
                                empty local feed (and packages already in the NuGet cache), and the NuGet-only build features are
                                off (Native AOT and the AOT/trim analyzers, which download ILCompiler/ILLink). Default when
-                               CockpitVerify=true; on Windows `-p:CockpitUseShims=true -p:CockpitVerify=false` builds the real
-                               AiCockpit.exe, cockpit.exe, cockpit-mcp-bridge.exe and cockpit-swx-worker.exe with Wi-Fi off
+                               MediatorVerify=true; on Windows `-p:MediatorUseShims=true -p:MediatorVerify=false` builds the real
+                               Mediator.exe, mediator-cli.exe, mediator-mcp-bridge.exe and mediator-swx-worker.exe with Wi-Fi off
                                (publish-release.ps1 falls back to it when NuGet restore fails).
-      Projects opt in with CockpitUsesSqlite / CockpitUsesHashing / CockpitUsesSolidWorks.
+      Projects opt in with MediatorUsesSqlite / MediatorUsesHashing / MediatorUsesSolidWorks.
     -->
-    <CockpitVerify Condition="'$(CockpitVerify)' == ''">false</CockpitVerify>
-    <CockpitUseShims Condition="'$(CockpitUseShims)' == ''">$(CockpitVerify)</CockpitUseShims>
+    <MediatorVerify Condition="'$(MediatorVerify)' == ''">false</MediatorVerify>
+    <MediatorUseShims Condition="'$(MediatorUseShims)' == ''">$(MediatorVerify)</MediatorUseShims>
     <!-- SolidWorksApiDir is the v3 name, still honoured. scripts/check-windows-build.ps1 reads the real path from the registry. -->
     <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == '' and '$(SolidWorksApiDir)' != ''">$(SolidWorksApiDir)</SolidWorksInteropDir>
     <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == ''">C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist</SolidWorksInteropDir>
     <SolidWorksInteropDir>$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</SolidWorksInteropDir>
-    <CockpitRoot>$(MSBuildThisFileDirectory)</CockpitRoot>
+    <MediatorRoot>$(MSBuildThisFileDirectory)</MediatorRoot>
     <!-- Shim builds (verify, or offline ship builds) restore from an empty local folder: no network is ever contacted. -->
-    <RestoreSources Condition="'$(CockpitUseShims)' == 'true'">$(CockpitRoot)verify/local-feed</RestoreSources>
+    <RestoreSources Condition="'$(MediatorUseShims)' == 'true'">$(MediatorRoot)verify/local-feed</RestoreSources>
   </PropertyGroup>
 </Project>

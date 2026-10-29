@@ -6,7 +6,7 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\run-tests.ps1
-  $env:COCKPIT_REQUIRE_ALL = '1'; powershell -File scripts\run-tests.ps1   # release gate: any skip fails
+  $env:MEDIATOR_REQUIRE_ALL = '1'; powershell -File scripts\run-tests.ps1   # release gate: any skip fails
 
   NOT RUN BY ITS AUTHOR (no Windows host was available for V6). The test runner itself is the same binary that
   ran 87/89 on Linux; this script only builds and starts it.
@@ -14,11 +14,11 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
-foreach ($p in 'src/Cockpit.Bridge', 'src/Cockpit.SwxWorker', 'verify/stubs/SwxWorkerNoInterop', 'src/Cockpit.CliHost', 'src/Cockpit.Wpf', 'verify/tests/Cockpit.Tests') {
-    dotnet build $p -nologo -v q -p:CockpitVerify=true -p:TreatWarningsAsErrors=true
+foreach ($p in 'src/Mediator.Bridge', 'src/Mediator.SwxWorker', 'verify/stubs/SwxWorkerNoInterop', 'src/Mediator.CliHost', 'src/Mediator.Wpf', 'verify/tests/Mediator.Tests') {
+    dotnet build $p -nologo -v q -p:MediatorVerify=true -p:TreatWarningsAsErrors=true
     if ($LASTEXITCODE -ne 0) { throw "build failed: $p" }
 }
-dotnet verify/tests/Cockpit.Tests/bin/Debug/net8.0/Cockpit.Tests.dll `
-    src/Cockpit.Bridge/bin/Debug/net8.0/cockpit-mcp-bridge.dll `
-    src/Cockpit.CliHost/bin/Debug/net8.0/cockpit.dll
+dotnet verify/tests/Mediator.Tests/bin/Debug/net8.0/Mediator.Tests.dll `
+    src/Mediator.Bridge/bin/Debug/net8.0/mediator-mcp-bridge.dll `
+    src/Mediator.CliHost/bin/Debug/net8.0/mediator-cli.dll
 exit $LASTEXITCODE

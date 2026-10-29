@@ -1,6 +1,6 @@
 # Filesystem Authorization
 
-Every path a job touches goes through one service: `Cockpit.Core.Security.PathAuthorizer`, exposed as `JobGrant.Paths`. Before V6, containment was checked with a string prefix after `Path.GetFullPath`. That check is gone: `JobGrant.IsInsideRoots` and `FileJournalService.InsideRoots` were deleted, so code using a lexical check no longer compiles.
+Every path a job touches goes through one service: `Mediator.Core.Security.PathAuthorizer`, exposed as `JobGrant.Paths`. Before V6, containment was checked with a string prefix after `Path.GetFullPath`. That check is gone: `JobGrant.IsInsideRoots` and `FileJournalService.InsideRoots` were deleted, so code using a lexical check no longer compiles.
 
 ## Threat
 
@@ -8,7 +8,7 @@ Every path a job touches goes through one service: `Cockpit.Core.Security.PathAu
 |---|---|
 | Attacker | The model, through tool arguments (possibly prompt-injected), or a custom script running in the sandbox (see ISOLATION.md). Either one can leave files, symlinks or crafted timelines inside a granted folder. |
 | Goal | Read, overwrite, move or delete something outside the granted roots. Or destroy the roots themselves. |
-| Not in scope | Another process running as the same Windows user with arbitrary code. It already owns the user's files, so Cockpit does not try to defend against it. The TOCTOU guarantees below are about not being *tricked*, not about stopping the user's own malware. |
+| Not in scope | Another process running as the same Windows user with arbitrary code. It already owns the user's files, so Mediator does not try to defend against it. The TOCTOU guarantees below are about not being *tricked*, not about stopping the user's own malware. |
 
 ## Rules (in order, fail-closed)
 
@@ -46,7 +46,7 @@ Every denial carries a rule code, for example `[path:reparse_point]`, `[path:out
 | Remove empty folder | `unlinkat(AT_REMOVEDIR)` in a verified parent | `Directory.Delete` (non-recursive) after the check | same as Windows |
 | Path given to an external program (ffprobe, Blender, SolidWorks, Python) | `VerifyExisting` right before launch | same | same |
 
-**Linux** gives prevention: the kernel refuses the resolution. **Windows** gives detection and undo: a junction swapped in between the check and the open is caught by the handle check, and the stray file is removed by handle. For moves on Windows, a swapped intermediate junction is detected *after* the rename. The call then fails with `race_detected` and the batch stops, but the file has already moved, and Cockpit reports it rather than moving it a second time. This is the main residual risk on Windows (R-FS1 below).
+**Linux** gives prevention: the kernel refuses the resolution. **Windows** gives detection and undo: a junction swapped in between the check and the open is caught by the handle check, and the stray file is removed by handle. For moves on Windows, a swapped intermediate junction is detected *after* the rename. The call then fails with `race_detected` and the batch stops, but the file has already moved, and Mediator reports it rather than moving it a second time. This is the main residual risk on Windows (R-FS1 below).
 
 ## Where it is enforced
 
@@ -61,7 +61,7 @@ All of these use `call.Job.Paths`:
 | Tutor | The PDF (Read), passed to PyMuPDF after VerifyExisting, or read by the built-in reader through the verified handle with a 256 MiB cap. |
 | SolidWorks | The STEP inputs, the output folder, `.SLDPRT` part paths and the assembly output (CreateFile). The template path must pass the lexical rules, so a UNC template is refused. |
 
-## Tests (verify/tests/Cockpit.Tests/SecurityTests.cs)
+## Tests (verify/tests/Mediator.Tests/SecurityTests.cs)
 
 | Test | What it proves | Run here |
 |---|---|---|
@@ -83,7 +83,7 @@ All of these use `call.Job.Paths`:
 |---|---|---|
 | R-FS1 | Windows: an intermediate junction swapped during a rename is detected after the move, not prevented. | The batch stops with `race_detected` and the location is reported. It needs a same-user process creating junctions in the root at the right moment. Open. |
 | R-FS2 | Paths handed to external programs (ffprobe, Blender, SolidWorks COM, Python) are re-verified just before launch, but the program opens them by name. | The window is milliseconds and needs a concurrent attacker inside the root. Custom code runs in the sandbox (ISOLATION.md), where the roots are not even visible. Open, low. |
-| R-FS3 | Hard links: a hard link inside a root to a file outside it is not detected. | Hard links can't be created across mounts, and the sandbox only sees bind mounts, so sandboxed code can't make one. Creating one needs same-user code outside Cockpit. Open, low. |
+| R-FS3 | Hard links: a hard link inside a root to a file outside it is not detected. | Hard links can't be created across mounts, and the sandbox only sees bind mounts, so sandboxed code can't make one. Creating one needs same-user code outside Mediator. Open, low. |
 | R-FS4 | NTFS per-directory case sensitivity (`fsutil file setCaseSensitiveInfo`) is not modelled. Comparison is case-insensitive on Windows. | That direction errs toward treating two names as the same root, not toward escaping. Open, informational. |
 | R-FS5 | 8.3 detection is by shape. A real file named like `NOTES~1.TXT` is refused. | That fails closed. Accepted. |
 | R-FS6 | `renameat2(RENAME_NOREPLACE)` isn't supported on some file systems (for example drvfs `/mnt/c` in WSL). Moves are refused there rather than downgraded. | Fails closed. The journal runs on the Windows host for Windows files. Accepted. |

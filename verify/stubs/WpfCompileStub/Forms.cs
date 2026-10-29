@@ -1,4 +1,4 @@
-// VERIFY ONLY: the Windows Forms tray icon and System.Drawing.Icon surface used by Cockpit.Wpf/TrayIcon.cs.
+// VERIFY ONLY: the Windows Forms tray icon and System.Drawing.Icon surface used by Mediator.Wpf/TrayIcon.cs.
 using System.Diagnostics.CodeAnalysis;
 // Nullable annotations as in .NET 8 (Windows Forms and System.Drawing are annotated there).
 #nullable enable

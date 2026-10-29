@@ -37,7 +37,7 @@ A simulated pass is never reported as a real one.
    - The two Windows tests (NTFS junctions/ADS/8.3, sharing violation) must show PASS.
 2. `scripts\check-windows-build.ps1 -RunVerifySuite`
    - The ship build uses real Microsoft.Data.Sqlite and System.IO.Hashing, with WPF and warnings as errors.
-   - Then `cockpit doctor` runs. It reports the audit chain head; note it down.
+   - Then `mediator-cli doctor` runs. It reports the audit chain head; note it down.
 3. Overlay, by hand:
    - Ctrl+Shift+Space on each monitor.
    - 100% / 150% / mixed DPI.
@@ -47,7 +47,7 @@ A simulated pass is never reported as a real one.
    - Tray exit with an active job.
    - An elevated app in the foreground: UIPI may block the hotkey; document what you see.
 4. Interactive tab:
-   - `cockpit assemble <folder> --interactive` with a non-ASCII folder name.
+   - `mediator-cli assemble <folder> --interactive` with a non-ASCII folder name.
    - Close the tab: the job must end "the terminal was closed".
    - `interactive.pid` and `.done` carry the session nonce.
 
@@ -64,7 +64,7 @@ A simulated pass is never reported as a real one.
 
 ### DaVinci Resolve (Free: import only; Studio: scripting)
 
-1. `cockpit resolve <folder with clips> --request "60 s teaser"`. Approve 3 of 4 cuts.
+1. `mediator-cli resolve <folder with clips> --request "60 s teaser"`. Approve 3 of 4 cuts.
 2. **Free:** File > Import > Timeline, then pick `edits\timeline.fcpxml`. Check:
    - three clips at the planned in and out points (frame-exact at 29.97);
    - the dissolve;
@@ -74,7 +74,7 @@ A simulated pass is never reported as a real one.
 
 ### Blender application, 4.x and 5.x
 
-1. `cockpit blender <folder> --request "red car"`. The scene build and the preview render are separate steps and are reported separately.
+1. `mediator-cli blender <folder> --request "red car"`. The scene build and the preview render are separate steps and are reported separately.
 2. Render the preview with EEVEE on a GPU machine. Then interrupt a render: the partial frames must be reported, not presented as a finished render.
 
 ### Signed-in CLIs

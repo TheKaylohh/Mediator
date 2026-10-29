@@ -5,7 +5,7 @@
     "cpus": 2,
     "cpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
     "memTotal": "8220244 kB",
-    "build": "Debug, CockpitVerify=true (SQLite shim over the system libsqlite3; not the shipping Microsoft.Data.Sqlite)",
+    "build": "Debug, MediatorVerify=true (SQLite shim over the system libsqlite3; not the shipping Microsoft.Data.Sqlite)",
     "when": "2026-10-23T05:25:10.3100260Z"
   },
   "coreStartup": {

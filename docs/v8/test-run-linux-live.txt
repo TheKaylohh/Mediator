@@ -1,4 +1,4 @@
-# AI Cockpit V8: bash verify/run-tests.sh (live), 2026-10-23, Ubuntu 24.04, .NET SDK 8.0.132, run as root, COCKPIT_LIVE_PYTHON=Python 3.13.17 venv from verify/live-requirements.txt
+# Mediator V8: bash verify/run-tests.sh (live), 2026-10-23, Ubuntu 24.04, .NET SDK 8.0.132, run as root, MEDIATOR_LIVE_PYTHON=Python 3.13.17 venv from verify/live-requirements.txt
 Build succeeded.
     0 Warning(s)
     0 Error(s)
@@ -104,7 +104,7 @@ PASS  fs-auth: journal rejects link moves at plan time and stops a move whose de
 PASS  attachments: snapshot/folder/PNG staging; links, FIFO, /proc, /dev, credentials, home, data folder, drive root, oversize, fake PNG refused; discard; prune (24 ms)
 PASS  attachments: read-only roots allow read/list, deny create/move/mkdir (read_only); never remove write access; links still refused (4 ms)
 PASS  attachments through the bus: listed, text + image content, other job refused, files tool cannot move them, live attach audited; V6 tool lists unchanged without attachments (471 ms)
-PASS  custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported (15183 ms)
+PASS  custom MCP: validate, 15 s health ping, mediator.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported (15183 ms)
 PASS  custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited (428 ms)
 PASS  connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys (12 ms)
 PASS  placement V8: work area on every taskbar edge, auto-hide strips, 100/150/200 % and 100→200 % moves, negative coordinates, too tall/wide clamped, 5000 random layouts stay on screen (25 ms)
@@ -113,8 +113,8 @@ PASS  release scripts V8: .ps1 ASCII-only (PowerShell 5.1 ANSI trap), launch.bat
 PASS  release scripts V8: publish-release.ps1 always publishes the 4 executables, the 3 themes and both launchers, and checks them (0 ms)
 PASS  swx V8: SwxUnavailableHost fails every call with solidworks_not_installed; the stub build still creates SwxComHost (2 ms)
 PASS  swx V8: worker built without the SolidWorks interop, as a real child process through the bus: "SolidWorks assemblies not installed on this machine", do-not-retry, audited (228 ms)
-PASS  swx V8: ship build (CockpitVerify=false) with no interop: warning COCKPIT001 (not an error, even with -warnaserror), CockpitRequireSolidWorks=true → error COCKPIT002, built worker answers (8134 ms)
-PASS  desktop apps V8: Blender in version folders (newest wins), %LOCALAPPDATA%\Programs, BlenderFoundation key, Apps & features, Steam; PATH and COCKPIT_BLENDER take precedence (16 ms)
+PASS  swx V8: ship build (MediatorVerify=false) with no interop: warning MEDIATOR001 (not an error, even with -warnaserror), MediatorRequireSolidWorks=true → error MEDIATOR002, built worker answers (8134 ms)
+PASS  desktop apps V8: Blender in version folders (newest wins), %LOCALAPPDATA%\Programs, BlenderFoundation key, Apps & features, Steam; PATH and MEDIATOR_BLENDER take precedence (16 ms)
 PASS  desktop apps V8: Resolve in Program Files (x86), a registry-only folder, Studio from Apps & features (merged), probe says where it looked (3 ms)
 PASS  desktop apps V8: SolidWorks newest SOLIDWORKS <year>\Setup with api\redist, COM LocalServer32, default folder, never PATH; probe running / idle / absent (5 ms)
 PASS  overlay V7: theme cycle, ThemeChanged, settings.json persisted and reloaded; malformed settings kept as .bad; hotkey parser (13 ms)

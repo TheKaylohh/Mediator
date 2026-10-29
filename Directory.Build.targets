@@ -1,74 +1,74 @@
 <Project>
   <!-- The central dependency switches (see Directory.Build.props). Evaluated after each project's own properties.
-       SQLite and xxHash64 follow CockpitUseShims (V9); the SolidWorks interop follows CockpitVerify. -->
+       SQLite and xxHash64 follow MediatorUseShims (V9); the SolidWorks interop follows MediatorVerify. -->
 
   <!-- SQLite -->
-  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitUseShims)' != 'true'">
+  <ItemGroup Condition="'$(MediatorUsesSqlite)' == 'true' and '$(MediatorUseShims)' != 'true'">
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
-  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitUseShims)' == 'true'">
-    <ProjectReference Include="$(CockpitRoot)verify/stubs/SqliteShim/SqliteShim.csproj" />
+  <ItemGroup Condition="'$(MediatorUsesSqlite)' == 'true' and '$(MediatorUseShims)' == 'true'">
+    <ProjectReference Include="$(MediatorRoot)verify/stubs/SqliteShim/SqliteShim.csproj" />
   </ItemGroup>
 
   <!-- xxHash64 -->
-  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitUseShims)' != 'true'">
+  <ItemGroup Condition="'$(MediatorUsesHashing)' == 'true' and '$(MediatorUseShims)' != 'true'">
     <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
   </ItemGroup>
-  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitUseShims)' == 'true'">
-    <ProjectReference Include="$(CockpitRoot)verify/stubs/HashingShim/HashingShim.csproj" />
+  <ItemGroup Condition="'$(MediatorUsesHashing)' == 'true' and '$(MediatorUseShims)' == 'true'">
+    <ProjectReference Include="$(MediatorRoot)verify/stubs/HashingShim/HashingShim.csproj" />
   </ItemGroup>
 
   <!--
-    SolidWorks interop (V8). CockpitSolidWorksInterop says what the worker compiles against:
+    SolidWorks interop (V8). MediatorSolidWorksInterop says what the worker compiles against:
       real  ship build, $(SolidWorksInteropDir) has both interop DLLs  → copied next to the worker
-      stub  verify build (CockpitVerify=true)                           → verify/stubs/SolidWorksInteropStub
-      none  ship build on a machine without SolidWorks, or a verify build with CockpitSimulateNoSolidWorks=true
+      stub  verify build (MediatorVerify=true)                           → verify/stubs/SolidWorksInteropStub
+      none  ship build on a machine without SolidWorks, or a verify build with MediatorSimulateNoSolidWorks=true
             → compile constant SOLIDWORKS_NOT_INSTALLED: the worker is built with SwxUnavailableHost and answers every
-              call with "SolidWorks assemblies not installed on this machine". The build succeeds (warning COCKPIT001).
-    CockpitRequireSolidWorks=true restores the V7 behaviour (a missing interop is an error), for the SolidWorks
+              call with "SolidWorks assemblies not installed on this machine". The build succeeds (warning MEDIATOR001).
+    MediatorRequireSolidWorks=true restores the V7 behaviour (a missing interop is an error), for the SolidWorks
     integration runner and scripts/check-windows-build.ps1 -CheckSolidWorks.
   -->
-  <PropertyGroup Condition="'$(CockpitUsesSolidWorks)' == 'true'">
+  <PropertyGroup Condition="'$(MediatorUsesSolidWorks)' == 'true'">
     <!-- The scripts pass the folder without a trailing separator; a -p: global property cannot be rewritten, so normalize a copy. -->
-    <CockpitSwxDir Condition="'$(SolidWorksInteropDir)' != ''">$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</CockpitSwxDir>
-    <CockpitSolidWorksInterop Condition="'$(CockpitVerify)' == 'true' and '$(CockpitSimulateNoSolidWorks)' != 'true'">stub</CockpitSolidWorksInterop>
-    <CockpitSolidWorksInterop Condition="'$(CockpitVerify)' != 'true' and Exists('$(CockpitSwxDir)SolidWorks.Interop.sldworks.dll') and Exists('$(CockpitSwxDir)SolidWorks.Interop.swconst.dll')">real</CockpitSolidWorksInterop>
-    <CockpitSolidWorksInterop Condition="'$(CockpitSolidWorksInterop)' == ''">none</CockpitSolidWorksInterop>
-    <DefineConstants Condition="'$(CockpitSolidWorksInterop)' == 'none'">$(DefineConstants);SOLIDWORKS_NOT_INSTALLED</DefineConstants>
+    <MediatorSwxDir Condition="'$(SolidWorksInteropDir)' != ''">$([MSBuild]::EnsureTrailingSlash('$(SolidWorksInteropDir)'))</MediatorSwxDir>
+    <MediatorSolidWorksInterop Condition="'$(MediatorVerify)' == 'true' and '$(MediatorSimulateNoSolidWorks)' != 'true'">stub</MediatorSolidWorksInterop>
+    <MediatorSolidWorksInterop Condition="'$(MediatorVerify)' != 'true' and Exists('$(MediatorSwxDir)SolidWorks.Interop.sldworks.dll') and Exists('$(MediatorSwxDir)SolidWorks.Interop.swconst.dll')">real</MediatorSolidWorksInterop>
+    <MediatorSolidWorksInterop Condition="'$(MediatorSolidWorksInterop)' == ''">none</MediatorSolidWorksInterop>
+    <DefineConstants Condition="'$(MediatorSolidWorksInterop)' == 'none'">$(DefineConstants);SOLIDWORKS_NOT_INSTALLED</DefineConstants>
     <!-- The fallback is a supported configuration, so its warning never fails a -warnaserror build. -->
-    <MSBuildWarningsNotAsErrors>$(MSBuildWarningsNotAsErrors);COCKPIT001</MSBuildWarningsNotAsErrors>
+    <MSBuildWarningsNotAsErrors>$(MSBuildWarningsNotAsErrors);MEDIATOR001</MSBuildWarningsNotAsErrors>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(CockpitSolidWorksInterop)' == 'real'">
+  <ItemGroup Condition="'$(MediatorSolidWorksInterop)' == 'real'">
     <Reference Include="SolidWorks.Interop.sldworks">
-      <HintPath>$(CockpitSwxDir)SolidWorks.Interop.sldworks.dll</HintPath>
+      <HintPath>$(MediatorSwxDir)SolidWorks.Interop.sldworks.dll</HintPath>
       <EmbedInteropTypes>false</EmbedInteropTypes>
       <Private>true</Private>
     </Reference>
     <Reference Include="SolidWorks.Interop.swconst">
-      <HintPath>$(CockpitSwxDir)SolidWorks.Interop.swconst.dll</HintPath>
+      <HintPath>$(MediatorSwxDir)SolidWorks.Interop.swconst.dll</HintPath>
       <EmbedInteropTypes>false</EmbedInteropTypes>
       <Private>true</Private>
     </Reference>
   </ItemGroup>
-  <ItemGroup Condition="'$(CockpitSolidWorksInterop)' == 'stub'">
-    <ProjectReference Include="$(CockpitRoot)verify/stubs/SolidWorksInteropStub/SolidWorksInteropStub.csproj" />
+  <ItemGroup Condition="'$(MediatorSolidWorksInterop)' == 'stub'">
+    <ProjectReference Include="$(MediatorRoot)verify/stubs/SolidWorksInteropStub/SolidWorksInteropStub.csproj" />
   </ItemGroup>
 
-  <Target Name="CockpitCheckSolidWorksInterop" BeforeTargets="ResolveAssemblyReferences;CoreCompile"
-          Condition="'$(CockpitUsesSolidWorks)' == 'true' and '$(CockpitSolidWorksInterop)' == 'none'">
-    <Error Condition="'$(CockpitRequireSolidWorks)' == 'true'"
-           Code="COCKPIT002"
-           Text="SolidWorks interop assemblies not found in '$(SolidWorksInteropDir)' and CockpitRequireSolidWorks=true. Pass -p:SolidWorksInteropDir=&quot;&lt;SOLIDWORKS folder&gt;\api\redist&quot; (scripts/check-windows-build.ps1 finds it in the registry)." />
-    <Warning Condition="'$(CockpitVerify)' != 'true'"
-             Code="COCKPIT001"
+  <Target Name="MediatorCheckSolidWorksInterop" BeforeTargets="ResolveAssemblyReferences;CoreCompile"
+          Condition="'$(MediatorUsesSolidWorks)' == 'true' and '$(MediatorSolidWorksInterop)' == 'none'">
+    <Error Condition="'$(MediatorRequireSolidWorks)' == 'true'"
+           Code="MEDIATOR002"
+           Text="SolidWorks interop assemblies not found in '$(SolidWorksInteropDir)' and MediatorRequireSolidWorks=true. Pass -p:SolidWorksInteropDir=&quot;&lt;SOLIDWORKS folder&gt;\api\redist&quot; (scripts/check-windows-build.ps1 finds it in the registry)." />
+    <Warning Condition="'$(MediatorVerify)' != 'true'"
+             Code="MEDIATOR001"
              Text="SolidWorks interop assemblies not found in '$(SolidWorksInteropDir)': $(AssemblyName) is built without SolidWorks support (SOLIDWORKS_NOT_INSTALLED) and will answer &quot;SolidWorks assemblies not installed on this machine&quot;. Everything else is unaffected. To include SolidWorks, pass -p:SolidWorksInteropDir=&quot;&lt;SOLIDWORKS folder&gt;\api\redist&quot;." />
-    <Message Condition="'$(CockpitVerify)' == 'true'" Importance="high"
-             Text="$(AssemblyName): verify build without the SolidWorks stub (CockpitSimulateNoSolidWorks=true): SOLIDWORKS_NOT_INSTALLED" />
+    <Message Condition="'$(MediatorVerify)' == 'true'" Importance="high"
+             Text="$(AssemblyName): verify build without the SolidWorks stub (MediatorSimulateNoSolidWorks=true): SOLIDWORKS_NOT_INSTALLED" />
   </Target>
 
   <!-- The test runner only makes sense against the stand-ins (its fake SolidWorks implements the stub interfaces). -->
-  <Target Name="CockpitTestsNeedVerify" BeforeTargets="Build" Condition="'$(CockpitIsVerifySuite)' == 'true' and '$(CockpitVerify)' != 'true'">
-    <Error Text="Cockpit.Tests builds only with -p:CockpitVerify=true (see verify/run-tests.sh or scripts/check-windows-build.ps1 -RunVerifySuite)." />
+  <Target Name="MediatorTestsNeedVerify" BeforeTargets="Build" Condition="'$(MediatorIsVerifySuite)' == 'true' and '$(MediatorVerify)' != 'true'">
+    <Error Text="Mediator.Tests builds only with -p:MediatorVerify=true (see verify/run-tests.sh or scripts/check-windows-build.ps1 -RunVerifySuite)." />
   </Target>
 </Project>

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- AOT/trim analyzers need the ILLink package (a NuGet download), so they run only in NuGet builds (MediatorUseShims=false). -->
+    <IsAotCompatible Condition="'$(MediatorUseShims)' != 'true'">true</IsAotCompatible>
+    <RootNamespace>Mediator.Protocol</RootNamespace>
+  </PropertyGroup>
+</Project>

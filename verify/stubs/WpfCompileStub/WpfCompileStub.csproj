@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     VERIFY ONLY (V9). A compile-time stand-in for the parts of WPF (PresentationFramework, PresentationCore,
-    WindowsBase, System.IO.Packaging) and Windows Forms / System.Drawing that src/Cockpit.Wpf/*.cs uses, so every C#
+    WindowsBase, System.IO.Packaging) and Windows Forms / System.Drawing that src/Mediator.Wpf/*.cs uses, so every C#
     file of the overlay is compiled by csc on Linux, where the WindowsDesktop reference pack does not exist.
 
     Rules it follows, so code that compiles here also compiles against the real assemblies:
@@ -10,7 +10,7 @@
         is the point: the stub grows only when the overlay really uses something new);
       • WPF types are nullable-oblivious (#nullable disable), as .NET 8 WPF is; Windows Forms and System.Drawing are
         annotated, as they are in .NET 8;
-      • behaviour is minimal. A few hooks (Cockpit.Verify.WpfStub.StubHooks) let tests drive ThemeManager's
+      • behaviour is minimal. A few hooks (Mediator.Verify.WpfStub.StubHooks) let tests drive ThemeManager's
         fallback chain; nothing here pretends to render or to load BAML.
     What it cannot prove: that the real assemblies have no extra overload that changes overload resolution, and
     anything about XAML compilation itself (XamlChecker covers the XAML; the Windows CI job compiles for real).
@@ -18,7 +18,7 @@
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>Cockpit.WpfCompileStub</AssemblyName>
+    <AssemblyName>Mediator.WpfCompileStub</AssemblyName>
     <RootNamespace>System.Windows</RootNamespace>
     <!-- Stand-in API surface: names, empty bodies and unused parameters are dictated by the real assemblies. -->
     <NoWarn>$(NoWarn);CA1707;CA1711;CA1716;CA1720;CA1027;CA1008;CA1028;CA1034;CA1051;CA1052;CA1062;CA1069;CA1822;CA2211;CA1003;CA1001;CA1063;CA1816;CA1810;CA2225;CA1815;CA1054;CA1056;CA1305;CA1031;IDE0060;CS0067</NoWarn>

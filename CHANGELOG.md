@@ -4,12 +4,12 @@ Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md)
 
 ## V9: Windows release candidate (2026-10-23)
 
-V9 builds on V8 (commit `a033d7f`). All 110 V8 tests still pass, and 9 V9 tests were added (119 in total). With `COCKPIT_LIVE_PYTHON` set, 117 run and pass, plus 2 Windows-only skips. Without it, 111 pass. The six builds have 0 warnings with `TreatWarningsAsErrors=true`, including the overlay project, which now compiles all of its C#.
+V9 builds on V8 (commit `a033d7f`). All 110 V8 tests still pass, and 9 V9 tests were added (119 in total). With `MEDIATOR_LIVE_PYTHON` set, 117 run and pass, plus 2 Windows-only skips. Without it, 111 pass. The six builds have 0 warnings with `TreatWarningsAsErrors=true`, including the overlay project, which now compiles all of its C#.
 
 ### Added
 
-- **The whole overlay is compiled in verify builds.** `verify/stubs/WpfCompileStub` is a compile-only WPF and Windows Forms stand-in that follows the .NET 8 API, including its nullability. `XamlPartials.targets` generates the `InitializeComponent()` and named-field partials the markup compiler would. Verify-mode `Cockpit.Wpf.csproj` now builds every `.cs` file into `AiCockpit.dll`, with WPF's implicit usings.
-- **`CockpitUseShims`**, independent of `CockpitVerify`:
+- **The whole overlay is compiled in verify builds.** `verify/stubs/WpfCompileStub` is a compile-only WPF and Windows Forms stand-in that follows the .NET 8 API, including its nullability. `XamlPartials.targets` generates the `InitializeComponent()` and named-field partials the markup compiler would. Verify-mode `Mediator.Wpf.csproj` now builds every `.cs` file into `Mediator.dll`, with WPF's implicit usings.
+- **`MediatorUseShims`**, independent of `MediatorVerify`:
   - It builds the real Windows products with `SqliteShim` (System32 `winsqlite3.dll`) and `HashingShim`, from an empty local feed, without Native AOT. No NuGet download at all.
   - `publish-release.ps1` falls back to it when NuGet restore fails (`-UseShims`, `-NoShimFallback`). A missing MSVC toolchain now only drops Native AOT.
 - **Hotkeys:**
@@ -19,14 +19,14 @@ V9 builds on V8 (commit `a033d7f`). All 110 V8 tests still pass, and 9 V9 tests 
   - `HotkeyManager.Start` and `Rebind`.
   - The tray menu and tooltip show the active hotkey.
 - **Session continuation:**
-  - `RunningJob.SessionId`, `ContinuableSession`, `CockpitRuntime.LastContinuableSession` and `JobSpecFactory.Continue`.
+  - `RunningJob.SessionId`, `ContinuableSession`, `MediatorRuntime.LastContinuableSession` and `JobSpecFactory.Continue`.
   - `JobSpec.ContinueSessionId` makes the runtime run `claude -p --resume <id>`, or `claude --resume` in the terminal, in the same folder with a new job and grant. Only safe-token ids are accepted, and the session is pinned to Claude Code.
   - The overlay shows **↩ Continue session (id)**: selected by default, click to deselect, × or a folder switch removes it. `MainWindow.xaml` has the new chip.
-- **Tests:** 9 new ones. 2 compile WPF code against the stub, 2 cover hotkeys, 2 cover sessions, and 3 cover the offline build: the script fallback, MSBuild evaluation, and a real ship build plus `doctor` from an empty feed. The CI Windows job also builds everything with `CockpitUseShims=true`.
+- **Tests:** 9 new ones. 2 compile WPF code against the stub, 2 cover hotkeys, 2 cover sessions, and 3 cover the offline build: the script fallback, MSBuild evaluation, and a real ship build plus `doctor` from an empty feed. The CI Windows job also builds everything with `MediatorUseShims=true`.
 
 ### Changed
 
-- **The shims** are renamed `Microsoft.Data.Sqlite.CockpitShim` and `System.IO.Hashing.CockpitShim`, and are no longer marked verify-only.
+- **The shims** are renamed `Microsoft.Data.Sqlite.MediatorShim` and `System.IO.Hashing.MediatorShim`, and are no longer marked verify-only.
 - **SQLite loading on Windows:** System32 first, then the shim's own folder, never PATH.
 - **`publish-release.ps1`:** builds come from a publish plan (`Get-PublishPlan`). `VERSION.txt` says V9 and which dependencies the package used.
 - **A test assertion:** one V7 assertion text changed, because Ctrl+Enter is now refused for needing a second modifier, not as unsupported.
@@ -38,23 +38,23 @@ V9 builds on V8 (commit `a033d7f`). All 110 V8 tests still pass, and 9 V9 tests 
 ### Release hygiene
 
 - V8 is committed as `a033d7f` and V9 as the commit after it, and the working tree is clean.
-- `cockpit-v9.zip` is made from the clean tree.
+- `mediator-v9.zip` is made from the clean tree.
 
 ## V8: Windows stabilized release candidate (2026-10-23)
 
-V8 builds on V7 (commit `fb0179c`) and targets the Windows friction that V7's offline checks could not see. All 100 V7 tests still pass with their original assertions, and 10 V8 tests were added (110 in total). With `COCKPIT_LIVE_PYTHON` set, 108 run and pass; the 2 skips are the Windows-only NTFS and sharing-violation tests. Without it, 102 pass and the 6 live tests are skipped. The six builds in `verify/run-tests.sh` have 0 warnings with `TreatWarningsAsErrors=true`.
+V8 builds on V7 (commit `fb0179c`) and targets the Windows friction that V7's offline checks could not see. All 100 V7 tests still pass with their original assertions, and 10 V8 tests were added (110 in total). With `MEDIATOR_LIVE_PYTHON` set, 108 run and pass; the 2 skips are the Windows-only NTFS and sharing-violation tests. Without it, 102 pass and the 6 live tests are skipped. The six builds in `verify/run-tests.sh` have 0 warnings with `TreatWarningsAsErrors=true`.
 
 ### Fixed
 
-- **Theme loading by absolute pack URI** (`ThemeManager`, new `Cockpit.UI.ThemeSources`). Themes load from `pack://application:,,,/AiCockpit;component/Themes/<name>.xaml` with `UriKind.Absolute` instead of a relative `/AiCockpit;component/…` URI. If the compiled resource still cannot be found, the loose copy next to the exe is used (`Themes\<name>.xaml`, copied at build and publish by `Cockpit.Wpf.csproj`). If both fail, the current theme stays and a tray notice says why. A missing theme no longer stops the app. `App.xaml` merges HoloHud by the same absolute URI.
+- **Theme loading by absolute pack URI** (`ThemeManager`, new `Mediator.UI.ThemeSources`). Themes load from `pack://application:,,,/Mediator;component/Themes/<name>.xaml` with `UriKind.Absolute` instead of a relative `/Mediator;component/…` URI. If the compiled resource still cannot be found, the loose copy next to the exe is used (`Themes\<name>.xaml`, copied at build and publish by `Mediator.Wpf.csproj`). If both fail, the current theme stays and a tray notice says why. A missing theme no longer stops the app. `App.xaml` merges HoloHud by the same absolute URI.
 - **Desktop apps found without PATH** (new `DesktopAppLocator`, through `ComponentLocator.FindDesktopApp`).
   - **DaVinci Resolve**: `HKLM\SOFTWARE\Blackmagic Design\DaVinci Resolve`, Apps & features (Studio detected from its name), and `%ProgramFiles%`, `%ProgramW6432%` or `%ProgramFiles(x86)%\Blackmagic Design\DaVinci Resolve\Resolve.exe`.
   - **Blender**: version folders matched by wildcard (`Blender Foundation\Blender 4.2`, `Blender 5.1`, …; the newest wins) under Program Files and `%LOCALAPPDATA%\Programs`, plus `HKLM`/`HKCU\SOFTWARE\BlenderFoundation`, Apps & features and Steam.
   - **SolidWorks**: `HKLM\SOFTWARE\SolidWorks\SOLIDWORKS <year>\Setup` (newest year wins, with its `api\redist`), the `SldWorks.Application` COM registration, Apps & features and `C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe`.
-  - `COCKPIT_SOLIDWORKS`, `COCKPIT_RESOLVE` and `COCKPIT_BLENDER` override the search. PATH still wins for Blender.
-  - Used by `ConnectorProbe` (the Connectors tab now says where each app was found or where it looked), `ToolLocator.Blender`, the Resolve scripting environment (`fusionscript.dll` from the actual install folder) and `cockpit doctor` (new "<app> install" lines).
-- **Builds without SolidWorks.** A missing `SolidWorks.Interop.sldworks.dll` is now warning **COCKPIT001** instead of an error. It never fails `-warnaserror` builds. The build defines `SOLIDWORKS_NOT_INSTALLED`, and `cockpit-swx-worker` is built with `SwxUnavailableHost`, which answers every call with `solidworks_not_installed` / "SolidWorks assemblies not installed on this machine…". `SwxToolProvider` tells the model not to retry. `-p:CockpitRequireSolidWorks=true` (or `publish-release.ps1 -RequireSolidWorks`, `check-windows-build.ps1 -CheckSolidWorks`) restores the hard error as **COCKPIT002**. The worker's host surface moved to `ISwxHost` (`SwxHostContracts.cs`); `SwxComHost.cs` and `SwxConnector.cs` compile only when the interop exists.
-- **Panel placement on multi-monitor and mixed-DPI setups** (new `Cockpit.UI.PanelPlacement`, rewritten `MonitorPlacement`, `MainWindow`).
+  - `MEDIATOR_SOLIDWORKS`, `MEDIATOR_RESOLVE` and `MEDIATOR_BLENDER` override the search. PATH still wins for Blender.
+  - Used by `ConnectorProbe` (the Connectors tab now says where each app was found or where it looked), `ToolLocator.Blender`, the Resolve scripting environment (`fusionscript.dll` from the actual install folder) and `mediator-cli doctor` (new "<app> install" lines).
+- **Builds without SolidWorks.** A missing `SolidWorks.Interop.sldworks.dll` is now warning **MEDIATOR001** instead of an error. It never fails `-warnaserror` builds. The build defines `SOLIDWORKS_NOT_INSTALLED`, and `mediator-swx-worker` is built with `SwxUnavailableHost`, which answers every call with `solidworks_not_installed` / "SolidWorks assemblies not installed on this machine…". `SwxToolProvider` tells the model not to retry. `-p:MediatorRequireSolidWorks=true` (or `publish-release.ps1 -RequireSolidWorks`, `check-windows-build.ps1 -CheckSolidWorks`) restores the hard error as **MEDIATOR002**. The worker's host surface moved to `ISwxHost` (`SwxHostContracts.cs`); `SwxComHost.cs` and `SwxConnector.cs` compile only when the interop exists.
+- **Panel placement on multi-monitor and mixed-DPI setups** (new `Mediator.UI.PanelPlacement`, rewritten `MonitorPlacement`, `MainWindow`).
   - **Placement**: `MonitorPlacement.PlaceAboveTray(hwnd, anchor)` places the window in the corner next to the tray: bottom-right, top-right for a top taskbar, bottom-left for a left one.
   - **Usable area**: placement uses the work area of the monitor under the mouse. The strip of an auto-hide taskbar is kept clear.
   - **DPI**: sizes are converted at the target monitor's DPI (`GetDpiForMonitor`; `GetDpiForWindow` for the current size).
@@ -65,7 +65,7 @@ V8 builds on V7 (commit `fb0179c`) and targets the Windows friction that V7's of
 
 ### Added
 
-- `scripts/launch-cockpit.bat`, published as `dist\AiCockpit\launch.bat`. It is plain cmd, so no execution policy applies and no admin rights are needed. `launch.bat doctor` runs the installation check. It uses no parenthesised blocks, so paths such as `C:\Tools (x86)\…` work.
+- `scripts/launch-mediator.bat`, published as `dist\Mediator\launch.bat`. It is plain cmd, so no execution policy applies and no admin rights are needed. `launch.bat doctor` runs the installation check. It uses no parenthesised blocks, so paths such as `C:\Tools (x86)\…` work.
 - `scripts/install-shortcut.vbs`: Desktop and Start-menu shortcuts, per user, offering to start the app (`/nostartmenu`, `/quiet`).
 - `.gitattributes` keeps CRLF line endings for `.bat`, `.cmd` and `.vbs`.
 - `verify/stubs/SwxWorkerNoInterop`: the worker's own sources built with no interop at all, run as a real child process by the tests.
@@ -79,7 +79,7 @@ V8 builds on V7 (commit `fb0179c`) and targets the Windows friction that V7's of
 ### Changed
 
 - `publish-release.ps1` always publishes all four executables. It checks that the three loose themes and both launchers are present and leaves `.pdb` files out unless `-IncludeSymbols` is given. It also writes an ASCII `README-FIRST.txt` that covers SmartScreen and the launchers.
-- `MonitorPlacement.cs` is compiled by the Linux verify build (`Cockpit.Wpf` in verify mode), so its P/Invoke declarations compile on every run.
+- `MonitorPlacement.cs` is compiled by the Linux verify build (`Mediator.Wpf` in verify mode), so its P/Invoke declarations compile on every run.
 - CI (`.github/workflows/v6.yml`):
   - The Windows ship build also builds the worker with no SolidWorks.
   - The package job checks for the launchers and themes, and that the worker answers `solidworks_not_installed`.

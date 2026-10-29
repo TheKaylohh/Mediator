@@ -1,5 +1,5 @@
 // VERIFY ONLY: System.Windows.Media(.Animation/.Imaging), Input, Interop, Markup, System.IO.Packaging and the WPF
-// file dialogs, as far as Cockpit.Wpf uses them.
+// file dialogs, as far as Mediator.Wpf uses them.
 #nullable disable
 using System.Xml;
 using System.Xml.Linq;
@@ -300,7 +300,7 @@ namespace Microsoft.Win32
     }
 }
 
-namespace Cockpit.Verify.WpfStub
+namespace Mediator.Verify.WpfStub
 {
     /// <summary>Test hooks: what the stub does where real WPF would load a compiled resource.</summary>
     public static class StubHooks

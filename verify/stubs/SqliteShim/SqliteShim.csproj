@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Offline stand-in for Microsoft.Data.Sqlite (V9: no longer verify-only). The subset Cockpit.Core uses, over the OS's
+  <!-- Offline stand-in for Microsoft.Data.Sqlite (V9: no longer verify-only). The subset Mediator.Core uses, over the OS's
        own SQLite: System32\winsqlite3.dll on Windows 10/11, libsqlite3 elsewhere. Used by verify builds and by offline ship
-       builds (CockpitUseShims=true); NuGet ship builds use the real package. The whole test suite runs on it. -->
+       builds (MediatorUseShims=true); NuGet ship builds use the real package. The whole test suite runs on it. -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>Microsoft.Data.Sqlite.CockpitShim</AssemblyName>
+    <AssemblyName>Microsoft.Data.Sqlite.MediatorShim</AssemblyName>
     <RootNamespace>Microsoft.Data.Sqlite</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);CA1305;CA1031</NoWarn>

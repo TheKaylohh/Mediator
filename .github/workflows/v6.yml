@@ -21,7 +21,7 @@ jobs:
         with: { dotnet-version: "8.0.x" }
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap libsqlite3-0
       - name: Static checks (format, analyzers as errors)
-        run: dotnet format Cockpit.sln --verify-no-changes -p:CockpitVerify=true || echo "::warning::dotnet format reported differences"
+        run: dotnet format Mediator.sln --verify-no-changes -p:MediatorVerify=true || echo "::warning::dotnet format reported differences"
       - name: Offline suite (warnings as errors)
         run: bash verify/run-tests.sh
       - name: Offline suite as root (permission and tmpfs fault tests need root to set up)
@@ -37,11 +37,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap ffmpeg libsqlite3-0
-      - run: python -m venv /opt/cockpit-pyv && /opt/cockpit-pyv/bin/pip install -r verify/live-requirements.txt
+      - run: python -m venv /opt/mediator-pyv && /opt/mediator-pyv/bin/pip install -r verify/live-requirements.txt
       - name: Offline + live suite (build123d, bpy, PyMuPDF, SymPy, ffprobe, bubblewrap)
-        run: COCKPIT_LIVE_PYTHON=/opt/cockpit-pyv/bin/python bash verify/run-tests.sh
+        run: MEDIATOR_LIVE_PYTHON=/opt/mediator-pyv/bin/python bash verify/run-tests.sh
       - name: Benchmarks (published as an artifact; not a pass/fail gate)
-        run: dotnet verify/tests/Cockpit.Tests/bin/Debug/net8.0/Cockpit.Tests.dll --bench src/Cockpit.Bridge/bin/Debug/net8.0/cockpit-mcp-bridge.dll bench.json
+        run: dotnet verify/tests/Mediator.Tests/bin/Debug/net8.0/Mediator.Tests.dll --bench src/Mediator.Bridge/bin/Debug/net8.0/mediator-mcp-bridge.dll bench.json
       - uses: actions/upload-artifact@v4
         with: { name: benchmarks-linux, path: bench.json }
 
@@ -64,24 +64,24 @@ jobs:
       - name: Ship build (NuGet SQLite + hashing, WPF) without SolidWorks interop
         shell: pwsh
         run: |
-          dotnet build src/Cockpit.Bridge -c Release -p:TreatWarningsAsErrors=true
-          dotnet build src/Cockpit.CliHost -c Release -p:TreatWarningsAsErrors=true
-          dotnet build src/Cockpit.Wpf -c Release -p:TreatWarningsAsErrors=true
-          # V8: no SolidWorks on the runner, so the worker builds with SOLIDWORKS_NOT_INSTALLED (warning COCKPIT001, not an error)
-          dotnet build src/Cockpit.SwxWorker -c Release -p:TreatWarningsAsErrors=true -warnaserror
-      - name: V9 offline build (CockpitUseShims=true, no NuGet) of the real WPF overlay and every executable
+          dotnet build src/Mediator.Bridge -c Release -p:TreatWarningsAsErrors=true
+          dotnet build src/Mediator.CliHost -c Release -p:TreatWarningsAsErrors=true
+          dotnet build src/Mediator.Wpf -c Release -p:TreatWarningsAsErrors=true
+          # V8: no SolidWorks on the runner, so the worker builds with SOLIDWORKS_NOT_INSTALLED (warning MEDIATOR001, not an error)
+          dotnet build src/Mediator.SwxWorker -c Release -p:TreatWarningsAsErrors=true -warnaserror
+      - name: V9 offline build (MediatorUseShims=true, no NuGet) of the real WPF overlay and every executable
         shell: pwsh
         run: |
-          foreach ($p in 'src/Cockpit.Wpf', 'src/Cockpit.CliHost', 'src/Cockpit.Bridge', 'src/Cockpit.SwxWorker') {
-            dotnet build $p -c Release -p:CockpitUseShims=true -p:TreatWarningsAsErrors=true
+          foreach ($p in 'src/Mediator.Wpf', 'src/Mediator.CliHost', 'src/Mediator.Bridge', 'src/Mediator.SwxWorker') {
+            dotnet build $p -c Release -p:MediatorUseShims=true -p:TreatWarningsAsErrors=true
             if ($LASTEXITCODE -ne 0) { throw "offline build failed: $p" }
           }
       - name: Clean publish and doctor
         shell: pwsh
         run: |
-          dotnet publish src/Cockpit.CliHost -c Release -o dist
-          dotnet publish src/Cockpit.Bridge -c Release -o dist
-          ./dist/cockpit.exe doctor --json
+          dotnet publish src/Mediator.CliHost -c Release -o dist
+          dotnet publish src/Mediator.Bridge -c Release -o dist
+          ./dist/mediator-cli.exe doctor --json
 
   windows-release-package:
     # V7/V8: the real WPF compile (themes by pack URI, orb, Connectors tab, first-run card, V8 placement hook) and the
@@ -92,21 +92,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: "8.0.x" }
-      - name: Release package (dist/AiCockpit)
+      - name: Release package (dist/Mediator)
         shell: pwsh
         run: ./scripts/publish-release.ps1 -SkipDoctor
       - name: Package smoke test
         shell: pwsh
         run: |
-          ./dist/AiCockpit/cockpit.exe doctor --json
+          ./dist/Mediator/mediator-cli.exe doctor --json
           # V8: the launchers and the loose themes are in the package; the worker without SolidWorks says so.
-          foreach ($f in 'launch.bat', 'install-shortcut.vbs', 'cockpit-swx-worker.exe', 'Themes/HoloHud.xaml', 'Themes/ProDark.xaml', 'Themes/CleanLight.xaml') {
-            if (-not (Test-Path "dist/AiCockpit/$f")) { throw "$f missing from the package" }
+          foreach ($f in 'launch.bat', 'install-shortcut.vbs', 'mediator-swx-worker.exe', 'Themes/HoloHud.xaml', 'Themes/ProDark.xaml', 'Themes/CleanLight.xaml') {
+            if (-not (Test-Path "dist/Mediator/$f")) { throw "$f missing from the package" }
           }
-          $reply = '{"id":1,"method":"health"}' | ./dist/AiCockpit/cockpit-swx-worker.exe
+          $reply = '{"id":1,"method":"health"}' | ./dist/Mediator/mediator-swx-worker.exe
           if ($reply -notmatch 'solidworks_not_installed') { throw "unexpected worker reply: $reply" }
       - uses: actions/upload-artifact@v4
-        with: { name: AiCockpit-win-x64, path: dist/AiCockpit }
+        with: { name: Mediator-win-x64, path: dist/Mediator }
 
   solidworks-integration:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.licensed }}

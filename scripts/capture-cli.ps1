@@ -7,12 +7,12 @@
 .DESCRIPTION
   Cases (run only the ones you want; each costs a little subscription usage):
     success     "Reply with the word ok."                         (plain result + usage)
-    tools       a prompt that makes the CLI call one Cockpit read-only tool through a throwaway job
+    tools       a prompt that makes the CLI call one Mediator read-only tool through a throwaway job
     cancel      a long prompt, the process killed after 5 s        (EOF without a result)
     ratelimit   not forced: if you hit a limit during normal use, rerun 'success' then and it is captured
 
   Billing variables (ANTHROPIC_API_KEY, GEMINI_API_KEY, ...) are removed from the child environment so the
-  capture uses the subscription, exactly as the Cockpit does. Review every file before committing it: the
+  capture uses the subscription, exactly as the Mediator does. Review every file before committing it: the
   captures contain your session ids and model names (no credentials are printed by either CLI).
 
 .EXAMPLE
@@ -27,7 +27,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $out = Join-Path $root 'verify\fixtures\real'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $scrub = 'ANTHROPIC_API_KEY','CLAUDE_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_CLOUD_PROJECT','GOOGLE_APPLICATION_CREDENTIALS'
-$work = Join-Path $env:TEMP ("cockpit-capture-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$work = Join-Path $env:TEMP ("mediator-capture-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $work | Out-Null
 
 function Invoke-Capture([string]$Name, [string]$Exe, [string[]]$CliArgs, [string]$Prompt, [int]$KillAfterSeconds = 0, [hashtable]$ExtraEnv = @{}) {

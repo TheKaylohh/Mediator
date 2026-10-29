@@ -10,7 +10,7 @@
     second base class, or a hand-written Main fails here as it would on Windows. Element types must be known to
     WpfCompileStub (an unknown one is a build error that names it).
   -->
-  <UsingTask TaskName="CockpitGenerateXamlPartials" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+  <UsingTask TaskName="MediatorGenerateXamlPartials" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <XamlFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
       <OutputFile ParameterType="System.String" Required="true" />
@@ -115,11 +115,11 @@
     </Task>
   </UsingTask>
 
-  <Target Name="CockpitXamlPartials" BeforeTargets="CoreCompile" Inputs="@(CockpitXamlPage);$(MSBuildThisFileFullPath)" Outputs="$(IntermediateOutputPath)CockpitXaml.g.cs">
-    <CockpitGenerateXamlPartials XamlFiles="@(CockpitXamlPage)" OutputFile="$(IntermediateOutputPath)CockpitXaml.g.cs" />
+  <Target Name="MediatorXamlPartials" BeforeTargets="CoreCompile" Inputs="@(MediatorXamlPage);$(MSBuildThisFileFullPath)" Outputs="$(IntermediateOutputPath)MediatorXaml.g.cs">
+    <MediatorGenerateXamlPartials XamlFiles="@(MediatorXamlPage)" OutputFile="$(IntermediateOutputPath)MediatorXaml.g.cs" />
   </Target>
   <!-- Added at evaluation time so incremental builds (when the target is skipped) still compile it. -->
   <ItemGroup>
-    <Compile Include="$(IntermediateOutputPath)CockpitXaml.g.cs" />
+    <Compile Include="$(IntermediateOutputPath)MediatorXaml.g.cs" />
   </ItemGroup>
 </Project>

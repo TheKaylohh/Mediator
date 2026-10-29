@@ -115,7 +115,7 @@ PASS  fs-auth: journal rejects link moves at plan time and stops a move whose de
 PASS  attachments: snapshot/folder/PNG staging; links, FIFO, /proc, /dev, credentials, home, data folder, drive root, oversize, fake PNG refused; discard; prune (30 ms)
 PASS  attachments: read-only roots allow read/list, deny create/move/mkdir (read_only); never remove write access; links still refused (5 ms)
 PASS  attachments through the bus: listed, text + image content, other job refused, files tool cannot move them, live attach audited; V6 tool lists unchanged without attachments (658 ms)
-PASS  custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported (15260 ms)
+PASS  custom MCP: validate, 15 s health ping, mediator.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported (15260 ms)
 PASS  custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited (567 ms)
 PASS  connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys (18 ms)
 PASS  overlay V7: theme cycle, ThemeChanged, settings.json persisted and reloaded; malformed settings kept as .bad; hotkey parser (19 ms)

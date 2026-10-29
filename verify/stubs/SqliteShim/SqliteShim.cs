@@ -1,5 +1,5 @@
-// Offline stand-in for Microsoft.Data.Sqlite (V9: used by verify builds AND by offline ship builds, CockpitUseShims=true).
-// Implements the subset of Microsoft.Data.Sqlite that Cockpit.Core uses, with the same strictness on the points that
+// Offline stand-in for Microsoft.Data.Sqlite (V9: used by verify builds AND by offline ship builds, MediatorUseShims=true).
+// Implements the subset of Microsoft.Data.Sqlite that Mediator.Core uses, with the same strictness on the points that
 // commonly cause bugs (null parameter values, commands that ignore an active transaction, NULL columns read as strings).
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -9,7 +9,7 @@ using System.Text;
 namespace Microsoft.Data.Sqlite;
 
 /// <summary>
-/// "sqlite3" is libsqlite3.so on Linux. Windows 10/11 ship SQLite as System32\winsqlite3.dll, so the Cockpit runs on
+/// "sqlite3" is libsqlite3.so on Linux. Windows 10/11 ship SQLite as System32\winsqlite3.dll, so the Mediator runs on
 /// Windows without NuGet or a bundled native library (x64/ARM64; on x86 winsqlite3 uses stdcall, and the package is
 /// win-x64). On Windows only System32 is searched first, then this assembly's own folder: a sqlite3.dll planted in a
 /// PATH folder or the current directory is never loaded.
@@ -324,7 +324,7 @@ public sealed class SqliteDataReader : IDisposable, IAsyncDisposable
         Native.SQLITE_FLOAT => Native.sqlite3_column_double(stmt, col),
         Native.SQLITE_TEXT => Native.Utf8(Native.sqlite3_column_text(stmt, col)),
         Native.SQLITE_NULL => null,
-        _ => throw new NotSupportedException("BLOB columns are not used by Cockpit.Core."),
+        _ => throw new NotSupportedException("BLOB columns are not used by Mediator.Core."),
     };
 
     public bool Read() => ++_index < _rows.Count;

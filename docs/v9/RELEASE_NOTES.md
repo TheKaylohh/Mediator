@@ -1,4 +1,4 @@
-# AI Cockpit V9: Windows release candidate
+# Mediator V9: Windows release candidate
 
 V9 closes the five gaps found in the V8 review. Every C# file of the overlay is now compiled on every test run. The Windows build no longer depends on NuGet. The hotkey survives conflicts and shows in the tray. Follow-up prompts continue the previous Claude session. And V8 and V9 are committed cleanly.
 
@@ -13,7 +13,7 @@ V9 closes the five gaps found in the V8 review. Every C# file of the overlay is 
 >
 > The `windows-release-package` CI job and the checklist below are the remaining gate.
 
-## 1. Every `src/Cockpit.Wpf/*.cs` file is compiled in verify builds
+## 1. Every `src/Mediator.Wpf/*.cs` file is compiled in verify builds
 
 `verify/stubs/WpfCompileStub` is a compile-only stand-in for the WPF and Windows Forms surface the overlay uses. In WPF that covers windows, application, resources, dependency properties, animations, imaging, input, interop, markup, `System.IO.Packaging` and the WPF file dialog. In Windows Forms and System.Drawing it covers the tray icon.
 
@@ -30,41 +30,41 @@ How it stays faithful to the real assemblies:
 - `Main()` for the application;
 - one typed field per `x:Name`/`Name` in the root name scope. Templates and styles are excluded, as in WPF.
 
-In verify mode `Cockpit.Wpf.csproj` compiles all 10 `.cs` files plus the generated partials into `AiCockpit.dll`, with warnings as errors. `dotnet build Cockpit.sln -p:CockpitVerify=true -p:TreatWarningsAsErrors=true` gives 0 warnings and 0 errors. The compile pass found no errors in the V8 code.
+In verify mode `Mediator.Wpf.csproj` compiles all 10 `.cs` files plus the generated partials into `Mediator.dll`, with warnings as errors. `dotnet build Mediator.sln -p:MediatorVerify=true -p:TreatWarningsAsErrors=true` gives 0 warnings and 0 errors. The compile pass found no errors in the V8 code.
 
 Tests:
 
 - **Logic against the stub:** the value converters run against it. So does ThemeManager: its absolute pack URIs, and the compiled → loose file → keep-current fallback, including a corrupt loose file.
 - **Mutation build:** a mutated copy must fail to compile. The mutations are a dropped `using System.IO`, an `x:Name` renamed only in the XAML, and a member that `NotifyIcon` does not have. All three were caught before the test was written, too.
 
-## 2. Offline builds: `CockpitUseShims`, decoupled from `CockpitVerify`
+## 2. Offline builds: `MediatorUseShims`, decoupled from `MediatorVerify`
 
-- **`CockpitVerify`** still means "build everything as `net8.0` against the stand-ins". **`CockpitUseShims`** now decides where SQLite and xxHash64 come from:
+- **`MediatorVerify`** still means "build everything as `net8.0` against the stand-ins". **`MediatorUseShims`** now decides where SQLite and xxHash64 come from:
 
   | | SQLite and xxHash64 from | Restore sources | Native AOT and AOT/trim analyzers |
   | --- | --- | --- | --- |
   | `false` (default for ship builds) | NuGet | NuGet | on |
-  | `true` (default when `CockpitVerify=true`) | `SqliteShim` / `HashingShim` | the empty `verify/local-feed` only | off (they download ILCompiler and ILLink) |
+  | `true` (default when `MediatorVerify=true`) | `SqliteShim` / `HashingShim` | the empty `verify/local-feed` only | off (they download ILCompiler and ILLink) |
 
-- **The SQLite shim on Windows** P/Invokes `System32\winsqlite3.dll`, which ships with Windows 10 and 11. V9 hardens that load: Windows is searched in System32, then the shim's own folder, and nowhere else, so a `sqlite3.dll` planted in a PATH folder is never loaded. The shim assemblies are renamed `*.CockpitShim.dll`, since they can now ship.
-- **`publish-release.ps1`** restores every project from NuGet first. If that fails (no network, or a proxy blocking nuget.org), it falls back to `-p:CockpitUseShims=true`. The fallback build is framework-dependent, because runtime packs are NuGet downloads; the .NET 8 Desktop Runtime installed with the SDK runs it. The bridge is a normal .NET app in that build.
+- **The SQLite shim on Windows** P/Invokes `System32\winsqlite3.dll`, which ships with Windows 10 and 11. V9 hardens that load: Windows is searched in System32, then the shim's own folder, and nowhere else, so a `sqlite3.dll` planted in a PATH folder is never loaded. The shim assemblies are renamed `*.MediatorShim.dll`, since they can now ship.
+- **`publish-release.ps1`** restores every project from NuGet first. If that fails (no network, or a proxy blocking nuget.org), it falls back to `-p:MediatorUseShims=true`. The fallback build is framework-dependent, because runtime packs are NuGet downloads; the .NET 8 Desktop Runtime installed with the SDK runs it. The bridge is a normal .NET app in that build.
   - `-UseShims` builds offline from the start; `-NoShimFallback` fails instead.
   - A missing MSVC toolchain no longer stops the script: it warns and drops Native AOT.
   - `VERSION.txt` records which dependencies the package used.
 - **Tests:**
   - **MSBuild evaluation:** the switch is checked with `dotnet msbuild -getProperty/-getItem`, not as text.
-  - **Real offline build:** the console host and bridge are built in ship mode (`CockpitVerify=false`, `CockpitUseShims=true`) from an empty feed. The restore graph contains 0 packages and the builds have 0 warnings. `cockpit doctor --json` from that build opens real `audit.db`/`journal.db`/`operations.db` through the shim, and the bridge self-test passes.
-  - **CI:** the Windows ship job also builds the real WPF overlay and every executable with `CockpitUseShims=true`.
+  - **Real offline build:** the console host and bridge are built in ship mode (`MediatorVerify=false`, `MediatorUseShims=true`) from an empty feed. The restore graph contains 0 packages and the builds have 0 warnings. `mediator-cli doctor --json` from that build opens real `audit.db`/`journal.db`/`operations.db` through the shim, and the bridge self-test passes.
+  - **CI:** the Windows ship job also builds the real WPF overlay and every executable with `MediatorUseShims=true`.
 
 ## 3. Hotkeys: parser, live rebind with fallback, tray text
 
 The review said the hotkey was hard-coded. That was not quite right: V7 already registered the hotkey parsed from settings and re-registered it when the setup card changed it. But three gaps were real, and V9 fixes them:
 
-- **A taken combination left no hotkey at all.** `HotkeyBinding` (Cockpit.UI, tested off Windows) now handles this:
+- **A taken combination left no hotkey at all.** `HotkeyBinding` (Mediator.UI, tested off Windows) now handles this:
   - **At start:** the configured hotkey, else Ctrl+Shift+Space, else none (the tray icon still works). The user's setting is not overwritten.
   - **On rebind:** the old hotkey is released, the new one registered at once. If the new one is taken (ERROR_HOTKEY_ALREADY_REGISTERED), the previous one is registered again and stays active.
   - **In the setup card:** it rebinds before saving. A conflict keeps the card open with the reason, and nothing is saved.
-- **The tray menu always said Ctrl+Shift+Space.** It now shows the active hotkey, as `Open AI Cockpit  (Ctrl+Alt+J)`, and the tooltip follows it.
+- **The tray menu always said Ctrl+Shift+Space.** It now shows the active hotkey, as `Open Mediator  (Ctrl+Alt+J)`, and the tooltip follows it.
 - **Keys:** `HotkeyParser.TryParse(gesture, out modifiers, out virtualKey, out normalizedDisplay)` sits over the one existing parser, and now also accepts Tab, Enter and `~` (OemTilde). Tab and Enter need two modifiers. Alt+Tab, Win+Tab and Ctrl+Alt+Tab are refused, since they belong to the task switcher.
 
 `HotkeyManager` is now only the Win32 registrar and exposes `Start` and `Rebind(string)`.
@@ -93,7 +93,7 @@ The runtime passes `--resume <id>` to `claude -p`, and to the interactive termin
 
 **Safety.** The session id came from a previous run's output and goes onto a command line, and through `claude.cmd` also into cmd.exe. So it must be a plain token: `[A-Za-z0-9][A-Za-z0-9_-]{7,127}`, never starting with `-`. The runtime and the launch builder both check it.
 
-**Why the old workspace is not reused.** Claude Code stores sessions per working folder, and Claude jobs already run in the user's folder. So `--resume` works with a new job workspace. That workspace has a new grant and token; the old job's token was revoked when it ended and is never revived. The tools keep the same names (`mcp__cockpit__…`), so the resumed conversation's history still matches.
+**Why the old workspace is not reused.** Claude Code stores sessions per working folder, and Claude jobs already run in the user's folder. So `--resume` works with a new job workspace. That workspace has a new grant and token; the old job's token was revoked when it ended and is never revived. The tools keep the same names (`mcp__mediator__…`), so the resumed conversation's history still matches.
 
 Tests:
 
@@ -112,16 +112,16 @@ The full suite also surfaced a race in my own new code: `Completion` completed b
 - **V8 commit:** V8 is its own commit (`a033d7f`) on top of V7 (`fb0179c`).
 - **V9 commit:** V9 is a second commit, and `git status --porcelain` is empty.
 - **No open TODOs:** `git grep -n TODO src/` finds nothing.
-- **Clean zip:** `cockpit-v9.zip` is made from a clean tree, with no `bin/`, `obj/` or `.vs/`.
+- **Clean zip:** `mediator-v9.zip` is made from a clean tree, with no `bin/`, `obj/` or `.vs/`.
 
 ## Verification
 
 | Check | Result |
 | --- | --- |
-| `bash verify/run-tests.sh` (offline) | **111 passed, 0 failed**, 8 skipped: 6 live tests need `COCKPIT_LIVE_PYTHON`, 2 need Windows ([transcript](test-run-linux-offline.txt)) |
-| `COCKPIT_LIVE_PYTHON=… bash verify/run-tests.sh` | **117 passed, 0 failed**, 2 skipped (Windows-only NTFS and sharing-violation tests) ([transcript](test-run-linux-live.txt)) |
-| Warnings | 0 in all six builds of the run, including `src/Cockpit.Wpf` (all 10 `.cs` files) |
-| `dotnet build Cockpit.sln -p:CockpitVerify=true -p:TreatWarningsAsErrors=true` | 0 warnings, 0 errors |
+| `bash verify/run-tests.sh` (offline) | **111 passed, 0 failed**, 8 skipped: 6 live tests need `MEDIATOR_LIVE_PYTHON`, 2 need Windows ([transcript](test-run-linux-offline.txt)) |
+| `MEDIATOR_LIVE_PYTHON=… bash verify/run-tests.sh` | **117 passed, 0 failed**, 2 skipped (Windows-only NTFS and sharing-violation tests) ([transcript](test-run-linux-live.txt)) |
+| Warnings | 0 in all six builds of the run, including `src/Mediator.Wpf` (all 10 `.cs` files) |
+| `dotnet build Mediator.sln -p:MediatorVerify=true -p:TreatWarningsAsErrors=true` | 0 warnings, 0 errors |
 | V8 baseline | all 110 V8 tests still pass. Two assertion texts changed on purpose: Ctrl+Enter is now refused with "add a second modifier" instead of "not supported" (Enter became a supported key), and the release-script test finds the project table in its new place |
 
 ## Windows acceptance checklist (first run)

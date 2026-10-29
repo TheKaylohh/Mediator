@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>AI Cockpit User Guide</title>
+<html lang="en"><head><meta charset="utf-8"><title>Mediator User Guide</title>
 <style>
   @page { size: A4; margin: 18mm 16mm; }
   body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1b2330; }
@@ -17,7 +17,7 @@
   .toc li { margin: 1px 0; }
 </style></head><body>
 
-<h1>AI Cockpit User Guide</h1>
+<h1>Mediator User Guide</h1>
 <div class="sub">The overlay, the full-screen chat app, actions, connectors, building a clean release, and extending it with new connectors and CLIs.</div>
 
 <ol class="toc">
@@ -29,7 +29,7 @@
 
 <h2>1. Quick start</h2>
 <ol>
-  <li>Start <b>AiCockpit.exe</b> from <code>dist\AiCockpit\</code> (or the desktop shortcut made by <code>install-shortcut.vbs</code>). It lives in the system tray.</li>
+  <li>Start <b>Mediator.exe</b> from <code>dist\Mediator\</code> (or the desktop shortcut made by <code>install-shortcut.vbs</code>). It lives in the system tray.</li>
   <li>Press <b>Ctrl+Shift+Space</b> (default hotkey) or click the tray icon to open the overlay. <b>Esc</b> hides it.</li>
   <li>Type a question and press <b>Enter</b>. The answer appears in the Actions tab; the job appears in the Jobs tab.</li>
   <li>Click <b>Full view</b> (or the expand icon on a job) to continue in the full-screen chat app.</li>
@@ -59,7 +59,7 @@
 <p>It shares everything with the overlay: a prompt sent in one shows in the other. Closing the window only hides it.</p>
 
 <h2>4. Saved chats and resuming</h2>
-<p>Every chat is saved automatically when an answer finishes: your prompts, the CLI's answers and steps, the CLI/model badge, and the session id needed to resume. Files live in <code>%LOCALAPPDATA%\AiCockpit\chats\</code> (one JSON file per chat).</p>
+<p>Every chat is saved automatically when an answer finishes: your prompts, the CLI's answers and steps, the CLI/model badge, and the session id needed to resume. Files live in <code>%LOCALAPPDATA%\Mediator\chats\</code> (one JSON file per chat).</p>
 <ul>
   <li><b>Resume:</b> Full view → Chats → click a chat. The history loads and the Continue chip is set, so your next prompt continues it.</li>
   <li><b>Claude chats</b> resume the real session (<code>claude --resume</code>): full context.</li>
@@ -87,7 +87,7 @@
   <li>Tick <b>Needs a folder</b> if it works on files in a folder selected in Explorer or named in the prompt.</li>
   <li><b>Save action</b>. It appears as a tile; click <b>Run</b> and whatever is in the prompt box is added as input. The trash icon deletes it.</li>
 </ol>
-<p>Custom actions are stored in <code>%LOCALAPPDATA%\AiCockpit\settings.json</code>. The Cockpit tools they may use are inferred from the instructions and prompt (e.g. mentioning SolidWorks or a PDF).</p>
+<p>Custom actions are stored in <code>%LOCALAPPDATA%\Mediator\settings.json</code>. The Mediator tools they may use are inferred from the instructions and prompt (e.g. mentioning SolidWorks or a PDF).</p>
 
 <h2>6. Attachments and folders</h2>
 <p>A job's folder is chosen in this order: a folder path typed in the prompt, then the <b>Save to</b> folder, then the folder or files selected in File Explorer when you pressed the hotkey.</p>
@@ -111,54 +111,54 @@
 <h2>9. Connectors</h2>
 <ul>
   <li><b>CLIs:</b> Claude Code and Antigravity, with version and sign-in state. <b>Sign In</b> only appears when the CLI is not signed in; it opens a terminal with API-key variables removed so you sign in with your subscription.</li>
-  <li><b>Desktop apps:</b> SolidWorks, DaVinci Resolve, Blender. SolidWorks counts as available when installed; if it is not running, the Cockpit starts it when a SolidWorks job needs it.</li>
+  <li><b>Desktop apps:</b> SolidWorks, DaVinci Resolve, Blender. SolidWorks counts as available when installed; if it is not running, the Mediator starts it when a SolidWorks job needs it.</li>
   <li><b>Custom MCP:</b> see section 12.</li>
 </ul>
-<p>Run <code>cockpit doctor</code> (in <code>dist\AiCockpit\</code>) for a full prerequisite check.</p>
+<p>Run <code>mediator-cli doctor</code> (in <code>dist\Mediator\</code>) for a full prerequisite check.</p>
 
 <h2>10. Settings and themes</h2>
 <ul>
   <li>Themes: Holo HUD, Pro Dark, Clean Light (theme button in the header).</li>
-  <li>Hotkey: rebindable; if it conflicts with another app the Cockpit falls back and shows it in the tray tooltip.</li>
+  <li>Hotkey: rebindable; if it conflicts with another app the Mediator falls back and shows it in the tray tooltip.</li>
   <li>Run on startup: set on the first-run card.</li>
-  <li>All settings: <code>%LOCALAPPDATA%\AiCockpit\settings.json</code>. Data (jobs, audit, chats, attachments) lives in the same folder.</li>
+  <li>All settings: <code>%LOCALAPPDATA%\Mediator\settings.json</code>. Data (jobs, audit, chats, attachments) lives in the same folder.</li>
 </ul>
 
 <h2>11. Building a clean release (dist)</h2>
-<p>From the repository root in PowerShell, with the Cockpit closed (right-click tray icon → Exit):</p>
+<p>From the repository root in PowerShell, with the Mediator closed (right-click tray icon → Exit):</p>
 <pre>.\scripts\publish-release.ps1 -NoAot -FrameworkDependent</pre>
 <ul>
-  <li>Output: <code>dist\AiCockpit\</code> with AiCockpit.exe (overlay), cockpit.exe (CLI host), cockpit-swx-worker.exe, cockpit-mcp-bridge.exe, themes, launchers and this guide. The script finishes with <code>cockpit doctor</code>.</li>
+  <li>Output: <code>dist\Mediator\</code> with Mediator.exe (overlay), mediator-cli.exe (CLI host), mediator-swx-worker.exe, mediator-mcp-bridge.exe, themes, launchers and this guide. The script finishes with <code>mediator-cli doctor</code>.</li>
   <li><code>-NoAot</code>: builds the bridge as a normal .NET app. Needed on this machine because the .NET 8 Native AOT linker does not work with Visual Studio 18.</li>
   <li><code>-FrameworkDependent</code>: uses the installed .NET 8 Desktop Runtime instead of bundling one per program.</li>
   <li><code>-RunTests</code>: runs the offline test suite first.</li>
   <li>If a build fails with odd file conflicts, delete the <code>obj</code> folders under <code>src\</code> and run again.</li>
 </ul>
-<p>Quick dev run without packaging: <code>dotnet run --project src\Cockpit.Wpf</code>. Tests: <code>.\scripts\run-tests.ps1</code>.</p>
+<p>Quick dev run without packaging: <code>dotnet run --project src\Mediator.Wpf</code>. Tests: <code>.\scripts\run-tests.ps1</code>.</p>
 
 <h2>12. Adding connectors (custom MCP servers)</h2>
 <p>Any stdio MCP server can be added without code:</p>
 <ol>
   <li>Connectors tab → <b>+ Add Custom MCP</b>.</li>
   <li>Enter a name, the <b>full path</b> to the command (e.g. <code>C:\Program Files\nodejs\node.exe</code>) and its arguments.</li>
-  <li><b>Check and add</b>: the Cockpit starts it, pings it (15 s limit) and lists its tools.</li>
+  <li><b>Check and add</b>: the Mediator starts it, pings it (15 s limit) and lists its tools.</li>
 </ol>
 <ul>
   <li>Tools are registered as <code>ext_&lt;server&gt;_&lt;tool&gt;</code>. Every call shows an approval card and can never be auto-approved.</li>
-  <li>No environment variables are stored (no secrets in <code>cockpit.mcp.json</code>). If a server needs a key, wrap it in a script that reads the key itself.</li>
-  <li>Servers are saved in <code>%LOCALAPPDATA%\AiCockpit\cockpit.mcp.json</code>; you can disable or remove them in the tab.</li>
+  <li>No environment variables are stored (no secrets in <code>mediator.mcp.json</code>). If a server needs a key, wrap it in a script that reads the key itself.</li>
+  <li>Servers are saved in <code>%LOCALAPPDATA%\Mediator\mediator.mcp.json</code>; you can disable or remove them in the tab.</li>
 </ul>
 <h3>Built-in connector (code)</h3>
-<p>For a first-class connector like SolidWorks or Blender: add a tool provider in <code>src\Cockpit.Core</code> (see <code>Tools\ExternalTools.cs</code> and the tutor/files providers), register its tool names, add a <code>JobSpecFactory</code> recipe and an action tile in <code>DefaultActions()</code> (<code>CockpitOverlayViewModel.cs</code>), and a status probe in <code>Connectors\ConnectorProbe.cs</code>.</p>
+<p>For a first-class connector like SolidWorks or Blender: add a tool provider in <code>src\Mediator.Core</code> (see <code>Tools\ExternalTools.cs</code> and the tutor/files providers), register its tool names, add a <code>JobSpecFactory</code> recipe and an action tile in <code>DefaultActions()</code> (<code>MediatorOverlayViewModel.cs</code>), and a status probe in <code>Connectors\ConnectorProbe.cs</code>.</p>
 
 <h2>13. Adding a new CLI</h2>
 <p>A new AI CLI needs code in these places:</p>
 <table>
   <tr><th>File</th><th>Change</th></tr>
   <tr><td><code>Core\Jobs\ProviderRouter.cs</code></td><td>Add a value to <code>AiProvider</code>, its display name and id, its place in the category defaults, and a prompt prefix in <code>ParsePrefix</code>.</td></tr>
-  <tr><td><code>Core\Jobs\CliLaunchBuilder.cs</code> / <code>GeminiCli.cs</code></td><td>A launch builder: headless and interactive command lines, MCP config for the Cockpit bridge, API-key scrubbing.</td></tr>
+  <tr><td><code>Core\Jobs\CliLaunchBuilder.cs</code> / <code>GeminiCli.cs</code></td><td>A launch builder: headless and interactive command lines, MCP config for the Mediator bridge, API-key scrubbing.</td></tr>
   <tr><td><code>Core\Jobs\ClaudeStreamParser.cs</code></td><td>Parse its output stream into steps, answer text, session id and usage.</td></tr>
-  <tr><td><code>Core\Runtime\CockpitRuntime.cs</code></td><td>Locate the executable and start headless/interactive jobs with the new builder.</td></tr>
+  <tr><td><code>Core\Runtime\MediatorRuntime.cs</code></td><td>Locate the executable and start headless/interactive jobs with the new builder.</td></tr>
   <tr><td><code>Core\Connectors\ConnectorProbe.cs</code></td><td>Version probe, credential file location, sign-in command.</td></tr>
   <tr><td><code>UI\ConnectorsViewModel.cs</code></td><td>Add a row to <code>Clis</code> and a subscription pill in the overlay.</td></tr>
 </table>
@@ -167,10 +167,10 @@
 <h2>14. Troubleshooting</h2>
 <table>
   <tr><th>Symptom</th><th>Fix</th></tr>
-  <tr><td>Rebuilt but the exe has no new features</td><td>You ran the old <code>dist</code> copy. Close the Cockpit and run the publish script (section 11).</td></tr>
+  <tr><td>Rebuilt but the exe has no new features</td><td>You ran the old <code>dist</code> copy. Close the Mediator and run the publish script (section 11).</td></tr>
   <tr><td>"not signed in"</td><td>Connectors → Sign In, or run <code>claude</code> / <code>agy</code> once in a terminal.</td></tr>
-  <tr><td>SolidWorks job fails with elevation mismatch</td><td>Start SolidWorks normally, not "Run as administrator", and don't run the Cockpit elevated.</td></tr>
+  <tr><td>SolidWorks job fails with elevation mismatch</td><td>Start SolidWorks normally, not "Run as administrator", and don't run the Mediator elevated.</td></tr>
   <tr><td>Resume fails</td><td>Claude keeps sessions per working folder; if that folder was removed, start a new chat.</td></tr>
-  <tr><td>Anything else</td><td>Run <code>cockpit doctor</code>; the Activity tab shows every tool call and error.</td></tr>
+  <tr><td>Anything else</td><td>Run <code>mediator-cli doctor</code>; the Activity tab shows every tool call and error.</td></tr>
 </table>
 </body></html>

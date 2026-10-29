@@ -1,4 +1,4 @@
-// Offline stand-in for System.IO.Hashing (verify builds and offline ship builds, CockpitUseShims=true): streaming XXH64 with the same members as System.IO.Hashing.XxHash64 that Cockpit uses.
+// Offline stand-in for System.IO.Hashing (verify builds and offline ship builds, MediatorUseShims=true): streaming XXH64 with the same members as System.IO.Hashing.XxHash64 that Mediator uses.
 using System.Buffers.Binary;
 using System.Numerics;
 

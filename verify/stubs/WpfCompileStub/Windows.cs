@@ -1,4 +1,4 @@
-// VERIFY ONLY: System.Windows (WindowsBase / PresentationCore / PresentationFramework) surface used by Cockpit.Wpf.
+// VERIFY ONLY: System.Windows (WindowsBase / PresentationCore / PresentationFramework) surface used by Mediator.Wpf.
 #nullable disable
 using System.Collections;
 using System.Collections.ObjectModel;
@@ -261,7 +261,7 @@ namespace System.Windows
             get => _source;
             set
             {
-                var loaded = Cockpit.Verify.WpfStub.StubHooks.LoadResource(value);
+                var loaded = Mediator.Verify.WpfStub.StubHooks.LoadResource(value);
                 foreach (DictionaryEntry e in loaded._items) _items[e.Key] = e.Value;
                 _source = value;
             }

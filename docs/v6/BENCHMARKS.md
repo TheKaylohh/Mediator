@@ -1,10 +1,10 @@
 # Benchmarks
 
-These are measurements, not targets. They were taken once with `dotnet verify/tests/Cockpit.Tests/bin/Debug/net8.0/Cockpit.Tests.dll --bench <bridge.dll> docs/v6/benchmarks.json`. The raw numbers are in `benchmarks.json`.
+These are measurements, not targets. They were taken once with `dotnet verify/tests/Mediator.Tests/bin/Debug/net8.0/Mediator.Tests.dll --bench <bridge.dll> docs/v6/benchmarks.json`. The raw numbers are in `benchmarks.json`.
 
 **Environment:** Ubuntu 24.04.5 in a cloud container; 2 vCPU (Intel Xeon @ 2.80 GHz), 7.8 GiB RAM, ext4; .NET 8.0.32.
 
-**Build:** Debug, `CockpitVerify=true`. SQLite is the verify shim over the system libsqlite3, not the shipping Microsoft.Data.Sqlite. A Release build on the target Windows machine will differ. Expect slower process starts, because the bridge runs through `dotnet` here instead of as a native AOT executable.
+**Build:** Debug, `MediatorVerify=true`. SQLite is the verify shim over the system libsqlite3, not the shipping Microsoft.Data.Sqlite. A Release build on the target Windows machine will differ. Expect slower process starts, because the bridge runs through `dotnet` here instead of as a native AOT executable.
 
 | What | Result | Notes |
 |---|---|---|

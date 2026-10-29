@@ -1,34 +1,34 @@
 <#
 .SYNOPSIS
-  Builds every AI Cockpit project in Release mode and packages a clean, ready-to-run folder: dist\AiCockpit\.
+  Builds every Mediator project in Release mode and packages a clean, ready-to-run folder: dist\Mediator\.
 
 .DESCRIPTION
   1. Checks the prerequisites: Windows, the .NET 8 SDK, and (for the Native AOT bridge) the MSVC linker from the
      "Desktop development with C++" workload, found with vswhere.
-  2. Optionally runs the offline verification suite first (-RunTests; CockpitVerify=true, no SolidWorks needed).
+  2. Optionally runs the offline verification suite first (-RunTests; MediatorVerify=true, no SolidWorks needed).
   2b. V9: restores every project from NuGet. If that fails (no network, or a proxy that blocks nuget.org), it falls
-     back to the built-in offline shims (-p:CockpitUseShims=true): SQLite through Windows' own System32\winsqlite3.dll
+     back to the built-in offline shims (-p:MediatorUseShims=true): SQLite through Windows' own System32\winsqlite3.dll
      and the bundled xxHash64, with no NuGet download at all. Offline builds are framework-dependent (the .NET 8
      Desktop Runtime installed with the SDK runs them) and the bridge is a normal .NET app (Native AOT needs NuGet).
      -UseShims chooses the offline build directly; -NoShimFallback fails instead of falling back.
   3. Publishes, each into its own staging folder:
-       src\Cockpit.Wpf       -> AiCockpit.exe            (the tray overlay) + Themes\*.xaml (loose fallback copies)
-       src\Cockpit.CliHost   -> cockpit.exe              (console host: doctor, organize, rollback, ...)
-       src\Cockpit.Bridge    -> cockpit-mcp-bridge.exe   (Native AOT: -p:PublishAot=true, starts in milliseconds)
-       src\Cockpit.SwxWorker -> cockpit-swx-worker.exe   (V8: ALWAYS. With the SolidWorks interop when it is found;
+       src\Mediator.Wpf       -> Mediator.exe            (the tray overlay) + Themes\*.xaml (loose fallback copies)
+       src\Mediator.CliHost   -> mediator-cli.exe              (console host: doctor, organize, rollback, ...)
+       src\Mediator.Bridge    -> mediator-mcp-bridge.exe   (Native AOT: -p:PublishAot=true, starts in milliseconds)
+       src\Mediator.SwxWorker -> mediator-swx-worker.exe   (V8: ALWAYS. With the SolidWorks interop when it is found;
                                                           without it the worker answers "SolidWorks assemblies not
-                                                          installed on this machine" and the build only warns, COCKPIT001)
+                                                          installed on this machine" and the build only warns, MEDIATOR001)
      Self-contained win-x64 by default (no .NET install needed on the target PC); -FrameworkDependent makes a smaller
      folder that needs the .NET 8 Desktop Runtime.
-  4. Merges the staging folders into dist\AiCockpit\. A file that two projects publish must be byte-identical
+  4. Merges the staging folders into dist\Mediator\. A file that two projects publish must be byte-identical
      (shared runtime files); anything else stops the script instead of silently overwriting. Debug symbols (.pdb) are
      left out unless -IncludeSymbols.
   5. Adds the zero-dependency launchers (launch.bat, install-shortcut.vbs: double-click, no PowerShell execution
      policy involved), Create-Desktop-Shortcut.ps1, README-FIRST.txt, VERSION.txt and SHA256SUMS.txt, checks that
-     every required file is present (the four executables and the three themes), then runs `cockpit.exe doctor`
+     every required file is present (the four executables and the three themes), then runs `mediator-cli.exe doctor`
      from the package as a smoke test.
 
-  Every build uses -p:TreatWarningsAsErrors=true. The one expected warning is COCKPIT001 (no SolidWorks interop),
+  Every build uses -p:TreatWarningsAsErrors=true. The one expected warning is MEDIATOR001 (no SolidWorks interop),
   which never fails the build.
 
   This file is ASCII-only on purpose: Windows PowerShell 5.1 reads a UTF-8 file without BOM as ANSI, where some
@@ -62,7 +62,7 @@ $ErrorActionPreference = 'Stop'
 # $PSScriptRoot can be empty in param defaults on Windows PowerShell 5.1, so resolve it here.
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $root = (Resolve-Path (Join-Path $scriptDir '..')).Path
-if (-not $OutDir) { $OutDir = Join-Path $root 'dist\AiCockpit' }
+if (-not $OutDir) { $OutDir = Join-Path $root 'dist\Mediator' }
 Set-Location $root
 
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
@@ -113,7 +113,7 @@ Write-Host "dotnet SDKs: $($sdks -join '; ')"
 $aot = -not $NoAot
 if ($aot -and -not $UseShims -and -not (Test-MsvcLinker)) {
     # V9: never a reason to stop. The bridge works the same as a normal .NET app; Native AOT only makes it start faster.
-    Write-Warning ('Native AOT for cockpit-mcp-bridge needs the MSVC linker ("Desktop development with C++" in the Visual Studio ' +
+    Write-Warning ('Native AOT for mediator-mcp-bridge needs the MSVC linker ("Desktop development with C++" in the Visual Studio ' +
                    'Installer, or the Build Tools); not found, so the bridge is published as a normal .NET app.')
     $aot = $false
 }
@@ -122,7 +122,7 @@ $withSolidWorks = [bool]$SolidWorksInteropDir
 if ($withSolidWorks) { Write-Host "SolidWorks interop: $SolidWorksInteropDir" }
 elseif ($RequireSolidWorks) { throw 'SolidWorks interop not found and -RequireSolidWorks was given. Pass -SolidWorksInteropDir "<SOLIDWORKS folder>\api\redist".' }
 else {
-    Write-Warning ('SolidWorks interop not found: cockpit-swx-worker is built WITHOUT SolidWorks support (it answers "SolidWorks assemblies ' +
+    Write-Warning ('SolidWorks interop not found: mediator-swx-worker is built WITHOUT SolidWorks support (it answers "SolidWorks assemblies ' +
                    'not installed on this machine"). Everything else is unaffected. Pass -SolidWorksInteropDir to include it.')
 }
 
@@ -138,19 +138,19 @@ if ($RunTests) {
 function Get-PublishPlan([bool]$offline) {
     $c = @('-c', 'Release', '-r', $Runtime, '-nologo', '-p:TreatWarningsAsErrors=true')
     if ($withSolidWorks) { $c += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
-    if ($RequireSolidWorks) { $c += '-p:CockpitRequireSolidWorks=true' }
+    if ($RequireSolidWorks) { $c += '-p:MediatorRequireSolidWorks=true' }
     # Offline: no runtime packs (framework-dependent) and no ILCompiler/ILLink (no Native AOT, no AOT analyzers).
-    if ($offline) { $c += '-p:CockpitUseShims=true' }
+    if ($offline) { $c += '-p:MediatorUseShims=true' }
     $sc = if ($FrameworkDependent -or $offline) { '-p:SelfContained=false' } else { '-p:SelfContained=true' }
     $nativeAot = $aot -and -not $offline
     return @{
         Common   = $c
         Projects = [ordered]@{
-            'src\Cockpit.Wpf'       = @($sc)
-            'src\Cockpit.CliHost'   = @($sc)
-            'src\Cockpit.SwxWorker' = @($sc)
+            'src\Mediator.Wpf'       = @($sc)
+            'src\Mediator.CliHost'   = @($sc)
+            'src\Mediator.SwxWorker' = @($sc)
             # @( ) around the if: PowerShell unrolls a one-item array returned by an if, and splatting a string passes it char by char.
-            'src\Cockpit.Bridge'    = @(if ($nativeAot) { '-p:PublishAot=true' } else { '-p:PublishAot=false'; $sc })
+            'src\Mediator.Bridge'    = @(if ($nativeAot) { '-p:PublishAot=true' } else { '-p:PublishAot=false'; $sc })
         }
         Offline  = $offline
         Aot      = $nativeAot
@@ -169,12 +169,12 @@ if (-not $plan.Offline) {
     if (-not $restored) {
         if ($NoShimFallback) { throw 'NuGet restore failed and -NoShimFallback was given.' }
         Write-Warning ('NuGet restore failed (no network, or a proxy blocks nuget.org). Falling back to the offline shims ' +
-                       '(CockpitUseShims=true): SQLite through Windows'' own winsqlite3.dll, no NuGet download, a framework-dependent ' +
+                       '(MediatorUseShims=true): SQLite through Windows'' own winsqlite3.dll, no NuGet download, a framework-dependent ' +
                        'package (the .NET 8 Desktop Runtime installed with the SDK runs it) and a JIT bridge instead of Native AOT.')
         $plan = Get-PublishPlan $true
     }
 }
-if ($plan.Offline) { Write-Host 'Build: offline shims (CockpitUseShims=true), no NuGet' }
+if ($plan.Offline) { Write-Host 'Build: offline shims (MediatorUseShims=true), no NuGet' }
 
 # -- 3. Publish each project into its own staging folder ------------------------------------------------
 $staging = Join-Path $root 'dist\.staging'
@@ -205,8 +205,8 @@ foreach ($dir in Get-ChildItem $staging -Directory) {
         if ($seen.ContainsKey($rel)) {
             if ($seen[$rel].Hash -ne $hash -and $file.VersionInfo.FileVersion -and $file.VersionInfo.FileVersion -eq $seen[$rel].Version) {
                 # Same package version built for net8.0 vs net8.0-windows (e.g. SQLitePCLRaw): interchangeable; the overlay's copy wins.
-                Write-Host "  same version, different TFM build: $rel (keeping $(if ($dir.Name -eq 'src_Cockpit.Wpf') { $dir.Name } else { $seen[$rel].From }))"
-                if ($dir.Name -eq 'src_Cockpit.Wpf') { Copy-Item $file.FullName (Join-Path $OutDir $rel) -Force; $seen[$rel].From = $dir.Name }
+                Write-Host "  same version, different TFM build: $rel (keeping $(if ($dir.Name -eq 'src_Mediator.Wpf') { $dir.Name } else { $seen[$rel].From }))"
+                if ($dir.Name -eq 'src_Mediator.Wpf') { Copy-Item $file.FullName (Join-Path $OutDir $rel) -Force; $seen[$rel].From = $dir.Name }
                 continue
             }
             if ($seen[$rel].Hash -ne $hash) { throw "Conflict: $rel differs between $($seen[$rel].From) and $($dir.Name). Publish with one runtime version, or -FrameworkDependent." }
@@ -221,13 +221,13 @@ foreach ($dir in Get-ChildItem $staging -Directory) {
 Remove-Item $staging -Recurse -Force
 
 # -- 5. Launchers, shortcut script, readme, version, checksums ------------------------------------------
-Copy-Item (Join-Path $scriptDir 'launch-cockpit.bat') (Join-Path $OutDir 'launch.bat')
+Copy-Item (Join-Path $scriptDir 'launch-mediator.bat') (Join-Path $OutDir 'launch.bat')
 Copy-Item (Join-Path $scriptDir 'install-shortcut.vbs') (Join-Path $OutDir 'install-shortcut.vbs')
 Copy-Item (Join-Path $scriptDir 'Create-Desktop-Shortcut.ps1') $OutDir
-$guide = Join-Path $root 'docs\AI-Cockpit-User-Guide.pdf'
+$guide = Join-Path $root 'docs\Mediator-User-Guide.pdf'
 if (Test-Path $guide) { Copy-Item $guide $OutDir }
 
-$required = @('AiCockpit.exe', 'cockpit.exe', 'cockpit-mcp-bridge.exe', 'cockpit-swx-worker.exe',
+$required = @('Mediator.exe', 'mediator-cli.exe', 'mediator-mcp-bridge.exe', 'mediator-swx-worker.exe',
               'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs')
 foreach ($r in $required) {
     if (-not (Test-Path (Join-Path $OutDir $r))) { throw "$r is missing from the package." }
@@ -235,7 +235,7 @@ foreach ($r in $required) {
 
 $commit = (& git -C $root rev-parse --short HEAD 2>$null)
 $version = @(
-    'AI Cockpit V9 (Windows release candidate)'
+    'Mediator V9 (Windows release candidate)'
     "built $(Get-Date -Format 'yyyy-MM-dd HH:mm') from commit $commit"
     "runtime $Runtime, $(if ($plan.FrameworkDependent) { 'framework-dependent (.NET 8 Desktop Runtime required)' } else { 'self-contained' })"
     "bridge: $(if ($plan.Aot) { 'Native AOT' } else { 'JIT' })"
@@ -244,14 +244,14 @@ $version = @(
 ) -join "`r`n"
 Set-Content -Path (Join-Path $OutDir 'VERSION.txt') -Value $version -Encoding ASCII
 @"
-AI Cockpit
+Mediator
 ==========
 
-1. Double-click launch.bat (or AiCockpit.exe). It lives in the tray; Ctrl+Shift+Space opens the panel.
+1. Double-click launch.bat (or Mediator.exe). It lives in the tray; Ctrl+Shift+Space opens the panel.
    Nothing to install and no administrator rights: this folder is the whole app. Keep it somewhere permanent,
-   for example %LOCALAPPDATA%\Programs\AiCockpit, before creating shortcuts.
+   for example %LOCALAPPDATA%\Programs\Mediator, before creating shortcuts.
 2. Double-click install-shortcut.vbs for Desktop and Start menu shortcuts.
-   (If scripts are blocked on your PC, right-click AiCockpit.exe > Send to > Desktop (create shortcut) does the same.)
+   (If scripts are blocked on your PC, right-click Mediator.exe > Send to > Desktop (create shortcut) does the same.)
 3. The first launch opens a setup card: it checks Claude Code, Gemini CLI, Python and Git, and lets you pick the theme,
    the hotkey and "Run on Windows startup". The Connectors tab shows SolidWorks, DaVinci Resolve and Blender, found
    through the registry and Program Files even when they are not on PATH.
@@ -259,8 +259,8 @@ AI Cockpit
 If Windows shows "Windows protected your PC" (SmartScreen) for the unsigned exe, choose More info > Run anyway, or
 unblock the downloaded zip (right-click > Properties > Unblock) before extracting it.
 
-launch.bat doctor     checks the installation in a console window (same as cockpit.exe doctor).
-Your data (settings, audit log, journal, attachments) is in %LOCALAPPDATA%\AiCockpit.
+launch.bat doctor     checks the installation in a console window (same as mediator-cli.exe doctor).
+Your data (settings, audit log, journal, attachments) is in %LOCALAPPDATA%\Mediator.
 "@ | Set-Content -Path (Join-Path $OutDir 'README-FIRST.txt') -Encoding ASCII
 
 $sums = Get-ChildItem $OutDir -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object FullName | ForEach-Object {
@@ -270,8 +270,8 @@ Set-Content -Path (Join-Path $OutDir 'SHA256SUMS.txt') -Value $sums -Encoding AS
 
 # -- 6. Smoke test --------------------------------------------------------------------------------------
 if (-not $SkipDoctor) {
-    Step 'cockpit doctor (from the package)'
-    & (Join-Path $OutDir 'cockpit.exe') doctor
+    Step 'mediator-cli doctor (from the package)'
+    & (Join-Path $OutDir 'mediator-cli.exe') doctor
     if ($LASTEXITCODE -ne 0) { Write-Warning 'doctor reported failures (FAIL lines above); the package was still written.' }
 }
 

@@ -1,5 +1,5 @@
 // VERIFY ONLY. Mirrors the shape of the SolidWorks primary interop assemblies for the members used by
-// Cockpit.SwxWorker. Enum values here are placeholders; code must use the enum names, never numbers.
+// Mediator.SwxWorker. Enum values here are placeholders; code must use the enum names, never numbers.
 #pragma warning disable IDE1006
 namespace SolidWorks.Interop.sldworks
 {

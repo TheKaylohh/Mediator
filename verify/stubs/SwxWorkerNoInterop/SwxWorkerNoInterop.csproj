@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- VERIFY ONLY (V8). cockpit-swx-worker's own sources built the way a machine without SolidWorks builds them:
+  <!-- VERIFY ONLY (V8). mediator-swx-worker's own sources built the way a machine without SolidWorks builds them:
        no interop assemblies at all, so Directory.Build.targets defines SOLIDWORKS_NOT_INSTALLED. Proves that the
        worker compiles without SolidWorks and that it answers "SolidWorks assemblies not installed on this machine"
        (test "swx V8: worker built without the SolidWorks interop"). A separate project, so its obj/ never mixes
@@ -7,14 +7,14 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>cockpit-swx-worker-nointerop</AssemblyName>
-    <RootNamespace>Cockpit.SwxWorker</RootNamespace>
+    <AssemblyName>mediator-swx-worker-nointerop</AssemblyName>
+    <RootNamespace>Mediator.SwxWorker</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <CockpitUsesSolidWorks>true</CockpitUsesSolidWorks>
-    <CockpitSimulateNoSolidWorks>true</CockpitSimulateNoSolidWorks>
+    <MediatorUsesSolidWorks>true</MediatorUsesSolidWorks>
+    <MediatorSimulateNoSolidWorks>true</MediatorSimulateNoSolidWorks>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(CockpitRoot)src/Cockpit.SwxWorker/*.cs" />
-    <ProjectReference Include="$(CockpitRoot)src/Cockpit.Protocol/Cockpit.Protocol.csproj" />
+    <Compile Include="$(MediatorRoot)src/Mediator.SwxWorker/*.cs" />
+    <ProjectReference Include="$(MediatorRoot)src/Mediator.Protocol/Mediator.Protocol.csproj" />
   </ItemGroup>
 </Project>

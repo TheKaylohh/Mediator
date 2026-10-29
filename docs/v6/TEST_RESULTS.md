@@ -9,20 +9,20 @@
 | OS | Ubuntu 24.04.5 LTS, x86-64, cloud container. Runs as root; tests that need an unprivileged user drop to uid 65534. |
 | CPU / RAM | 2 vCPU (Intel Xeon @ 2.80 GHz), 7.8 GiB |
 | .NET | SDK 8.0.132, runtime 8.0.32 |
-| Build | `CockpitVerify=true`, which builds against stand-ins: the SQLite shim over the system libsqlite3, XxHash64 checked against reference vectors, and the SolidWorks interop **stub** |
+| Build | `MediatorVerify=true`, which builds against stand-ins: the SQLite shim over the system libsqlite3, XxHash64 checked against reference vectors, and the SolidWorks interop **stub** |
 | Python (live) | 3.13.17. build123d 0.13.0, bpy 5.2.3 LTS (Blender as a Python module, not the app), PyMuPDF 2.0, SymPy 1.14.0 |
 | Tools | ffmpeg / ffprobe 6.1.1, bubblewrap 0.9.0, util-linux prlimit and setpriv |
-| CLIs (captures only) | Claude Code 2.1.309, Gemini CLI 0.65.0. Neither is signed in to a Cockpit account (see verify/fixtures/real/README.md). |
+| CLIs (captures only) | Claude Code 2.1.309, Gemini CLI 0.65.0. Neither is signed in to a Mediator account (see verify/fixtures/real/README.md). |
 
 ## Commands and results
 
 | # | Command | Exit | Result | Evidence |
 |---|---|---|---|---|
 | 1 | `bash verify/run-tests.sh` (offline) | 0 | **81 passed, 0 failed, 8 skipped** (89), 56 s | `docs/v6/test-run-linux-offline.txt` |
-| 2 | `COCKPIT_LIVE_PYTHON=<venv>/bin/python bash verify/run-tests.sh` (offline + live) | 0 | **87 passed, 0 failed, 2 skipped** (89), 1 min 44 s | `docs/v6/test-run-linux-live.txt` |
-| 3 | `COCKPIT_REQUIRE_ALL=1 bash verify/run-tests.sh` | **2** | Release gate: any skip counts as a failure. It fails here, as intended, because 8 tests did not run. | — |
-| 4 | `dotnet build Cockpit.sln -p:CockpitVerify=true -p:TreatWarningsAsErrors=true` | 0 | 0 warnings, 0 errors (the WPF project builds against reference assemblies; the UI is not run) | — |
-| 5 | `dotnet Cockpit.Tests.dll --bench <bridge.dll> docs/v6/benchmarks.json` | 0 | Measurements | `docs/v6/BENCHMARKS.md` |
+| 2 | `MEDIATOR_LIVE_PYTHON=<venv>/bin/python bash verify/run-tests.sh` (offline + live) | 0 | **87 passed, 0 failed, 2 skipped** (89), 1 min 44 s | `docs/v6/test-run-linux-live.txt` |
+| 3 | `MEDIATOR_REQUIRE_ALL=1 bash verify/run-tests.sh` | **2** | Release gate: any skip counts as a failure. It fails here, as intended, because 8 tests did not run. | — |
+| 4 | `dotnet build Mediator.sln -p:MediatorVerify=true -p:TreatWarningsAsErrors=true` | 0 | 0 warnings, 0 errors (the WPF project builds against reference assemblies; the UI is not run) | — |
+| 5 | `dotnet Mediator.Tests.dll --bench <bridge.dll> docs/v6/benchmarks.json` | 0 | Measurements | `docs/v6/BENCHMARKS.md` |
 
 ### Skipped in run 2, and why
 
@@ -31,7 +31,7 @@
 | fs-auth (Windows): junctions, junction swap race, real ADS | needs NTFS | Windows CI job `windows-offline` (written, **NOT RUN**) |
 | journal faults (Windows): locked file (sharing violation) | mandatory file locks are Windows-only | Windows CI job `windows-offline` (written, **NOT RUN**) |
 
-Run 1 also skips the 6 live tests: no `COCKPIT_LIVE_PYTHON` was set.
+Run 1 also skips the 6 live tests: no `MEDIATOR_LIVE_PYTHON` was set.
 
 ## What the 89 tests cover
 
@@ -52,7 +52,7 @@ Every test name is printed in the evidence files.
 | SolidWorks worker | 5 | **Fake COM only**: proves the worker's own rules, not SolidWorks' behaviour |
 | Resolve / Blender / Code-CAD / media / STEP | 5, plus 4 live | Live: build123d (all templates; 32 boundary and random parameter sets), bpy 5.2.3 scene, PyMuPDF, ffprobe against ffmpeg-made clips; StepValidator on STEP files written by real OpenCascade |
 | Overlay ViewModels and XAML | 6 | ViewModels only; the XAML is parsed but WPF is **not** run |
-| CLI host | 1 | Real `cockpit` process |
+| CLI host | 1 | Real `mediator-cli` process |
 
 ## Mutation checks (manual, this session)
 
@@ -76,7 +76,7 @@ Each protection below was disabled by hand, the named test was run and failed, t
 1. **P0, V5 → V6.** A symlink, junction or bind mount inside a granted root let providers read or write outside it.
 2. **P0.** Model-written CAD code ran on the host interpreter.
 3. **P0.** A **revoked job could still run a Write call** if the approval arrived after the revocation.
-4. **P0.** A crafted PDF with deeply nested arrays **overflowed the stack and killed the whole Cockpit process**.
+4. **P0.** A crafted PDF with deeply nested arrays **overflowed the stack and killed the whole Mediator process**.
 5. **P1.** Invalid UTF-8 inside a JSON string parsed, then threw on the bus read loop and dropped the connection.
 6. **P1.** Gemini CLI 0.65 refuses headless runs in untrusted folders (exit 55), so V5's headless Gemini path would fail by default. This was found from a real capture.
 7. **P1.** STEP import could close or save a document that the user had open.
