@@ -281,7 +281,8 @@ static class OverlayTests
         Check.True(report.ResourcesChecked >= 250, $"resource references checked ({report.ResourcesChecked})");
         Check.True(report.ThemeKeys >= 40, $"theme keys compared across the three themes ({report.ThemeKeys})");
         Check.True(report.Files >= 6, $"XAML files checked, including Themes/ and Controls/ ({report.Files})");
-        Console.WriteLine($"      xaml: {report.Files} files, {report.BindingsChecked} bindings, {report.ResourcesChecked} resource references, {report.ThemeKeys} keys in each of the 3 themes");
+        Check.True(report.PackUrisChecked >= 4, $"pack URIs checked: one per theme plus App.xaml ({report.PackUrisChecked})");
+        Console.WriteLine($"      xaml: {report.Files} files, {report.BindingsChecked} bindings, {report.ResourcesChecked} resource references, {report.ThemeKeys} keys in each of the 3 themes, {report.PackUrisChecked} pack URIs");
         return Task.CompletedTask;
     }
 
@@ -602,13 +603,13 @@ static class OverlayTests
         Check.True(!noCli.IsOpen, "Later closes it");
     }
 
-    /// <summary>The checker must catch each kind of mistake it claims to (run on a mutated copy of the real XAML).</summary>
+    /// <summary>The checker must catch each kind of mistake it claims to (run on a mutated copy of the real XAML, code and project file).</summary>
     public static Task XamlCheckerCatchesMistakes()
     {
         string src = Path.Combine(XamlChecker.RepoRoot(), "src", "Cockpit.Wpf");
         string copy = TempDir();
         foreach (var f in Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories)
-                     .Where(f => (f.EndsWith(".xaml", StringComparison.Ordinal) || f.EndsWith(".cs", StringComparison.Ordinal)) && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)))
+                     .Where(f => (f.EndsWith(".xaml", StringComparison.Ordinal) || f.EndsWith(".cs", StringComparison.Ordinal) || f.EndsWith(".csproj", StringComparison.Ordinal)) && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)))
         {
             string to = Path.Combine(copy, Path.GetRelativePath(src, f));
             Directory.CreateDirectory(Path.GetDirectoryName(to)!);
@@ -634,6 +635,12 @@ static class OverlayTests
         Mutate("App.xaml", "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrush}\" />\n        <Setter Property=\"FontSize\" Value=\"11.5\" />",
             "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrsh}\" />\n        <Setter Property=\"FontSize\" Value=\"11.5\" />");
 
+        // V8 pack-URI rules
+        Mutate("ThemeManager.cs", "new(ThemeSources.PackUri(theme), UriKind.Absolute)", "new($\"/AiCockpit;component/Themes/{theme}.xaml\", UriKind.Relative)");
+        Mutate("App.xaml", "pack://application:,,,/AiCockpit;component/Themes/HoloHud.xaml", "pack://application:,,,/Cockpit.Wpf;component/Themes/HoloHud.xaml");
+        Mutate("Themes/ProDark.xaml", "xmlns:sys=\"clr-namespace:System;assembly=mscorlib\"", "xmlns:sys=\"clr-namespace:System\"");
+        Mutate("Cockpit.Wpf.csproj", "DestinationFolder=\"$(PublishDir)Themes\"", "DestinationFolder=\"$(PublishDir)\"");
+
         var report = XamlChecker.Check(copy, typeof(CockpitOverlayViewModel).Assembly);
         string all = string.Join("\n", report.Errors);
         foreach (var (needle, what) in new[]
@@ -646,6 +653,11 @@ static class OverlayTests
             ("'ReactorStatus' is not a public property of CockpitOverlayViewModel", "a binding that does not resolve"),
             ("'RingColour' is not a dependency property", "an ElementName binding to a missing dependency property"),
             ("DynamicResource 'MutedBrsh' is not defined by the themes", "a misspelt key in App.xaml"),
+            ("ThemeManager does not build its Uri from ThemeSources.PackUri(theme) with UriKind.Absolute", "a theme URI that is not absolute"),
+            ("code builds a relative component URI", "a relative ;component/ URI"),
+            ("names assembly 'Cockpit.Wpf', but the overlay is 'AiCockpit'", "a pack URI to the wrong assembly"),
+            ("Themes/ProDark.xaml: xmlns clr-namespace:System has no ;assembly=", "a theme the loose fallback could not load"),
+            ("does not copy Themes\\*.xaml to the build and publish output", "a missing loose-theme copy"),
         })
             Check.True(all.Contains(needle, StringComparison.Ordinal), $"checker catches {what}; errors were:\n{all}");
         return Task.CompletedTask;

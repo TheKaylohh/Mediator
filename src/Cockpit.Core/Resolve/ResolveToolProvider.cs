@@ -280,9 +280,11 @@ public static class ResolveScript
         var env = new Dictionary<string, string>();
         if (!OperatingSystem.IsWindows()) return env;
         string programData = System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData);
-        string programFiles = System.Environment.GetFolderPath(System.Environment.SpecialFolder.ProgramFiles);
+        // fusionscript.dll sits next to Resolve.exe: use the installation actually found (V8), else the default folder.
+        string installDir = Runtime.ComponentLocator.FindDesktopApp(Runtime.DesktopApp.Resolve)?.InstallDirectory
+            ?? Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ProgramFiles), "Blackmagic Design", "DaVinci Resolve");
         env["RESOLVE_SCRIPT_API"] = Path.Combine(programData, "Blackmagic Design", "DaVinci Resolve", "Support", "Developer", "Scripting");
-        env["RESOLVE_SCRIPT_LIB"] = Path.Combine(programFiles, "Blackmagic Design", "DaVinci Resolve", "fusionscript.dll");
+        env["RESOLVE_SCRIPT_LIB"] = Path.Combine(installDir, "fusionscript.dll");
         env["PYTHONPATH"] = Path.Combine(env["RESOLVE_SCRIPT_API"], "Modules");
         return env;
     }

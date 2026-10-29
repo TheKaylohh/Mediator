@@ -77,18 +77,11 @@ public static class ToolLocator
     public static string? Ffprobe() => CliLaunchBuilder.ResolveOnPath("ffprobe");
     public static string? Ffmpeg() => CliLaunchBuilder.ResolveOnPath("ffmpeg");
 
-    /// <summary>`blender` on PATH, else the newest C:\Program Files\Blender Foundation\Blender x.y\blender.exe.</summary>
-    public static string? Blender()
-    {
-        if (CliLaunchBuilder.ResolveOnPath("blender") is string onPath) return onPath;
-        if (!OperatingSystem.IsWindows()) return null;
-        string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Blender Foundation");
-        if (!Directory.Exists(root)) return null;
-        return Directory.EnumerateDirectories(root, "Blender*")
-            .Select(d => Path.Combine(d, "blender.exe")).Where(File.Exists)
-            .OrderByDescending(p => Version.TryParse(Path.GetFileName(Path.GetDirectoryName(p))!.Replace("Blender", "", StringComparison.OrdinalIgnoreCase).Trim(), out var v) ? v : new Version(0, 0))
-            .FirstOrDefault();
-    }
+    /// <summary>
+    /// COCKPIT_BLENDER, `blender` on PATH, else the newest install found in Program Files, %LOCALAPPDATA%\Programs,
+    /// the BlenderFoundation registry key, Apps &amp; features or Steam (see <see cref="Runtime.DesktopAppLocator"/>).
+    /// </summary>
+    public static string? Blender() => Runtime.ComponentLocator.FindDesktopApp(Runtime.DesktopApp.Blender)?.Executable;
 
     /// <summary>Windows: the `py -3` launcher, else python.exe; elsewhere python3. The Microsoft Store alias stub is skipped.</summary>
     public static (string Exe, string[] Prefix)? Python()

@@ -13,5 +13,7 @@
     <ProjectReference Include="$(CockpitRoot)src/Cockpit.Protocol/Cockpit.Protocol.csproj" />
     <ProjectReference Include="$(CockpitRoot)src/Cockpit.SwxWorker/Cockpit.SwxWorker.csproj" />
     <ProjectReference Include="$(CockpitRoot)src/Cockpit.UI/Cockpit.UI.csproj" />
+    <!-- V8: in verify builds this is only the Win32 placement code (MonitorPlacement.cs), tested in PlacementTests. -->
+    <ProjectReference Include="$(CockpitRoot)src/Cockpit.Wpf/Cockpit.Wpf.csproj" />
   </ItemGroup>
 </Project>

@@ -36,9 +36,10 @@ public partial class App : Application
             return;
         }
 
+        var log = new StderrLog("cockpit");
         try
         {
-            _runtime = await CockpitRuntime.CreateAsync(new RuntimeOptions { Log = new StderrLog("cockpit") });
+            _runtime = await CockpitRuntime.CreateAsync(new RuntimeOptions { Log = log });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -53,6 +54,14 @@ public partial class App : Application
         _runtime.Approvals.Target = vm;
 
         // Theme before the first frame; later changes come from the header button or the first-run card.
+        // A theme that cannot be loaded keeps the current one (App.xaml merges HoloHud) and is reported, never fatal.
+        string? themeProblem = null;
+        ThemeManager.LoadFailed += (theme, why) =>
+        {
+            log.Warn($"Theme {theme} could not be loaded; keeping the current theme. {why}");
+            if (_tray is { } tray) tray.Notify("Theme unavailable", $"{theme} could not be loaded; the current theme is kept.");
+            else themeProblem = $"{theme} could not be loaded; HoloHud is used.";
+        };
         ThemeManager.Apply(vm.CurrentTheme);
         vm.ThemeChanged += ThemeManager.Apply;
 
@@ -76,6 +85,7 @@ public partial class App : Application
         {
             if (!window.IsActive) _tray?.Notify("Approval needed", vm.PendingApproval?.Title ?? "A job is waiting for you.");
         };
+        if (themeProblem is not null) _tray.Notify("Theme unavailable", themeProblem);
         if (settings.LoadError is { } settingsError)
             _tray.Notify("Settings reset", $"settings.json could not be read ({settingsError}); defaults are used and the old file was kept as settings.json.bad.");
 

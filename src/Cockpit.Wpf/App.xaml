@@ -5,13 +5,13 @@
              ShutdownMode="OnExplicitShutdown">
   <!--
     Colours, brushes, fonts and radii come from the theme dictionary at MergedDictionaries[0] (Themes/HoloHud.xaml by
-    default). ThemeManager replaces that one dictionary to switch themes at run time, so everything here and in the
+    default, by absolute pack URI). ThemeManager replaces that one dictionary to switch themes at run time, so everything here and in the
     windows refers to theme keys with DynamicResource, never StaticResource (XamlChecker enforces this offline).
   -->
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
-        <ResourceDictionary Source="Themes/HoloHud.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/AiCockpit;component/Themes/HoloHud.xaml" />
       </ResourceDictionary.MergedDictionaries>
 
       <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>

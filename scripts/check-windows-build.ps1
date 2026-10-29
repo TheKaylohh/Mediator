@@ -66,12 +66,14 @@ Write-Host "dotnet SDKs: $($sdks -join '; ')"
 
 if (-not $SolidWorksInteropDir) { $SolidWorksInteropDir = Find-SolidWorksInterop }
 if (-not $SolidWorksInteropDir) {
-    Write-Warning 'SolidWorks interop not found in the registry. The worker will be skipped; pass -SolidWorksInteropDir to build it.'
+    if ($CheckSolidWorks) { throw 'SolidWorks interop not found in the registry, and -CheckSolidWorks needs it. Pass -SolidWorksInteropDir.' }
+    # V8: the worker is still built; without the interop it answers "SolidWorks assemblies not installed on this machine" (warning COCKPIT001).
+    Write-Warning 'SolidWorks interop not found in the registry: cockpit-swx-worker is built without SolidWorks support. Pass -SolidWorksInteropDir to include it.'
 }
 
 if ($RunVerifySuite) {
     Step 'Offline verification suite (CockpitVerify=true, stand-ins, no SolidWorks)'
-    foreach ($p in 'src\Cockpit.Bridge', 'src\Cockpit.SwxWorker', 'src\Cockpit.CliHost', 'verify\tests\Cockpit.Tests') {
+    foreach ($p in 'src\Cockpit.Bridge', 'src\Cockpit.SwxWorker', 'verify\stubs\SwxWorkerNoInterop', 'src\Cockpit.CliHost', 'src\Cockpit.Wpf', 'verify\tests\Cockpit.Tests') {
         & dotnet build $p -nologo -v q -p:CockpitVerify=true -p:TreatWarningsAsErrors=true
         if ($LASTEXITCODE -ne 0) { throw "verify build failed: $p" }
     }
@@ -87,9 +89,11 @@ if ($RunVerifySuite) {
 Step "Ship build ($Configuration): NuGet packages and real SolidWorks interop"
 $common = @('-c', $Configuration, '-nologo', '-p:TreatWarningsAsErrors=true')
 if ($SolidWorksInteropDir) { $common += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
+# -CheckSolidWorks: a missing interop must fail the build (COCKPIT002) instead of producing the no-SolidWorks worker.
+if ($CheckSolidWorks) { $common += '-p:CockpitRequireSolidWorks=true' }
 
-$projects = @('src\Cockpit.Bridge', 'src\Cockpit.CliHost')
-if ($SolidWorksInteropDir) { $projects += 'src\Cockpit.SwxWorker' }
+# V8: the worker is always built (with or without SolidWorks support).
+$projects = @('src\Cockpit.Bridge', 'src\Cockpit.CliHost', 'src\Cockpit.SwxWorker')
 if (-not $SkipWpf) { $projects += 'src\Cockpit.Wpf' }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

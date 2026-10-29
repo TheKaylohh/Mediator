@@ -91,7 +91,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("overlay VM: untick 1 of 4 mates → 3 built; kill switch < 100 ms clears the pending approval", () => Cockpit.Tests.OverlayTests.ApprovalSubsetAndKillSwitch(bridgeDll)),
     ("overlay VM: routing, / search, context chips, folder resolution, keep-subscription, notices, banner", Cockpit.Tests.OverlayTests.RoutingAndContext),
     ("overlay VM: all 7 actions enabled; prefix/keyword routing → action, tools, subscription; failover moves the active pill", Cockpit.Tests.OverlayTests.AllActionsAndFailoverPills),
-    ("overlay XAML: well-formed, resources defined, every binding resolves on the ViewModels", Cockpit.Tests.OverlayTests.XamlBindings),
+    ("overlay XAML: well-formed, resources defined, every binding resolves on the ViewModels, every theme pack URI resolves", Cockpit.Tests.OverlayTests.XamlBindings),
     ("interactive: wt.exe exits at once, bridge connects 200 ms later and works; done/kill/closed tab/no start end the job", () => Cockpit.Tests.LaunchTests.InteractiveSurvivesLauncherExit(bridgeDll, testsDll)),
     ("gemini stream-json: chunks, BOM, tool errors, stats, 429 → synthesized limit, daily reset, json mode", Cockpit.Tests.LaunchTests.GeminiParser),
     ("router: category defaults, explicit provider, missing CLI fallback, prefixes", Cockpit.Tests.LaunchTests.RouterRules),
@@ -159,11 +159,25 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported", () => Cockpit.Tests.ConnectorTests.CustomMcpRegistry(testsDll)),
     ("custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited", () => Cockpit.Tests.ConnectorTests.CustomMcpThroughGate(bridgeDll, testsDll)),
     ("connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys", Cockpit.Tests.ConnectorTests.ProbeOnLinux),
+    // V8: multi-monitor / mixed-DPI placement
+    ("placement V8: work area on every taskbar edge, auto-hide strips, 100/150/200 % and 100→200 % moves, negative coordinates, too tall/wide clamped, 5000 random layouts stay on screen", Cockpit.Tests.PlacementTests.Geometry),
+    ("placement V8: WM_WINDOWPOSCHANGING rewrite on an unmanaged WINDOWPOS (resize, DPI rect, move, hide untouched); WINDOWPOS/APPBARDATA/MONITORINFO layouts", Cockpit.Tests.PlacementTests.WindowPosChanging),
+    // V8: Windows release scripts (static: they cannot run here)
+    ("release scripts V8: .ps1 ASCII-only (PowerShell 5.1 ANSI trap), launch.bat/install-shortcut.vbs ASCII + CRLF, no cmd blocks, per-user, every VBScript variable declared", Cockpit.Tests.ReleaseScriptTests.ScriptsAreWindowsSafe),
+    ("release scripts V8: publish-release.ps1 always publishes the 4 executables, the 3 themes and both launchers, and checks them", Cockpit.Tests.ReleaseScriptTests.PublishScriptPackagesEverything),
+    // V8: building and running without SolidWorks
+    ("swx V8: SwxUnavailableHost fails every call with solidworks_not_installed; the stub build still creates SwxComHost", Cockpit.Tests.SwxFallbackTests.UnavailableHostInProcess),
+    ("swx V8: worker built without the SolidWorks interop, as a real child process through the bus: \"SolidWorks assemblies not installed on this machine\", do-not-retry, audited", () => Cockpit.Tests.SwxFallbackTests.NoInteropWorkerThroughTheBus(bridgeDll)),
+    ("swx V8: ship build (CockpitVerify=false) with no interop: warning COCKPIT001 (not an error, even with -warnaserror), CockpitRequireSolidWorks=true → error COCKPIT002, built worker answers", Cockpit.Tests.SwxFallbackTests.ShipBuildWithoutSolidWorks),
+    // V8: Windows desktop-app discovery (fake registry and Program Files tree)
+    ("desktop apps V8: Blender in version folders (newest wins), %LOCALAPPDATA%\\Programs, BlenderFoundation key, Apps & features, Steam; PATH and COCKPIT_BLENDER take precedence", Cockpit.Tests.DesktopAppTests.Blender),
+    ("desktop apps V8: Resolve in Program Files (x86), a registry-only folder, Studio from Apps & features (merged), probe says where it looked", Cockpit.Tests.DesktopAppTests.Resolve),
+    ("desktop apps V8: SolidWorks newest SOLIDWORKS <year>\\Setup with api\\redist, COM LocalServer32, default folder, never PATH; probe running / idle / absent", Cockpit.Tests.DesktopAppTests.SolidWorks),
     ("overlay V7: theme cycle, ThemeChanged, settings.json persisted and reloaded; malformed settings kept as .bad; hotkey parser", Cockpit.Tests.OverlayTests.ThemeSwitchingAndPersistence),
     ("overlay V7: reactor Idle → Active → AwaitingApproval → Active → Error (failure, rate limit, billing) → acknowledged / cleared by a new job", () => Cockpit.Tests.OverlayTests.ReactorStateTransitions(bridgeDll)),
     ("overlay V7: drop/paste/pick → chips; refusals reported; × deletes unshared snapshots; shared with the one running job; consumed by the next job; pin", () => Cockpit.Tests.OverlayTests.DragDropAndClipboardAttachments(bridgeDll)),
     ("overlay V7: Connectors tab statuses (version, sign-in, cooldown, apps), Sign In terminal, + Add Custom MCP; first-run card", () => Cockpit.Tests.OverlayTests.ConnectorsAndOnboarding(testsDll)),
-    ("overlay XAML V7: checker catches a missing theme key, StaticResource to a theme key, a colour literal, a duplicate property and a bad binding", Cockpit.Tests.OverlayTests.XamlCheckerCatchesMistakes),
+    ("overlay XAML: checker catches a missing theme key, StaticResource to a theme key, a colour literal, a duplicate property, a bad binding, a relative or wrong-assembly pack URI and a theme the loose fallback cannot load", Cockpit.Tests.OverlayTests.XamlCheckerCatchesMistakes),
 };
 
 // Live tests are always listed; without COCKPIT_LIVE_PYTHON each one reports SKIP (never PASS).

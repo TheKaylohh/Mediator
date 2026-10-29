@@ -27,7 +27,7 @@ namespace Cockpit.Tests;
 /// </summary>
 static partial class XamlChecker
 {
-    public sealed record Report(List<string> Errors, int BindingsChecked, int ResourcesChecked, int ThemeKeys, int Files);
+    public sealed record Report(List<string> Errors, int BindingsChecked, int ResourcesChecked, int ThemeKeys, int Files, int PackUrisChecked = 0);
 
     static readonly XNamespace X = "http://schemas.microsoft.com/winfx/2006/xaml";
     static readonly XNamespace D = "http://schemas.microsoft.com/expression/blend/2008";
@@ -127,8 +127,8 @@ static partial class XamlChecker
                     if (string.CompareOrdinal(name, other) < 0 && otherKeys.TryGetValue(key, out var otherKind) && otherKind != kind)
                         errors.Add($"'{key}' is a {kind} in {name} but a {otherKind} in {other}");
         }
-        // ThemeManager must load Themes/<name>.xaml by the enum name.
-        if (!code.Contains("Themes/{theme}.xaml", StringComparison.Ordinal)) errors.Add("ThemeManager does not build the theme URI from the CockpitTheme name");
+        // ── Pack URIs (V8) ──
+        int packUris = PackUris(wpfFolder, viewModels, themeEnum, themeNames, docs, code, errors);
 
         // ── App.xaml: StaticResource before use; merged default theme ──
         string appPath = Path.Combine(wpfFolder, "App.xaml");
@@ -136,8 +136,8 @@ static partial class XamlChecker
         var appKeys = new List<(string Key, XElement El)>();
         foreach (var el in app.Descendants()) if (el.Attribute(X + "Key") is { } k) appKeys.Add((k.Value, el));
         var merged = app.Descendants().Where(e => e.Name.LocalName == "ResourceDictionary" && e.Attribute("Source") is not null).ToList();
-        if (merged.Count != 1 || !Regex.IsMatch(merged[0].Attribute("Source")!.Value, @"^Themes/\w+\.xaml$"))
-            errors.Add("App.xaml must merge exactly one theme dictionary (Themes/<name>.xaml) as MergedDictionaries[0]");
+        if (merged.Count != 1 || !Regex.IsMatch(merged[0].Attribute("Source")!.Value, @"^(?:Themes/\w+\.xaml|pack://application:,,,/\w+;component/Themes/\w+\.xaml)$"))
+            errors.Add("App.xaml must merge exactly one theme dictionary (Themes/<name>.xaml, or its pack URI) as MergedDictionaries[0]");
         foreach (var dup in appKeys.Where(k => themeKeys.Contains(k.Key)))
             errors.Add($"App.xaml:{Line(dup.El)} defines theme key '{dup.Key}' (it would shadow every theme)");
 
@@ -251,7 +251,108 @@ static partial class XamlChecker
                 if (!names.Contains(m.Groups[1].Value) && !IsKnownType(m.Groups[1].Value)) errors.Add($"{name}.cs uses {m.Groups[1].Value}, which has no x:Name");
             if (root.Attribute(X + "Class") is not null && !behind.Contains("InitializeComponent()", StringComparison.Ordinal)) errors.Add($"{name}.cs does not call InitializeComponent()");
         }
-        return new Report(errors, bindings, resources, themeKeys.Count, files);
+        return new Report(errors, bindings, resources, themeKeys.Count, files, packUris);
+    }
+
+    [GeneratedRegex(@"^pack://application:,,,/(?:(?<asm>[^;/]+);component/)?(?<path>[^?#]+)$")]
+    private static partial Regex PackUriShape();
+
+    [GeneratedRegex(@"pack://application:,,,/[^""'\s<>]+")]
+    private static partial Regex PackUriLiteral();
+
+    /// <summary>
+    /// V8 pack-URI rules, so a theme can never fail with "Cannot locate resource" on Windows:
+    ///  • ThemeSources.WpfAssemblyName equals &lt;AssemblyName&gt; in Cockpit.Wpf.csproj;
+    ///  • ThemeSources.PackUri(theme) is an absolute application pack URI to that assembly whose file is the theme's
+    ///    ResourceDictionary, for every CockpitTheme;
+    ///  • ThemeManager builds its Uri from ThemeSources.PackUri with UriKind.Absolute, and no code builds a relative
+    ///    ";component/" URI;
+    ///  • every pack:// literal and every relative Source="…" in the XAML resolves to a file of the project;
+    ///  • the loose fallback exists: the csproj copies Themes\*.xaml next to the exe, and the theme files can be loaded
+    ///    loose (no x:Class, every clr-namespace names its assembly).
+    /// Returns the number of URIs checked.
+    /// </summary>
+    static int PackUris(string wpfFolder, Assembly viewModels, Type? themeEnum, string[] themeNames, Dictionary<string, XDocument> docs, string code, List<string> errors)
+    {
+        int count = 0;
+        string csprojPath = Path.Combine(wpfFolder, "Cockpit.Wpf.csproj");
+        string csproj = File.Exists(csprojPath) ? File.ReadAllText(csprojPath) : "";
+        string? assemblyName = Regex.Match(csproj, @"<AssemblyName>\s*([^<\s]+)\s*</AssemblyName>") is { Success: true } a ? a.Groups[1].Value : null;
+        if (assemblyName is null) { errors.Add("Cockpit.Wpf.csproj: <AssemblyName> not found (pack URIs name it)"); return count; }
+
+        var sources = viewModels.GetType("Cockpit.UI.ThemeSources");
+        string? declared = sources?.GetField("WpfAssemblyName")?.GetRawConstantValue() as string;
+        if (sources is null || declared is null) errors.Add("Cockpit.UI.ThemeSources (WpfAssemblyName, PackUri) not found");
+        else if (declared != assemblyName) errors.Add($"ThemeSources.WpfAssemblyName is '{declared}' but Cockpit.Wpf.csproj builds '{assemblyName}': every theme pack URI would fail");
+
+        // Resolves an application pack URI to a project file; null (and an error) when it cannot.
+        string? ResolvePack(string uri, string where)
+        {
+            count++;
+            var m = PackUriShape().Match(uri);
+            if (!m.Success) { errors.Add($"{where}: '{uri}' is not an application pack URI"); return null; }
+            if (m.Groups["asm"].Success && !m.Groups["asm"].Value.Equals(assemblyName, StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add($"{where}: '{uri}' names assembly '{m.Groups["asm"].Value}', but the overlay is '{assemblyName}'");
+                return null;
+            }
+            string file = Path.GetFullPath(Path.Combine(wpfFolder, m.Groups["path"].Value.TrimStart('/').Replace('/', Path.DirectorySeparatorChar)));
+            if (!File.Exists(file)) { errors.Add($"{where}: '{uri}' points at {m.Groups["path"].Value}, which is not in the project"); return null; }
+            return file;
+        }
+
+        var packUri = sources?.GetMethod("PackUri", BindingFlags.Public | BindingFlags.Static);
+        if (themeEnum is not null && packUri is not null)
+        {
+            foreach (var name in themeNames)
+            {
+                string uri = (string)packUri.Invoke(null, [Enum.Parse(themeEnum, name)])!;
+                if (!uri.StartsWith("pack://application:,,,/", StringComparison.Ordinal)) { errors.Add($"ThemeSources.PackUri({name}) = '{uri}' is not absolute"); continue; }
+                if (ResolvePack(uri, $"ThemeSources.PackUri({name})") is { } file &&
+                    (!docs.TryGetValue(file, out var doc) || doc.Root!.Name.LocalName != "ResourceDictionary" || Path.GetFileNameWithoutExtension(file) != name))
+                    errors.Add($"ThemeSources.PackUri({name}) does not point at Themes/{name}.xaml");
+            }
+        }
+
+        // ThemeManager: absolute URI built from ThemeSources; nothing builds a relative component URI.
+        if (!Regex.IsMatch(code, @"new\s*(?:Uri)?\(\s*ThemeSources\.PackUri\(\s*\w+\s*\)\s*,\s*UriKind\.Absolute\s*\)"))
+            errors.Add("ThemeManager does not build its Uri from ThemeSources.PackUri(theme) with UriKind.Absolute");
+        foreach (Match m in Regex.Matches(code, @"""/?[^""]*;component/[^""]*""\s*,\s*UriKind\.Relative"))
+            errors.Add($"code builds a relative component URI ({m.Value}): use an absolute pack:// URI");
+
+        // Every literal pack URI in code and XAML, and every relative Source in XAML.
+        foreach (Match m in PackUriLiteral().Matches(code))
+            if (!m.Value.Contains('{')) ResolvePack(m.Value, "code");
+        foreach (var (file, doc) in docs)
+        {
+            string rel = Path.GetRelativePath(wpfFolder, file).Replace('\\', '/');
+            foreach (var attr in doc.Descendants().SelectMany(e => e.Attributes()))
+            {
+                string v = attr.Value.Trim();
+                if (v.StartsWith("pack://", StringComparison.Ordinal)) ResolvePack(v, $"{rel}:{Line(attr.Parent!)}");
+                else if (attr.Name.LocalName == "Source" && attr.Parent!.Name.LocalName == "ResourceDictionary" && !v.StartsWith('{'))
+                {
+                    count++;
+                    string target = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(file)!, v.Replace('/', Path.DirectorySeparatorChar)));
+                    if (!File.Exists(target)) errors.Add($"{rel}:{Line(attr.Parent!)} Source '{v}' is not in the project");
+                }
+            }
+        }
+
+        // Loose fallback: copied next to the exe, and loadable without compilation.
+        if (!Regex.IsMatch(csproj, @"Include=""[^""]*Themes\\\*\.xaml""") || !csproj.Contains("DestinationFolder=\"$(OutDir)Themes\"", StringComparison.Ordinal) ||
+            !csproj.Contains("DestinationFolder=\"$(PublishDir)Themes\"", StringComparison.Ordinal))
+            errors.Add("Cockpit.Wpf.csproj does not copy Themes\\*.xaml to the build and publish output (ThemeManager's loose fallback)");
+        if (Regex.IsMatch(csproj, @"<Page\s+Remove=""[^""]*Themes", RegexOptions.IgnoreCase))
+            errors.Add("Cockpit.Wpf.csproj removes Themes from Page: the dictionaries would not be compiled into the assembly");
+        foreach (var name in themeNames)
+        {
+            if (!docs.TryGetValue(Path.Combine(wpfFolder, "Themes", name + ".xaml"), out var doc)) continue;
+            if (doc.Root!.Attribute(X + "Class") is not null) errors.Add($"Themes/{name}.xaml has x:Class: it could not be loaded loose");
+            foreach (var ns in doc.Root.Attributes().Where(at => at.IsNamespaceDeclaration && at.Value.StartsWith("clr-namespace:", StringComparison.Ordinal) && !at.Value.Contains(";assembly=", StringComparison.Ordinal)))
+                errors.Add($"Themes/{name}.xaml: xmlns {ns.Value} has no ;assembly=, so the loose fallback could not load it");
+        }
+        return count;
     }
 
     /// <summary>Type names that legitimately appear before .BeginAnimation and friends in code-behind.</summary>
