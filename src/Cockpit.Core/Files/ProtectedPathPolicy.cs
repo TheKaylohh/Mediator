@@ -88,6 +88,16 @@ public sealed class ProtectedPathPolicy
         return CheckAncestors(dir);
     }
 
+    /// <summary>V10: why a folder may not be a job's root (Windows, Program Files, AppData, protected names), or null.
+    /// Project markers (.sldasm) do not count: a CAD job is meant to work in its project folder.</summary>
+    public string? CheckJobRoot(string fullPath)
+    {
+        string full = Path.TrimEndingDirectorySeparator(fullPath);
+        // The temp folder lives under AppData on Windows; job scratch folders there are fine.
+        if ((full + Path.DirectorySeparatorChar).StartsWith(Path.GetTempPath(), PathCmp)) return null;
+        return CheckPathShape(full);
+    }
+
     private string? CheckPathShape(string fullPath)
     {
         foreach (var segment in fullPath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))

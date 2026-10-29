@@ -53,6 +53,16 @@ public static class PInvokeRot
 
     public static bool TryGetActiveObject(string progId, out object? instance, out int hresult)
     {
+        if (TryOne(progId, out instance, out hresult)) return true;
+        // SolidWorks registers in the ROT under its versioned CLSID (SldWorks.Application.33 = 2025); the version-independent
+        // ProgID can point at a stale CLSID from an older install.
+        for (int v = 44; v >= 20; v--)
+            if (TryOne($"{progId}.{v}", out instance, out int hr)) { hresult = hr; return true; }
+        return false;
+    }
+
+    private static bool TryOne(string progId, out object? instance, out int hresult)
+    {
         instance = null;
         hresult = NativeMethods.CLSIDFromProgID(progId, out Guid clsid);
         if (hresult < 0) return false;

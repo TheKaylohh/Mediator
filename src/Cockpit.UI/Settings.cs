@@ -23,9 +23,21 @@ public sealed record CockpitSettings
     public bool FirstRunCompleted { get; init; }
     /// <summary>What the user last chose; the Run key itself is the source of truth and is re-read at start.</summary>
     public bool RunOnStartup { get; init; }
-    /// <summary>V10: Auto Best / Quota Saver (Gemini first) / Claude First.</summary>
+    /// <summary>V10: Auto Best / Quota Saver (Antigravity first) / Claude First.</summary>
     public Cockpit.Core.Jobs.RoutingPolicy RoutingPolicy { get; init; } = Cockpit.Core.Jobs.RoutingPolicy.AutoBest;
+    /// <summary>Actions the user created with [ + New action ].</summary>
+    public List<CustomActionDef>? CustomActions { get; init; }
+    /// <summary>Where jobs save their output, chosen with [ Save to… ]; null = the folder selected in Explorer.</summary>
+    public string? SaveFolder { get; init; }
+    /// <summary>V10: the model picked in the prompt bar ("claude"/"gemini" + model id); null = Auto (built-in rules).</summary>
+    public string? ModelProvider { get; init; }
+    public string? ModelId { get; init; }
+    /// <summary>V10: the effort picked in the prompt bar (low|medium|high|xhigh|max); null = Auto (the CLI's default).</summary>
+    public string? Effort { get; init; }
 }
+
+/// <summary>A user-made action: a saved instruction that runs as an assistant job, with the prompt as its input.</summary>
+public sealed record CustomActionDef(string Id, string Title, string Description, string Instructions, bool NeedsFolder);
 
 public interface ISettingsStore
 {
@@ -54,6 +66,9 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
                 FirstRunCompleted = (bool?)o["firstRunCompleted"] ?? false,
                 RunOnStartup = (bool?)o["runOnStartup"] ?? false,
                 RoutingPolicy = Enum.TryParse<Cockpit.Core.Jobs.RoutingPolicy>((string?)o["routingPolicy"], ignoreCase: true, out var rp) && Enum.IsDefined(rp) ? rp : d.RoutingPolicy,
+                ModelProvider = (string?)o["modelProvider"],
+                ModelId = (string?)o["modelId"],
+                Effort = Cockpit.Core.Jobs.ModelCatalog.IsEffort((string?)o["effort"]) ? (string?)o["effort"] : null,
             };
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or IOException)
@@ -71,6 +86,9 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
         ["firstRunCompleted"] = settings.FirstRunCompleted,
         ["runOnStartup"] = settings.RunOnStartup,
         ["routingPolicy"] = settings.RoutingPolicy.ToString(),
+        ["modelProvider"] = settings.ModelProvider,
+        ["modelId"] = settings.ModelId,
+        ["effort"] = settings.Effort,
     }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 }
 

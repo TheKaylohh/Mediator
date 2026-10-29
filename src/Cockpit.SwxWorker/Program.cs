@@ -22,7 +22,6 @@ try
     {
         options = args[i] switch
         {
-            "--allow-launch" => options with { AllowLaunch = true },
             "--attach-wait-seconds" => options with { AttachWait = TimeSpan.FromSeconds(double.Parse(args[++i], CultureInfo.InvariantCulture)) },
             "--busy-retry-seconds" => options with { BusyRetryWindow = TimeSpan.FromSeconds(double.Parse(args[++i], CultureInfo.InvariantCulture)) },
             _ => throw new ArgumentException($"Unknown argument '{args[i]}'."),

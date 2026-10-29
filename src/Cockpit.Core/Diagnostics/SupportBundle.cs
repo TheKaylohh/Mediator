@@ -66,12 +66,12 @@ public static partial class SupportBundle
             ["dotnet"] = RuntimeInformation.FrameworkDescription,
             ["policy"] = "Secrets redacted; every path replaced by <path#hash.ext>; no databases, MCP configs, prompts, job briefs, workspace or user files.",
         };
-        var vars = GeminiLaunchBuilder.VariablesToScrub(false).Concat(["COCKPIT_DATA_DIR", "COCKPIT_PYTHON", "COCKPIT_BLENDER", GeminiLaunchBuilder.TrustWorkspaceVariable]).Distinct(StringComparer.Ordinal);
+        var vars = GeminiLaunchBuilder.VariablesToScrub(false).Concat(["COCKPIT_DATA_DIR", "COCKPIT_PYTHON", "COCKPIT_BLENDER", "COCKPIT_AGY"]).Distinct(StringComparer.Ordinal);
         files["environment.json"] = new JsonObject
         {
             ["variablesPresent"] = new JsonObject(vars.Select(v => KeyValuePair.Create(v, (JsonNode?)JsonValue.Create(Environment.GetEnvironmentVariable(v) is { Length: > 0 })))),
             ["claudeOnPath"] = CliLaunchBuilder.ResolveOnPath("claude") is not null,
-            ["geminiOnPath"] = CliLaunchBuilder.ResolveOnPath("gemini") is not null,
+            ["agyInstalled"] = GeminiLaunchBuilder.Locate() is not null,
         };
 
         var verification = await runtime.Audit.VerifyAsync().ConfigureAwait(false);

@@ -90,7 +90,15 @@ public static class ToolLocator
         {
             if (CliLaunchBuilder.ResolveOnPath("py") is string py) return (py, ["-3"]);
             if (CliLaunchBuilder.ResolveOnPath("python") is string python && !python.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase)) return (python, []);
-            return null;
+            // Not on PATH (or PATH lists python.exe itself instead of its folder): the python.org install folders, newest first.
+            var roots = new[] { Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? "", "Programs", "Python"),
+                                Environment.GetEnvironmentVariable("ProgramW6432") ?? "", Environment.GetEnvironmentVariable("ProgramFiles") ?? "", Path.GetPathRoot(Environment.SystemDirectory) ?? "" };
+            var installed = roots.Where(r => r.Length > 0 && Directory.Exists(r))
+                .SelectMany(r => Directory.EnumerateDirectories(r, "Python3*"))
+                .Select(d => Path.Combine(d, "python.exe")).Where(File.Exists)
+                .OrderByDescending(p => int.TryParse(Path.GetFileName(Path.GetDirectoryName(p))!["Python3".Length..], out int minor) ? minor : 0)
+                .FirstOrDefault();
+            return installed is null ? null : (installed, []);
         }
         return CliLaunchBuilder.ResolveOnPath("python3") is string p3 ? (p3, []) : null;
     }

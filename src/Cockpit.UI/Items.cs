@@ -203,6 +203,9 @@ public sealed class ActionTileViewModel : ObservableObject
     }
 
     public string Id { get; }
+    /// <summary>Set for user-made actions: the saved instructions.</summary>
+    public string? Instructions { get; init; }
+    public bool IsCustom => Instructions is not null;
     public string Glyph { get; }
     public string Title { get; }
     public string Description { get; }
@@ -214,7 +217,7 @@ public sealed class ActionTileViewModel : ObservableObject
     public string ToolsText => Tools.Count == 0 ? "the CLI's own tools" : string.Join(", ", Tools);
     public bool IsEnabled { get => _isEnabled; set => SetProperty(ref _isEnabled, value); }
     public string DisabledReason { get => _disabledReason; set => SetProperty(ref _disabledReason, value); }
-    /// <summary>"Claude Pro (Claude Code)", "Google AI Pro (Gemini CLI)", or why neither is available.</summary>
+    /// <summary>"Claude Pro (Claude Code)", "Google AI Pro (Antigravity CLI)", or why neither is available.</summary>
     public string Provider { get => _provider; set => SetProperty(ref _provider, value); }
 
     /// <summary>Toolbox-style search: every word of the query must prefix-match the title, a keyword or the provider.</summary>
@@ -305,4 +308,14 @@ public sealed class ChatTurnViewModel(string jobId, string userPrompt, string ba
     public bool IsRunning { get => _isRunning; set => SetProperty(ref _isRunning, value); }
     public bool IsError { get => _isError; set => SetProperty(ref _isError, value); }
     public ObservableCollection<string> Steps { get; } = new();
+}
+
+/// <summary>V10: one entry of the prompt bar's model picker. Auto: no provider or model (the routing rules decide).</summary>
+public sealed record ModelOption(string Label, Cockpit.Core.Jobs.AiProvider? Provider, string? Model)
+{
+    /// <summary>How the picked CLI is stored in settings.json.</summary>
+    public const string ClaudeKey = "claude", GeminiKey = "gemini";
+    public static readonly ModelOption Auto = new("Auto model", null, null);
+    public string? ProviderKey => Provider switch { Cockpit.Core.Jobs.AiProvider.ClaudeCode => ClaudeKey, Cockpit.Core.Jobs.AiProvider.GeminiCli => GeminiKey, _ => null };
+    public override string ToString() => Label;
 }

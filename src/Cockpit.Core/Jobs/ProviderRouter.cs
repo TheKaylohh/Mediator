@@ -3,10 +3,16 @@ using System.Globalization;
 namespace Cockpit.Core.Jobs;
 
 /// <summary>The subscriptions the Cockpit can drive. Ids are the usage-ledger keys.</summary>
+/// <summary>GeminiCli is the Google AI Pro provider, run through Antigravity CLI (agy) since Gemini CLI stopped serving AI Pro on 2026-06-18.</summary>
 public enum AiProvider { ClaudeCode, GeminiCli }
 
-/// <summary>Task categories, from the overlay's actions and the prompt prefixes /cad /code /files /tutor /resolve /blender.</summary>
-public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat }
+/// <summary>
+/// Task categories, from the overlay's actions, the prompt prefixes (/cad /code /files /tutor /resolve /blender /search /ask)
+/// or JobSpecFactory.InferToolsAndCategory. Each has a fixed tool policy:
+/// Chat = answer from knowledge, no tools, no local files; Search = web search only, no local files;
+/// Files and the app categories = only the Cockpit tools of that category, through the approval gate.
+/// </summary>
+public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat, Search }
 
 /// <summary>V10: which subscription goes first when the user did not pick one. AutoBest = per-category defaults.</summary>
 public enum RoutingPolicy { AutoBest, ConserveClaude, PreferClaude }
@@ -43,44 +49,80 @@ public sealed class ProviderUnavailableException(string message) : InvalidOperat
 
 /// <summary>
 /// Zero-token routing. An explicit provider wins; otherwise each category has a primary and a fallback:
-/// cad, code, blender → Claude Code (fallback Gemini CLI); tutor, files, resolve → Gemini CLI (fallback Claude Code).
+/// cad, code, blender, search → Claude Code (fallback Antigravity CLI); chat, tutor, files, resolve → Antigravity CLI
+/// (fallback Claude Code). Search goes to Claude Code first because its web search can be allowed per run (--allowedTools WebSearch).
 /// A primary that is cooling down (usage ledger) or not installed is replaced by the fallback with a notice,
 /// unless the job says NeverDowngrade, in which case the job is refused with a clear message.
 /// </summary>
 public static class ProviderRouter
 {
     public static string Id(AiProvider p) => p == AiProvider.ClaudeCode ? "claude-code" : "gemini-cli";
-    public static string DisplayName(AiProvider p) => p == AiProvider.ClaudeCode ? "Claude Pro (Claude Code)" : "Google AI Pro (Gemini CLI)";
+    public static string DisplayName(AiProvider p) => p == AiProvider.ClaudeCode ? "Claude Pro (Claude Code)" : "Google AI Pro (Antigravity CLI)";
 
     public static (AiProvider Primary, AiProvider Fallback) Defaults(TaskCategory category) => category switch
     {
-        TaskCategory.Cad or TaskCategory.Code or TaskCategory.Blender => (AiProvider.ClaudeCode, AiProvider.GeminiCli),
+        TaskCategory.Cad or TaskCategory.Code or TaskCategory.Blender or TaskCategory.Search => (AiProvider.ClaudeCode, AiProvider.GeminiCli),
         _ => (AiProvider.GeminiCli, AiProvider.ClaudeCode),
     };
 
     /// <summary>
     /// V10: the model alias for a run when the job did not set one. Claude Code: opus / sonnet / haiku (CLI aliases).
-    /// Gemini CLI: gemini-2.5-pro / gemini-2.5-flash. Short chat and file requests take the fast model.
+    /// Antigravity CLI (agy models): gemini-3.8-flash-high / gemini-3.8-flash-low. Short chat and file requests take low effort.
     /// </summary>
-    public static string SelectModel(AiProvider provider, TaskCategory category, string prompt)
+    public static string SelectModel(AiProvider provider, TaskCategory category, string prompt, int toolCount = 0)
     {
         prompt ??= "";
-        bool light = category is TaskCategory.Chat or TaskCategory.Files;
+        // A job with Cockpit tools (SolidWorks, Blender, ...) is never "light": haiku could not drive them.
+        bool light = category is TaskCategory.Chat or TaskCategory.Files or TaskCategory.Search && toolCount == 0;
         if (provider == AiProvider.ClaudeCode)
         {
             if (new[] { "/opus", "architecture", "full assembly", "complex" }.Any(k => prompt.Contains(k, StringComparison.OrdinalIgnoreCase))) return "opus";
             return light && prompt.Length < 160 ? "haiku" : "sonnet";
         }
-        return light && prompt.Length < 200 ? "gemini-2.5-flash" : "gemini-2.5-pro";
+        return light && prompt.Length < 200 ? ModelCatalog.LightAgy : ModelCatalog.StrongAgy;
     }
 
-    /// <summary>V10: "/gemini summarise this" → (GeminiCli, "summarise this"); "/claude …" likewise. Null without a provider prefix.</summary>
+    /// <summary>
+    /// V10: the model and effort a run actually gets on <paramref name="provider"/>. A requested model that this CLI does not
+    /// take is replaced by <see cref="SelectModel"/>'s. A job with Cockpit tools never runs on a light model (haiku, Gemini
+    /// low/medium): it is raised to the provider's capable tier, and a "low" effort to "medium". Note: what was changed and why.
+    /// </summary>
+    private const string LowestEffort = "low", ToolEffortFloor = "medium";
+
+    public static (string Model, string? Effort, string? Note) ResolveRun(AiProvider provider, string? requestedModel, string? requestedEffort,
+        TaskCategory category, string prompt, int toolCount)
+    {
+        var notes = new List<string>();
+        string model;
+        if (requestedModel is null) model = SelectModel(provider, category, prompt, toolCount);
+        else if (ModelCatalog.Fits(provider, requestedModel)) model = requestedModel;
+        else
+        {
+            model = SelectModel(provider, category, prompt, toolCount);
+            notes.Add($"{requestedModel} does not run on {DisplayName(provider)}; using {model}");
+        }
+        if (toolCount > 0 && !ModelCatalog.IsCapable(model))
+        {
+            string capable = provider == AiProvider.ClaudeCode ? ModelCatalog.ClaudeToolDefault : ModelCatalog.StrongAgy;
+            notes.Add($"{model} is too light to drive tools; using {capable}");
+            model = capable;
+        }
+        string? effort = ModelCatalog.IsEffort(requestedEffort) ? requestedEffort : null;
+        if (toolCount > 0 && effort == LowestEffort)
+        {
+            effort = ToolEffortFloor;
+            notes.Add("low effort raised to medium for a tool job");
+        }
+        return (model, effort, notes.Count == 0 ? null : string.Join("; ", notes) + ".");
+    }
+
+    /// <summary>"/agy summarise this" (also /antigravity, /gemini) → (GeminiCli = Antigravity CLI, "summarise this"); "/claude …" likewise. Null without a provider prefix.</summary>
     public static (AiProvider Provider, string Remainder)? ParseProviderPrefix(string prompt)
     {
         string t = (prompt ?? "").TrimStart();
         int space = t.IndexOf(' ', StringComparison.Ordinal);
         string head = space < 0 ? t : t[..space];
-        AiProvider? p = head.ToLowerInvariant() switch { "/gemini" => AiProvider.GeminiCli, "/claude" => AiProvider.ClaudeCode, _ => null };
+        AiProvider? p = head.ToLowerInvariant() switch { "/agy" or "/antigravity" or "/gemini" => AiProvider.GeminiCli, "/claude" => AiProvider.ClaudeCode, _ => null };
         return p is { } provider ? (provider, space < 0 ? "" : t[(space + 1)..].Trim()) : null;
     }
 
@@ -88,6 +130,14 @@ public static class ProviderRouter
     {
         ["/cad"] = TaskCategory.Cad, ["/code"] = TaskCategory.Code, ["/files"] = TaskCategory.Files,
         ["/tutor"] = TaskCategory.Tutor, ["/resolve"] = TaskCategory.Resolve, ["/blender"] = TaskCategory.Blender,
+        ["/search"] = TaskCategory.Search, ["/ask"] = TaskCategory.Chat,
+    };
+
+    /// <summary>What the chat badge calls a category ("Search", "Chat", "Files", ...).</summary>
+    public static string CategoryName(TaskCategory c) => c switch
+    {
+        TaskCategory.Cad => "CAD", TaskCategory.Search => "Web search", TaskCategory.Chat => "Answer",
+        _ => c.ToString(),
     };
 
     /// <summary>"/tutor explain chapter 3" → (Tutor, "explain chapter 3"). Null when the prompt has no known prefix.</summary>

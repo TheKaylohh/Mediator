@@ -86,9 +86,12 @@ static class FailoverTests
 
         var blocked = Parse(new GeminiStreamParser(), File.ReadAllText(Real("gemini-0.65.0-network-blocked.stream.jsonl")));
         Check.True(blocked.OfType<RunResultEvent>().Any() == false && blocked.Count >= 1, "real Gemini stream cut off after init: no result event");
+        // Antigravity CLI 1.4.7 real capture: deltas joined into one answer, conversation id, SUCCESS with usage.
+        var agy = Parse(new GeminiStreamParser(), File.ReadAllText(Real("agy-1.4.7-ok.stream.jsonl")));
+        var agyResult = agy.OfType<RunResultEvent>().Single();
+        Check.True(agy.OfType<AssistantTextEvent>().Single().Text == "agy ok" && !agyResult.IsError && agyResult.SessionId == "7b27b9d8-3cdd-4b62-8236-1d5b914298cf"
+            && agyResult.Usage is { InputTokens: 6801, OutputTokens: 54 }, "real agy stream: text, session, usage (output includes thinking)");
         Check.Equal(RunOutcome.NoResult, CockpitRuntime.Classify(143, null, File.ReadAllText(Real("gemini-0.65.0-network-blocked.stderr.txt"))), "EOF without result → NoResult");
-        Check.Equal(RunOutcome.NoResult, CockpitRuntime.Classify(GeminiLaunchBuilder.ExitUntrustedFolder, null,
-            File.ReadAllText(Real("gemini-0.65.0-untrusted-folder.stderr.txt"))), "untrusted-folder refusal is not mistaken for an auth failure");
 
         var ok = Parse(new ClaudeStreamParser(), StreamTests.SuccessRun).OfType<RunResultEvent>().Single();
         Check.Equal(RunOutcome.Succeeded, CockpitRuntime.Classify(0, ok, ""), "success");
@@ -247,8 +250,9 @@ static class FailoverTests
         var g = await rt.StartJobAsync(JobSpecFactory.Organize(folder, "by type", LaunchMode.Headless) with { JobId = "auth-3" });
         Check.Equal(JobState.Failed, await g.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "gemini no-auth failed");
         Check.Equal(RunOutcome.AuthFailed, g.Outcome, "Gemini exit 41 → AuthFailed");
-        Check.True(launcher.Headless[2].Environment.TryGetValue(GeminiLaunchBuilder.TrustWorkspaceVariable, out var trust) && trust == "true",
-            "headless Gemini trusts only its own workspace (real 0.65 refuses untrusted folders with exit 55)");
+        var agyArgs = launcher.Headless[2].ArgumentList.ToList();
+        Check.True(agyArgs.Contains("--input-format") && agyArgs.Contains("--disable-slash-commands") && !agyArgs.Contains("--add-dir"),
+            "headless Antigravity: prompt as a stream-json stdin event, slash commands off, user folder not added to its workspace");
         var totals = await rt.Usage.TotalsAsync("gemini-cli", DateTimeOffset.MinValue);
         Check.True(totals.Runs == 1 && totals.UnknownUsageRuns == 1, "a run without a result is recorded with unknown usage");
 

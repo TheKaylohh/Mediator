@@ -50,7 +50,7 @@ public enum LaunchMode
 {
     /// <summary>No CLI is started: the job's grant and workspace exist and an MCP client (CLI command, test) connects itself.</summary>
     None,
-    /// <summary>`claude -p` or `gemini` with stream-json, monitored for usage and rate limits.</summary>
+    /// <summary>`claude -p` or `agy` with stream-json, monitored for usage and rate limits.</summary>
     Headless,
     /// <summary>The CLI in a Windows Terminal tab, the billing-safe fallback; the user drives it. Watched through <see cref="InteractiveSession"/>.</summary>
     Interactive,
@@ -65,10 +65,16 @@ public sealed record JobSpec
     public string Prompt { get; init; } = "";
     public required IReadOnlyList<string> Tools { get; init; }
     public required IReadOnlyList<string> Roots { get; init; }
+    /// <summary>Folders the job may only read and list (e.g. where the files a prompt names live).</summary>
+    public IReadOnlyList<string> ReadRoots { get; init; } = [];
     public required string WorkingDirectory { get; init; }
     public LaunchMode Launch { get; init; } = LaunchMode.Headless;
     public int MaxTurns { get; init; } = 40;
     public string? Model { get; init; }
+    /// <summary>V10: reasoning effort (low|medium|high|xhigh|max) passed as --effort; null = the CLI's default.</summary>
+    public string? Effort { get; init; }
+    /// <summary>The CLI <see cref="Model"/> and <see cref="Effort"/> were chosen for; on another CLI (a switch) they are re-selected.</summary>
+    public AiProvider? ModelFor { get; init; }
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(2);
     public bool AllowMeteredBilling { get; init; }
     public BusTransport Transport { get; init; } = BusTransport.NamedPipe;
@@ -134,6 +140,8 @@ public sealed class RunningJob
     public string? SessionId { get; internal set; }
     /// <summary>V10: the model the current run uses (the job's, or <see cref="ProviderRouter.SelectModel"/>'s choice).</summary>
     public string? Model { get; internal set; }
+    /// <summary>V10: the reasoning effort of the current run (null = the CLI's default).</summary>
+    public string? Effort { get; internal set; }
     /// <summary>Every routing decision for this job, oldest first (also in the audit as cockpit/route).</summary>
     public IReadOnlyList<string> RoutingHistory => _routing;
     internal readonly List<string> _routing = new();
@@ -181,12 +189,14 @@ public sealed record RuntimeOptions
     public ISwxBackend? SwxBackend { get; init; }
     public ComponentCommand? SwxWorker { get; init; }
     public ProtectedPathPolicy? PathPolicy { get; init; }
+    /// <summary>Starts SolidWorks for CAD tools. Null: the real one on Windows with the real worker, else nothing.</summary>
+    public IDesktopAppSession? SolidWorksSession { get; init; }
     public TimeSpan BridgeTimeout { get; init; } = TimeSpan.FromMinutes(20);
     public ICockpitLog Log { get; init; } = NullLog.Instance;
-    /// <summary>Null: `gemini` resolved on PATH when a job needs it.</summary>
+    /// <summary>Null: Antigravity CLI (`agy`) located on PATH or in %LOCALAPPDATA%gybin when a job needs it.</summary>
     public string? GeminiExecutable { get; init; }
-    /// <summary>Launch Gemini with --skip-trust so folder trust cannot hide the job's MCP config (needs a recent Gemini CLI; see doctor).</summary>
-    public bool GeminiSkipTrust { get; init; }
+    /// <summary>Tests: do not touch the user's ~/.gemini/antigravity-cli/settings.json.</summary>
+    public bool SkipAgySettings { get; init; }
     /// <summary>How CLI processes are started (tests substitute a fake).</summary>
     public ICliLauncher Launcher { get; init; } = DefaultCliLauncher.Instance;
     /// <summary>Interactive sessions: how often the sentinel files are checked.</summary>
@@ -270,6 +280,14 @@ public interface ICockpitRuntime
     void DiscardAttachment(Attachment attachment);
     /// <summary>Gives a running job read-only access to an attachment. Audited as "cockpit/attach". False when the job is not running or cannot read attachments.</summary>
     Task<bool> AttachToJobAsync(string jobId, Attachment attachment);
+    /// <summary>V10: the models each installed CLI offers (the prompt bar's picker). Default: none detected.</summary>
+    Task<IReadOnlyList<CliModels>> DetectModelsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CliModels>>([]);
+
+    /// <summary>
+    /// V10: lets a running job read and write <paramref name="folder"/> (created if missing). Null when granted, else why not
+    /// (a protected place, or the job is not running). Audited.
+    /// </summary>
+    Task<string?> GrantFolderAsync(string jobId, string folder) => Task.FromResult<string?>("not supported");
 }
 
 /// <summary>
@@ -301,6 +319,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     public McpBusServer Bus { get; }
     public ComponentCommand? Bridge { get; }
     public ISwxBackend Swx { get; }
+    /// <summary>V10: the SolidWorks the CAD tools drive, started on demand (one copy); a no-op with a simulated backend.</summary>
+    public IDesktopAppSession SolidWorks { get; }
     public CockpitPaths Paths => _options.Paths;
 
     public IReadOnlyList<RunningJob> Jobs => _jobs.Values.OrderBy(j => j.StartedAt).ToList();
@@ -346,7 +366,12 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         }
 
         Tools.Register(new FilesToolProvider(journal));
-        Tools.Register(new SwxToolProvider(Swx, Registry));
+        // The real SolidWorks only with the real worker on Windows; a simulated backend (tests, --simulate) starts nothing.
+        SolidWorks = options.SolidWorksSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
+            ? new SolidWorksSession(SolidWorksSession.DefaultStartTimeout, options.Log)
+            : NoDesktopAppSession.Instance);
+        Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
+        Tools.Register(new SwxPartToolProvider(SolidWorks));
         Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
         Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
         var cadPython = options.CadPython ?? options.Python;
@@ -393,6 +418,39 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         return runtime;
     }
 
+    /// <summary>V10: the models each installed CLI offers, for the prompt bar's model picker.</summary>
+    public async Task<IReadOnlyList<CliModels>> DetectModelsAsync(CancellationToken ct = default)
+    {
+        var list = new List<CliModels>();
+        if (ExecutableFor(AiProvider.ClaudeCode) is not null) list.Add(new CliModels(AiProvider.ClaudeCode, "Claude Code", ModelCatalog.ClaudeModels));
+        if (ExecutableFor(AiProvider.GeminiCli) is { } agy) list.Add(new CliModels(AiProvider.GeminiCli, "Antigravity CLI", await ModelCatalog.AgyModelsAsync(agy, ct).ConfigureAwait(false)));
+        return list;
+    }
+
+    /// <summary>
+    /// V10: a folder the user named in the prompt may not exist yet ("output to a new folder"): it is created so the
+    /// job can write there. System locations (Windows, Program Files, AppData) are refused before anything is issued.
+    /// </summary>
+    private void PrepareRoots(JobSpec spec)
+    {
+        var policy = _options.PathPolicy ?? ProtectedPathPolicy.CreateDefault();
+        foreach (var root in spec.Roots)
+        {
+            string full = Path.GetFullPath(root);
+            if (policy.CheckJobRoot(full) is { } why) throw new ArgumentException($"The job cannot work in {full}: {why}. Pick another folder.", nameof(spec));
+            if (Directory.Exists(full)) continue; // missing levels are created (Documents\CAD\F40 when only Documents exists)
+            try
+            {
+                Directory.CreateDirectory(full);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new ArgumentException($"Could not create {full}: {ex.Message}", nameof(spec), ex);
+            }
+            RaiseNotice(spec.JobId ?? spec.Kind, $"Created the folder you named: {full}");
+        }
+    }
+
     public static string NewJobId(string kind) =>
         string.Create(CultureInfo.InvariantCulture, $"{kind}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(2)).ToLowerInvariant()}");
 
@@ -426,6 +484,12 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
                 route.Original, route.Provider, route.Reason).ConfigureAwait(false);
         }
+        PrepareRoots(spec);
+        // A job that will drive SolidWorks starts it now, so it is loading while the model reads and plans.
+        if (spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t)))
+            SolidWorks.WarmUp();
+        // The user's own words always reach the model, whatever template the action used (Assemble had no slot for them).
+        spec = spec with { Prompt = JobSpecFactory.WithUserText(spec) };
         if (spec.Attachments.Count > 0) spec = spec with { Prompt = spec.Prompt + AttachmentPromptSuffix(spec.Attachments) };
         bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
         // Attachment tools (read-only, and they only see what the user attached to this job) are granted when the job
@@ -437,7 +501,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         builtIns.AddRange(CustomMcp.EnabledToolNames);
         if (brief) builtIns.Add(JobBriefToolProvider.BriefTool);
         var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes,
-            allowMeteredBilling: spec.AllowMeteredBilling, readOnlyRoots: spec.Attachments.Select(a => a.GrantedRoot));
+            allowMeteredBilling: spec.AllowMeteredBilling, readOnlyRoots: spec.Attachments.Select(a => a.GrantedRoot).Concat(ReadOnlyExtras(spec)));
         foreach (var a in spec.Attachments) Attachments.Add(jobId, a);
         if (brief) Briefs.Set(jobId, spec.Prompt);
         RunningJob job;
@@ -502,10 +566,32 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         return true;
     }
 
+    public async Task<string?> GrantFolderAsync(string jobId, string folder)
+    {
+        string full;
+        try { full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return ex.Message; }
+        if ((_options.PathPolicy ?? ProtectedPathPolicy.CreateDefault()).CheckJobRoot(full) is { } why) return $"{full} cannot be allowed: {why}";
+        if (!_jobs.TryGetValue(jobId, out var job) || job.State is not (JobState.Starting or JobState.Running)
+            || !Registry.TryGet(jobId, out var grant) || grant is null || !Registry.IsCurrent(grant))
+            return "the job is not running";
+        string root;
+        try
+        {
+            Directory.CreateDirectory(full);
+            root = grant.Paths.AddRoot(full);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return $"could not allow {full}: {ex.Message}"; }
+        await Audit.RecordAsync(new AuditEntry(jobId, "cockpit/grant-folder", root, ToolRisk.Write,
+            new JsonObject { ["root"] = root, ["access"] = "read_write" }.ToJsonString(), "user", "ok", null, 0)).ConfigureAwait(false);
+        RaiseNotice(jobId, $"Allowed {root} for this job (read and write).");
+        return null;
+    }
+
     public Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false) =>
         RouteAsync(category, provider, neverDowngrade, RoutingPolicy.AutoBest);
 
-    /// <summary>V10: routing with a <see cref="RoutingPolicy"/> (Quota Saver puts Gemini first, Claude First puts Claude first).</summary>
+    /// <summary>V10: routing with a <see cref="RoutingPolicy"/> (Quota Saver puts Antigravity first, Claude First puts Claude first).</summary>
     public async Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider, bool neverDowngrade, RoutingPolicy policy)
     {
         var cooldowns = new Dictionary<AiProvider, DateTimeOffset?>();
@@ -559,7 +645,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     private string? ExecutableFor(AiProvider provider) => provider == AiProvider.ClaudeCode
         ? _options.ClaudeExecutable ?? CliLaunchBuilder.ResolveOnPath("claude")
-        : _options.GeminiExecutable ?? CliLaunchBuilder.ResolveOnPath("gemini");
+        : _options.GeminiExecutable ?? GeminiLaunchBuilder.Locate();
 
     private void RaiseNotice(string jobId, string message)
     {
@@ -578,24 +664,47 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     private string RequireExecutable(AiProvider provider) => ExecutableFor(provider) ?? throw new ProviderUnavailableException(provider == AiProvider.ClaudeCode
         ? "Claude Code (claude) is not on PATH. Install it and sign in with your Pro account first (`claude`, then /login)."
-        : "Gemini CLI (gemini) is not on PATH. Install it (npm install -g @google/gemini-cli) and sign in with your Google account (`gemini`, choose Login with Google).");
+        : "Antigravity CLI (agy) is not installed. Install it (irm https://antigravity.google/cli/install.ps1 | iex) and sign in with your Google AI Pro account (`agy`).");
+
+    private ProcessStartInfo AgyHeadless(RunningJob job) =>
+        AllowCockpitTools(new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli))).Headless(job.Workspace, job.Model, job.Spec.AllowMeteredBilling, job.Effort);
+
+    /// <summary>agy soft-denies unapproved MCP tools in headless runs; make sure the user-level mcp(cockpit/*) rule exists.</summary>
+    private GeminiLaunchBuilder AllowCockpitTools(GeminiLaunchBuilder builder)
+    {
+        if (!_options.SkipAgySettings && !GeminiLaunchBuilder.EnsureCockpitToolsAllowed())
+            _options.Log.Info("Antigravity settings.json is not valid JSON; add \"" + GeminiLaunchBuilder.CockpitAllowRule + "\" to permissions.allow yourself.");
+        return builder;
+    }
+
+    /// <summary>V10: a Chat or Search job with no folder, tools or attachments: the CLI gets no access to local files.</summary>
+    internal static bool NoLocalAccess(JobSpec spec) =>
+        JobSpecFactory.IsNoLocalAccess(spec.Category) && spec.Roots.Count == 0 && spec.Tools.Count == 0 && spec.Attachments.Count == 0;
 
     private ProcessStartInfo HeadlessStartInfo(RunningJob job)
     {
         var spec = job.Spec;
         var provider = job.Provider ?? AiProvider.ClaudeCode;
         // V10: a job without a model gets one per run, for the provider actually used (a mid-job switch re-selects it).
-        job.Model = spec.Model ?? ProviderRouter.SelectModel(provider, spec.Category, spec.UserText ?? spec.Prompt);
+        bool chosenHere = spec.ModelFor is null || spec.ModelFor == provider;
+        // The action's Cockpit tools; the built-ins every job gets (status, attachments) do not make a job a tool job.
+        int tools = spec.Tools.Count;
+        var (model, effort, note) = ProviderRouter.ResolveRun(provider, chosenHere ? spec.Model : null, chosenHere ? spec.Effort : null,
+            spec.Category, spec.UserText ?? spec.Prompt, tools);
+        job.Model = model;
+        job.Effort = effort;
+        if (note is not null) RaiseNotice(job.JobId, note);
         return provider == AiProvider.GeminiCli
-            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Headless(job.Workspace, job.Model, spec.AllowMeteredBilling, spec.WorkingDirectory)
+            ? AgyHeadless(job)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, job.Model, spec.AllowMeteredBilling, spec.ContinueSessionId);
+                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, job.Model, spec.AllowMeteredBilling, spec.ContinueSessionId,
+                    webSearch: spec.Category == TaskCategory.Search, noLocalFiles: NoLocalAccess(spec), effort: job.Effort);
     }
 
     private async Task LaunchHeadlessAsync(RunningJob job, CancellationToken ct)
     {
         var provider = job.Provider ?? AiProvider.ClaudeCode;
-        string cli = provider == AiProvider.ClaudeCode ? "claude" : "gemini";
+        string cli = provider == AiProvider.ClaudeCode ? "claude" : "agy";
         var process = _options.Launcher.StartHeadless(HeadlessStartInfo(job));
         job.Process = process;
         job.ProcessGroup.Assign(process);
@@ -609,7 +718,10 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         };
         process.BeginErrorReadLine();
 
-        await process.StandardInput.WriteAsync(job.Spec.Prompt.AsMemory(), ct).ConfigureAwait(false);
+        string stdin = provider == AiProvider.GeminiCli
+            ? GeminiLaunchBuilder.StdinMessage(job.Spec.Prompt, cockpitTools: !NoLocalAccess(job.Spec), webSearch: job.Spec.Category == TaskCategory.Search)
+            : job.Spec.Prompt;
+        await process.StandardInput.WriteAsync(stdin.AsMemory(), ct).ConfigureAwait(false);
         process.StandardInput.Close();
 
         var monitor = CliRunMonitor.For(provider, job.JobId, Usage);
@@ -704,7 +816,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         session.ClearStale();
         bool hasBrief = spec.Prompt.Length > 0;
         var psi = job.Provider == AiProvider.GeminiCli
-            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
+            ? AllowCockpitTools(new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli))).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
                 .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling, spec.ContinueSessionId);
         job.Interactive = session;
@@ -835,13 +947,36 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         await Operations.DisposeAsync().ConfigureAwait(false);
         await Audit.DisposeAsync().ConfigureAwait(false);
     }
+
+    /// <summary>The spec's read-only folders that exist, are not protected and are not already writable roots.</summary>
+    private IEnumerable<string> ReadOnlyExtras(JobSpec spec)
+    {
+        var policy = _options.PathPolicy ?? ProtectedPathPolicy.CreateDefault();
+        return spec.ReadRoots.Where(r => Directory.Exists(r) && policy.CheckJobRoot(r) is null
+            && !spec.Roots.Contains(r, StringComparer.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>The job recipes behind the overlay's action tiles and the CLI commands.</summary>
 public static partial class JobSpecFactory
 {
-    public static readonly string[] SwxTools = [SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool];
-    public static readonly string[] CadTools = [CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool];
+    /// <summary>
+    /// Every CAD job gets the whole SolidWorks toolset: building parts (native or from code / STEP), reading part cards and
+    /// building assemblies. Splitting them made "make the parts and assemble them" impossible in one job.
+    /// </summary>
+    public static readonly string[] CadTools =
+    [
+        SwxPartToolProvider.BuildTool, SwxPartToolProvider.SetTool,                // native parametric parts
+        SwxPartToolProvider.SessionTool, SwxPartToolProvider.DocumentTool, SwxPartToolProvider.ExportTool, // open/save/close, STEP/STL/PDF
+        CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, // code → STEP → part
+        SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool,                  // part cards → assembly
+    ];
+
+    /// <summary>
+    /// Turns (model replies, one per tool call) a CAD job may take: several parts, their fixes and version iterations,
+    /// part cards and the assembly all happen in one run. Claude Code stops the job at --max-turns.
+    /// </summary>
+    public const int CadMaxTurns = 60;
     public static readonly string[] ResolveTools = [ResolveToolProvider.ProbeTool, ResolveToolProvider.ExportTool, ResolveToolProvider.ApplyTool];
     public static readonly string[] BlenderTools = [BlenderToolProvider.BuildTool, BlenderToolProvider.RenderTool];
     public static readonly string[] TutorTools = [TutorToolProvider.ExtractTool, TutorToolProvider.VerifyTool];
@@ -855,10 +990,46 @@ public static partial class JobSpecFactory
         return new JobSpec
         {
             Kind = "codecad", Category = TaskCategory.Cad, Title = $"Parametric parts in {Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}",
-            Tools = CadTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = 40,
+            Tools = CadTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = CadMaxTurns,
             Prompt = $$"""
                 Design parametric parts for: {{request}}
                 Output folder: {{full}}
+                A. A single part described by its dimensions or features (plates, holes, bosses, ribs, fillets), or anything where the user
+                   wants design intent / to change dimensions later in SolidWorks: build it NATIVELY with swx_build_parametric_part
+                   (outputFolder "{{J(full)}}"). Make every size a global (mm) and position features with expressions of those globals
+                   (e.g. corner holes at "W/2-E"), so the part survives dimension changes. Check the returned report (no rebuild errors,
+                   holes at the right edge distances, features centred). If the user asks to change dimensions, call swx_set_part_globals
+                   and verify the report again. The part stays open in SolidWorks. Skip steps 1-3 below.
+                   Organic or styled shapes (vehicles, figurines, handles, housings, anything to 3D print) are also case A. Build them
+                   with curves, not boxes: draw sections with splines/outlines on offset planes (op plane + named sketches), loft them in
+                   order (add guide sketches to control the silhouette; a surface loft with guides stands in for a boundary surface),
+                   sweep a profile along a path for tubes and rims, revolve round parts, and use surface + knit + thicken for skins.
+                   For symmetric shapes build one half and mirror it. Finish with fillets (edgesNear picks specific edges) and cuts or
+                   extrudes for details. Keep ONE solid body with no thin walls (>= 1.5 mm). For a size limit set fitBoxMm and check
+                   the reported bounding box against it ("4 cubic inch box": assume a 4 in = 101.6 mm cube unless they say volume, and
+                   state the assumption). If a feature fails, read the log line, fix that feature and rebuild.
+                   When the request names a real object (a car model, a product, a character), it must be recognisable as THAT object,
+                   not a generic smooth shape. Work in a loop:
+                   1. Reference sheet first (in your answer): the real overall size (length, width, height in mm; web search if you can,
+                      else what you know) and 6-10 defining features with where they sit along the length (e.g. for a car: wheelbase and
+                      overhangs, nose shape, windscreen and roof position, side intakes, engine cover, rear wing, lights, wheel size).
+                   2. Build "<name>-v1" with referenceMm set to that size. Draw sections from the real proportions (positions as
+                      fractions of the length), not from guesses; add every defining feature as its own feature (cut, extrude, loft).
+                   3. Compare: look at the returned front, right, top and iso pictures (a car built along X shows its side profile in the front view) and the proportions check, feature by feature
+                      against the sheet. Write the differences as a short list.
+                   4. Rework and build "<name>-v2", "-v3"... (older versions are deleted automatically) until the proportions match and
+                      every defining feature is visible in the pictures, at most 6 versions. Finish with the checklist: each feature, done
+                      or approximated, and what still differs. Set exportStl true when the user wants to print it. Never assemble unrelated parts from the folder.
+                   Several parts that go together (a mechanism, a kit, "make the parts and mate them"): one job does it all, one tool
+                   call at a time. Build every part with swx_build_parametric_part (check each report), then call swx_part_cards on
+                   the output folder, then swx_build_assembly with only the parts you built and mates read from the cards
+                   (concentric for matching cylinders, coincident for opposed faces, default planes "front"/"top"/"right" to
+                   centre parts without matching faces), largest part fixed, saved under the assembly name the user asked for.
+                   A DXF/SVG drawing the user gives (logo, plate outline, gasket) becomes a profile shape "import" (path, width?) and
+                   is extruded or cut; lock: true keeps its exact shape. A 3D path (pipe, handlebar, wire) is op curve3d, then sweep.
+                   Existing SolidWorks files: swx_session shows what is open; swx_document_ops opens, saves or closes (never discard
+                   the user's unsaved work unless they say so); swx_export_neutral writes STEP/STL/IGES/Parasolid (PDF for drawings).
+                B. Otherwise (templated mechanical parts, assemblies):
                 1. Choose built-in templates in cad_generate_parametric_step (wheel_hub, brake_disc, coil_spring, strut_tube, control_arm,
                    shaft, flange_bracket) with realistic millimetre parameters and an envelopeMm for each part. State any dimension you assume.
                    Use cad_generate_custom_step only if no template fits; the user reviews that code.
@@ -912,19 +1083,26 @@ public static partial class JobSpecFactory
     }
 
     /// <summary>Prompt 5: tutoring from a textbook chapter, with exact arithmetic checks.</summary>
-    public static JobSpec Tutor(string folder, string request, LaunchMode launch)
+    public static JobSpec Tutor(string? folder, string request, LaunchMode launch)
     {
-        string full = Path.GetFullPath(folder);
+        string? full = folder is null ? null : Path.GetFullPath(folder);
+        string work = full ?? Path.Combine(Path.GetTempPath(), "AiCockpit-chat");
+        Directory.CreateDirectory(work);
+        string source = full is null
+            ? "If the user attached PDFs or documents, read them and answer from them."
+            : $"Their documents (PDFs, notes) are in {full}; read them when the question is about them.";
         return new JobSpec
         {
-            Kind = "tutor", Category = TaskCategory.Tutor, Title = "Linear algebra tutor",
-            Tools = TutorTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = 40,
+            Kind = "tutor", Category = TaskCategory.Tutor, Title = "Ask & learn",
+            Tools = TutorTools, Roots = full is null ? [] : [full], WorkingDirectory = work, Launch = launch, MaxTurns = 40,
             Lifetime = TimeSpan.FromHours(4),
+            UserText = request,
             Prompt = $$"""
-                Tutor the user: {{request}}
-                The textbook PDF is in {{full}}. Use tutor_extract_pdf_chapter on the pages of the chapter they name (ask for page
-                numbers if unclear), then teach from that text: one idea at a time, a worked example, then a question for them.
-                Before you state any matrix result or grade an answer, call tutor_verify_matrix and use its exact result.
+                Answer the user's question or teach them the topic they ask about, on any subject: {{request}}
+                {{source}} For a PDF, use tutor_extract_pdf_chapter on the pages that matter (ask for page numbers if unclear).
+                Be clear and direct. When teaching, go one idea at a time with a worked example, and offer a check question.
+                Before you state any matrix or linear-algebra result, or grade an answer that contains one, call tutor_verify_matrix
+                and use its exact result.
                 """,
         };
     }
@@ -934,6 +1112,23 @@ public static partial class JobSpecFactory
 
     public static string DefaultAssemblyPath(string folder) =>
         Path.Combine(Path.GetFullPath(folder), string.Create(CultureInfo.InvariantCulture, $"Cockpit-Assembly-{DateTime.Now:yyyyMMdd-HHmmss}.SLDASM"));
+
+    /// <summary>
+    /// The assembly file a request names ("...named Train_Master_Assembly.SLDASM", "save as C:\X\Car.sldasm"), placed in
+    /// <paramref name="folder"/> unless the request gives a full path; null when it names none.
+    /// </summary>
+    public static string? RequestedAssemblyPath(string? request, string folder)
+    {
+        var m = AssemblyFileName().Match(request ?? "");
+        if (!m.Success) return null;
+        string name = m.Groups["name"].Value;
+        string? dir = m.Groups["dir"].Success && m.Groups["dir"].Value.Length > 0 ? m.Groups["dir"].Value : null;
+        try { return Path.GetFullPath(Path.Combine(dir ?? folder, name)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return Path.Combine(Path.GetFullPath(folder), name); }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<dir>[A-Za-z]:\\(?:[^\\/:*?""<>|\r\n]+\\)*)?(?<name>[\w\-.]+\.sldasm)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex AssemblyFileName();
 
     public static JobSpec Assemble(string folder, LaunchMode launch, string? outputPath = null)
     {
@@ -948,18 +1143,23 @@ public static partial class JobSpecFactory
             Kind = "assemble",
             Category = TaskCategory.Cad,
             Title = $"Assemble parts in {Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}",
-            Tools = SwxTools,
+            Tools = CadTools,
             Roots = roots,
             WorkingDirectory = full,
             Launch = launch,
-            MaxTurns = 30,
+            MaxTurns = CadMaxTurns,
             Prompt = $$"""
                 Create a new SolidWorks assembly from the part files in this folder: {{full}}
+                0. If the request needs parts that are not in the folder yet, build each one first with swx_build_parametric_part
+                   (outputFolder "{{J(full)}}", one call per part, checking each report), then continue with all the parts.
                 1. Call swx_part_cards with {"folder": "{{full.Replace("\\", "\\\\", StringComparison.Ordinal)}}"}.
                 2. From the cards (bounding boxes, cylinders, planes, mate references) work out how the parts fit together.
                    Prefer concentric mates between cylinders of equal radius and coincident mates between opposed planes.
-                   Give every mate a confidence (0-1) and a one-line reason. Leave out mates you are unsure about.
-                3. Call swx_build_assembly once with outputPath "{{output.Replace("\\", "\\\\", StringComparison.Ordinal)}}", the first
+                   To centre or align parts without matching faces (a cylinder on a block) mate their default planes: faceA/faceB
+                   "front", "top" or "right" (e.g. Coincident right-right and front-front centres the boiler on the chassis).
+                   A part used several times is one component per copy (key, position). Give every mate a confidence (0-1) and a one-line reason. Leave out mates you are unsure about.
+                3. Call swx_build_assembly once with outputPath "{{output.Replace("\\", "\\\\", StringComparison.Ordinal)}}" (or the assembly name
+                   the user asked for, in that folder), the first
                    (largest) part fixed, and your mates. The user reviews and may untick mates before anything is built.
                 4. Report which mates were built, which failed, and what the user should check in SolidWorks.
                 Use only the cockpit tools. Do not try to edit the part files.

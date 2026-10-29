@@ -285,6 +285,7 @@ public sealed class SwxComHost : ISwxHost
         var components = new List<ComponentResult>();
         var mates = new List<MateResult>();
 
+        using var quiet = new QuietPrompts(sw);
         bool previousCommandInProgress = sw.CommandInProgress;
         var view = asmModel.ActiveView as ModelView;
         bool? previousGraphics = view?.EnableGraphicsUpdate;
@@ -298,7 +299,9 @@ public sealed class SwxComHost : ISwxHost
             sw.CommandInProgress = true;               // batch mode for out-of-process callers
             if (view is not null) view.EnableGraphicsUpdate = false;
             featureManager.EnableFeatureTree = false;
-            recordingUndo = ext.StartRecordingUndoObject();
+            // The real interop declares StartRecordingUndoObject() as void: success is "it did not throw".
+            try { ext.StartRecordingUndoObject(); recordingUndo = true; }
+            catch (System.Runtime.InteropServices.COMException) { recordingUndo = false; }
             if (!recordingUndo) warnings.Add("SolidWorks did not start an undo group; Ctrl+Z will undo steps one by one.");
 
             var placed = new Dictionary<string, Component2>(StringComparer.Ordinal);
@@ -393,7 +396,7 @@ public sealed class SwxComHost : ISwxHost
         // swAddMateError_IncorrectSelections.
         asmModel.ClearSelection2(true);
         var selectData = CreateMateSelectData(asmModel);
-        if (!((Entity)entityA).Select4(true, selectData) || !((Entity)entityB).Select4(true, selectData))
+        if (!SelectForMate(entityA, selectData) || !SelectForMate(entityB, selectData))
         {
             asmModel.ClearSelection2(true);
             return new MateResult(m.Key, MateStatus.Failed, null, "Could not select both faces.");
@@ -435,6 +438,7 @@ public sealed class SwxComHost : ISwxHost
     {
         var partModel = component.GetModelDoc2() as ModelDoc2
             ?? throw new SwxException("component_not_resolved", $"Component {component.Name2} is lightweight or suppressed.");
+        if (StandardPlanes.IsStandard(face)) return StandardPlaneInAssembly(component, partModel, StandardPlanes.IndexOf(face.Id));
         var partFace = ResolveFace(partModel, face);
         return component.GetCorrespondingEntity(partFace)
             ?? throw new SwxException("no_assembly_entity", $"Could not map face {face.Id} into component {component.Name2}.");
@@ -573,7 +577,7 @@ public sealed class SwxComHost : ISwxHost
             {
                 // Last resort: name the face in memory. The part is open read-only and is never saved, so the
                 // name lives only for this SolidWorks session; the geometric fallback covers anything later.
-                string candidate = $"cockpit_{id}_{Environment.TickCount64 % 1_000_000}";
+                string candidate = $"cockpit_{id}_{System.Environment.TickCount64 % 1_000_000}";
                 if (part.SetEntityName(f.Face, candidate))
                 {
                     name = candidate;
@@ -752,6 +756,69 @@ public sealed class SwxComHost : ISwxHost
         double t = Dot(d, lineDir);
         double[] perp = [d[0] - t * lineDir[0], d[1] - t * lineDir[1], d[2] - t * lineDir[2]];
         return Math.Sqrt(Dot(perp, perp));
+    }
+
+    /// <summary>Selects a mate entity with mark 1: a face (Entity) through the select data, a default plane (Feature) by mark.</summary>
+    private static bool SelectForMate(object entity, SelectData data) => entity switch
+    {
+        Feature plane => plane.Select2(true, 1),
+        Entity e => e.Select4(true, data),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A component's default plane (Front, Top, Right) in the assembly: the part's first three reference planes in feature
+    /// tree order (so renamed or translated planes still work), then the component's own copy of that feature by name.
+    /// </summary>
+    internal static Feature StandardPlaneInAssembly(Component2 component, ModelDoc2 partModel, int index)
+    {
+        int seen = 0;
+        for (var f = partModel.FirstFeature() as Feature; f is not null; f = f.GetNextFeature() as Feature)
+        {
+            if (f.GetTypeName2() != "RefPlane") continue;
+            if (seen++ != index) continue;
+            return component.FeatureByName(f.Name) as Feature
+                ?? throw new SwxException("no_assembly_entity", $"Could not find plane '{f.Name}' of component {component.Name2} in the assembly.");
+        }
+        throw new SwxException("plane_not_found", $"{partModel.GetTitle()} has no default plane #{index + 1} ({StandardPlanes.Ids[index]}).");
+    }
+
+    /// <summary>
+    /// Stops the SolidWorks questions that block an automated build, for its duration only (the user's settings come back
+    /// after): "save modified read-only referenced documents?" (the Yes/No seen after an assembly save), "rebuild the
+    /// models?", the rebuild error box and the mate flip prompt. ISldWorks.CloseDoc has no "silent" option, and
+    /// UserControl = false on the user's own session does not stop dialogs (it hands SolidWorks' lifetime to us), so
+    /// prompts are prevented at their source instead.
+    /// </summary>
+    internal sealed class QuietPrompts : IDisposable
+    {
+        private const int ExtRefNoPromptOrSave = 15, ShowErrorsEveryRebuild = 77, PromptForAutoMateFlip = 368; // swUserPreferenceToggle_e
+        private const int RebuildOnActivation = 230, RebuildActiveDoc = 2;                                    // swUserPreferenceIntegerValue_e
+        private readonly SldWorks _sw;
+        private readonly List<(int Id, bool Value)> _toggles = [];
+        private readonly int? _rebuild;
+
+        public QuietPrompts(SldWorks sw)
+        {
+            _sw = sw;
+            Set(ExtRefNoPromptOrSave, true);
+            Set(ShowErrorsEveryRebuild, false);
+            Set(PromptForAutoMateFlip, false);
+            try { _rebuild = sw.GetUserPreferenceIntegerValue(RebuildOnActivation); sw.SetUserPreferenceIntegerValue(RebuildOnActivation, RebuildActiveDoc); }
+            catch (COMException) { _rebuild = null; }
+        }
+
+        private void Set(int id, bool value)
+        {
+            try { _toggles.Add((id, _sw.GetUserPreferenceToggle(id))); _sw.SetUserPreferenceToggle(id, value); }
+            catch (COMException) { }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (id, value) in _toggles) try { _sw.SetUserPreferenceToggle(id, value); } catch (COMException) { }
+            if (_rebuild is int r) try { _sw.SetUserPreferenceIntegerValue(RebuildOnActivation, r); } catch (COMException) { }
+        }
     }
 }
 #endif

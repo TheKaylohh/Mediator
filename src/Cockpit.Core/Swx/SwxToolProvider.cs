@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Runtime;
 using Cockpit.Core.Security;
 using Cockpit.Protocol.Swx;
 
@@ -21,12 +22,17 @@ public sealed class SwxToolProvider : IToolProvider
     public const string ImportStepTool = "swx_import_step";
     private const int MaxParts = 200;
 
+    /// <summary>Every tool of this provider: each one needs SolidWorks running.</summary>
+    public static IReadOnlySet<string> ToolNames { get; } = new HashSet<string>(StringComparer.Ordinal) { PartCardsTool, BuildTool, ImportStepTool };
+
     private readonly ISwxBackend _worker;
+    private readonly IDesktopAppSession _solidWorks;
     private readonly ConcurrentDictionary<(string JobId, string Path), PartCard> _cards = new();
 
-    public SwxToolProvider(ISwxBackend worker, JobRegistry jobs)
+    public SwxToolProvider(ISwxBackend worker, JobRegistry jobs, IDesktopAppSession? solidWorks = null)
     {
         _worker = worker;
+        _solidWorks = solidWorks ?? NoDesktopAppSession.Instance;
         jobs.JobRevoked += jobId =>
         {
             foreach (var key in _cards.Keys.Where(k => k.JobId == jobId).ToList()) _cards.TryRemove(key, out _);
@@ -53,14 +59,18 @@ public sealed class SwxToolProvider : IToolProvider
 
         new ToolDescriptor(BuildTool,
             "Create a NEW SolidWorks assembly from parts already read with swx_part_cards. Inserts components at given " +
-            "positions (m), fixes those marked fixed, and adds mates between face IDs. Never overwrites files and never " +
-            "edits the parts. The user reviews the mate plan before anything runs. Mates that fail are left out and reported.",
+            "positions (m), fixes those marked fixed, and adds mates between face IDs. Besides the card's c../p.. faces, every part " +
+            "has its default planes as faceA/faceB: \"front\" (XY), \"top\" (XZ), \"right\" (YZ), e.g. to centre a cylinder on a block " +
+            "(Coincident right↔right and front↔front) or to align parts without a matching face. A part used several times (4 axles, " +
+            "36 track segments) is one component per copy with its own key and position. outputPath: the assembly name the user asked " +
+            "for (e.g. Train_Master_Assembly.SLDASM in their folder); if it already exists, ask or add -v2. Never overwrites files and " +
+            "never edits the parts. The user reviews the mate plan before anything runs. Mates that fail are left out and reported.",
             (JsonObject)JsonNode.Parse("""
             {
               "type": "object",
               "required": ["outputPath", "components"],
               "properties": {
-                "outputPath":   { "type": "string", "description": "Absolute path of the new .SLDASM (must not exist)." },
+                "outputPath":   { "type": "string", "description": "Absolute path of the new .SLDASM (must not exist): the file name the user asked for, in their folder." },
                 "templatePath": { "type": "string", "description": "Optional .ASMDOT; default is SolidWorks' default assembly template." },
                 "components": {
                   "type": "array",
@@ -152,13 +162,19 @@ public sealed class SwxToolProvider : IToolProvider
     {
         try
         {
-            return call.Tool.Name switch
+            // Start SolidWorks before the first call instead of failing with "not running" (the worker never starts it).
+            try { await _solidWorks.EnsureReadyAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is TimeoutException or InvalidOperationException)
             {
-                PartCardsTool => await PartCardsAsync(call, ct).ConfigureAwait(false),
-                BuildTool => await BuildAsync(call, ct).ConfigureAwait(false),
-                ImportStepTool => await ImportStepAsync(call, ct).ConfigureAwait(false),
-                _ => ToolResult.Fail($"Unknown tool {call.Tool.Name}."),
-            };
+                return ToolResult.Fail("SolidWorks could not be started: " + ex.Message);
+            }
+            try { return await DispatchAsync(call, ct).ConfigureAwait(false); }
+            catch (SwxWorkerException ex) when (ex.Code == "not_running" && OperatingSystem.IsWindows())
+            {
+                // Start SolidWorks for the user, then try once more.
+                await Task.Run(() => SolidWorksLauncher.EnsureRunning(TimeSpan.FromMinutes(3)), ct).ConfigureAwait(false);
+                return await DispatchAsync(call, ct).ConfigureAwait(false);
+            }
         }
         catch (SwxWorkerException ex) when (ex.Code == SwxWorkerException.ModalDialogBlocking)
         {
@@ -180,6 +196,14 @@ public sealed class SwxToolProvider : IToolProvider
             return ToolResult.Fail($"SolidWorks: {ex.Code}: {ex.Message}");
         }
     }
+
+    private async Task<ToolResult> DispatchAsync(ToolCallContext call, CancellationToken ct) => call.Tool.Name switch
+    {
+        PartCardsTool => await PartCardsAsync(call, ct).ConfigureAwait(false),
+        BuildTool => await BuildAsync(call, ct).ConfigureAwait(false),
+        ImportStepTool => await ImportStepAsync(call, ct).ConfigureAwait(false),
+        _ => ToolResult.Fail($"Unknown tool {call.Tool.Name}."),
+    };
 
     private static (List<string>? Paths, string? Output, string? Error) ImportArgs(ToolCallContext call)
     {
@@ -402,13 +426,13 @@ public sealed class SwxToolProvider : IToolProvider
             if (!cardsByKey.TryGetValue(m.ComponentA, out var ca) || !cardsByKey.TryGetValue(m.ComponentB, out var cb))
                 return (plan, null, $"Mate '{m.Key}' refers to an unknown component.");
             if (m.ComponentA == m.ComponentB) return (plan, null, $"Mate '{m.Key}' must join two different components.");
-            var fa = ca.Faces.FirstOrDefault(f => f.Id == m.FaceA);
-            var fb = cb.Faces.FirstOrDefault(f => f.Id == m.FaceB);
-            if (fa is null || fb is null) return (plan, null, $"Mate '{m.Key}' refers to a face ID that is not in the part card.");
+            var fa = ca.Faces.FirstOrDefault(f => f.Id == m.FaceA) ?? (StandardPlanes.IndexOf(m.FaceA) is >= 0 and var ia ? StandardPlanes.Face(ia) : null);
+            var fb = cb.Faces.FirstOrDefault(f => f.Id == m.FaceB) ?? (StandardPlanes.IndexOf(m.FaceB) is >= 0 and var ib ? StandardPlanes.Face(ib) : null);
+            if (fa is null || fb is null) return (plan, null, $"Mate '{m.Key}' refers to a face ID that is not in the part card (use its c../p.. IDs, or a default plane: front, top, right).");
             if (m.Type == MateKind.Concentric && (fa.Kind != FaceKind.Cylinder || fb.Kind != FaceKind.Cylinder))
                 return (plan, null, $"Mate '{m.Key}': Concentric needs two cylinder faces (c..).");
             if (m.Type != MateKind.Concentric && (fa.Kind != FaceKind.Plane || fb.Kind != FaceKind.Plane))
-                return (plan, null, $"Mate '{m.Key}': {m.Type} needs two plane faces (p..).");
+                return (plan, null, $"Mate '{m.Key}': {m.Type} needs two plane faces (p.. or front/top/right).");
             if (m.Type == MateKind.Distance && m.DistanceM is null)
                 return (plan, null, $"Mate '{m.Key}': Distance needs distanceM.");
             mates.Add(new ResolvedMate(m, fa, fb));
@@ -420,6 +444,7 @@ public sealed class SwxToolProvider : IToolProvider
 
     private static string Describe(string component, FaceInfo f)
     {
+        if (StandardPlanes.IsStandard(f)) return $"{component}.{f.Id} (default plane)";
         string size = f.RadiusM is double r
             ? $"r {Math.Round(r * 1000, 3).ToString(CultureInfo.InvariantCulture)} mm"
             : $"{Math.Round(f.AreaM2 * 1e6, 1).ToString(CultureInfo.InvariantCulture)} mm²";

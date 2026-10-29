@@ -155,6 +155,7 @@ namespace System.Windows.Input
         None = 0, Back = 2, Tab = 3, Return = 6, Enter = 6, Escape = 13, Space = 18,
         A = 44, B = 45, C = 46, D = 47, E = 48, F = 49, G = 50, H = 51, I = 52, J = 53, K = 54, L = 55, M = 56,
         N = 57, O = 58, P = 59, Q = 60, R = 61, S = 62, T = 63, U = 64, V = 65, W = 66, X = 67, Y = 68, Z = 69,
+        Left = 23, Up = 24, Right = 25, Down = 26,
     }
 
     [Flags]
@@ -289,6 +290,13 @@ namespace Microsoft.Win32
     public sealed class OpenFileDialog : FileDialog
     {
         public bool Multiselect { get; set; }
+    }
+
+    public sealed class OpenFolderDialog : CommonDialog
+    {
+        public string Title { get; set; } = "";
+        public string FolderName { get; set; } = "";
+        public string InitialDirectory { get; set; } = "";
     }
 }
 

@@ -255,14 +255,14 @@ static class ConnectorTests
         var probe = new ConnectorProbe(DefaultProcessRunner.Instance, home, new Dictionary<string, string?>
         {
             ["claude"] = Script("claude", "echo '2.1.309 (Claude Code)'"),
-            ["gemini"] = Script("gemini", "echo 'oops' >&2; exit 2"),
+            ["agy"] = Script("agy", "echo 'oops' >&2; exit 2"),
             ["python"] = Script("python", "echo 'Python 3.13.17'"),
             ["git"] = null,
             ["blender"] = null,
         });
         var claude = await probe.ProbeToolAsync("claude");
         Check.True(claude.Found && claude.Version == "2.1.309", $"claude version parsed ({claude.Version})");
-        var gemini = await probe.ProbeToolAsync("gemini");
+        var gemini = await probe.ProbeToolAsync("agy");
         Check.True(!gemini.Found && gemini.Problem!.Contains("exited with 2", StringComparison.Ordinal), "failing --version reported");
         Check.Equal("3.13.17", (await probe.ProbeToolAsync("python")).Version, "python version");
         Check.True(!(await probe.ProbeToolAsync("git")).Found, "missing git reported");
@@ -272,7 +272,7 @@ static class ConnectorTests
         File.WriteAllText(probe.CredentialFile("claude"), "{\"secret\":\"never-read\"}");
         File.SetUnixFileMode(probe.CredentialFile("claude"), UnixFileMode.None); // unreadable: existence is all the probe needs
         Check.Equal(CredentialState.FilePresent, probe.Credentials("claude"), "credential file found without reading it");
-        Check.True(probe.CredentialFile("gemini").EndsWith(Path.Combine(".gemini", "oauth_creds.json"), StringComparison.Ordinal), "gemini credential path");
+        Check.True(probe.CredentialFile("agy").EndsWith(Path.Combine(".gemini", "antigravity-cli", "cache", "onboarding.json"), StringComparison.Ordinal), "agy sign-in record path");
 
         Check.True(!probe.SolidWorks().Available && !probe.Resolve().Available, "Windows-only apps unavailable on Linux");
         Check.True(!probe.Blender().Available, "blender missing");

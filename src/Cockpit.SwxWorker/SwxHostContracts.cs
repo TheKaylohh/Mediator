@@ -26,8 +26,6 @@ public sealed class SwxException : Exception
 
 public sealed record SwxHostOptions
 {
-    /// <summary>Launch SolidWorks if it is not running. Off by default: attaching to the user's session is safer.</summary>
-    public bool AllowLaunch { get; init; }
     public TimeSpan AttachWait { get; init; } = TimeSpan.FromSeconds(60);
     /// <summary>How long the message filter keeps retrying a busy SolidWorks before giving up on a call.</summary>
     public TimeSpan BusyRetryWindow { get; init; } = TimeSpan.FromSeconds(90);

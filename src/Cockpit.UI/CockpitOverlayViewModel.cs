@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Cockpit.Core.Attachments;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Context;
+using Cockpit.Core.Files;
 using Cockpit.Core.Jobs;
 using Cockpit.Core.Runtime;
 
@@ -54,29 +55,52 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         _settingsStore = settings ?? new MemorySettingsStore();
         _settings = _settingsStore.Load();
 
-        Actions = new ObservableCollection<ActionTileViewModel>(DefaultActions());
+        Actions = new ObservableCollection<ActionTileViewModel>(DefaultActions().Concat((_settings.CustomActions ?? []).Select(CustomTile)));
+        NewActionCommand = new RelayCommand(() => IsEditingAction = !IsEditingAction);
+        SaveActionCommand = new RelayCommand(SaveNewAction);
+        DeleteActionCommand = new RelayCommand(p => DeleteAction(p as ActionTileViewModel), p => p is ActionTileViewModel { IsCustom: true });
         FilteredActions = new ObservableCollection<ActionTileViewModel>(Actions);
         Providers.Add(new ProviderStatusViewModel(ClaudeProvider, "Claude Pro"));
         Providers.Add(new ProviderStatusViewModel(GeminiProvider, "Google AI Pro"));
 
         ToggleCommand = new RelayCommand(() => { if (IsVisible) Hide(); else Show(); });
         HideCommand = new RelayCommand(Hide);
-        SubmitPromptCommand = new RelayCommand(SubmitPrompt, () => PromptText.Trim().Length > 0);
+        OpenFullViewCommand = new RelayCommand(() => { Hide(); OpenFullViewRequested?.Invoke(); });
+        SubmitPromptCommand = new RelayCommand(SubmitPrompt, () => PromptText.Trim().Length > 0 && !IsChatBusy);
+        StopCommand = new RelayCommand(StopChat, () => IsChatBusy);
+        EffortOptions = new ObservableCollection<string>(["Auto", .. ModelCatalog.Efforts]);
+        ModelOptions.Add(ModelOption.Auto);
         RunActionCommand = new RelayCommand(p => { if (p is ActionTileViewModel tile) _ = RunActionAsync(tile, PromptText); }, p => p is ActionTileViewModel { IsEnabled: true });
         KillAllCommand = new RelayCommand(KillAll, () => Jobs.Any(j => j.IsActive));
         DismissBannerCommand = new RelayCommand(() => BillingBanner = null);
         CycleThemeCommand = new RelayCommand(CycleTheme);
         AcknowledgeFaultCommand = new RelayCommand(() => SetFault(null), () => _fault is not null);
         AttachCommand = new RelayCommand(() => BrowseForAttachmentsRequested?.Invoke());
-        ClearConversationCommand = new RelayCommand(() => { Conversation.Clear(); _turns.Clear(); }, () => Conversation.Count > 0);
+        ChooseSaveFolderCommand = new RelayCommand(() => BrowseForSaveFolderRequested?.Invoke());
+        ClearSaveFolderCommand = new RelayCommand(() => SetSaveFolder(null), () => SaveFolder is not null);
+        ClearConversationCommand = new RelayCommand(() =>
+        {
+            Conversation.Clear(); _turns.Clear(); _chatId = null; _lastSession = null;
+            _chatTitle = null; _chatPinned = false; OnPropertyChanged(nameof(ChatTitle)); OnPropertyChanged(nameof(IsChatPinned));
+            ChatFolders.Clear(); ClearFolderRequest();
+            ClearContinuation("New chat."); RefreshBusy();
+        });
+        OpenSavedChatCommand = new RelayCommand(p => OpenSavedChat(p as SavedChat), p => p is SavedChat);
+        DeleteSavedChatCommand = new RelayCommand(p => { if (p is SavedChat c) { _chats?.Delete(c.Id); if (c.Id == _chatId) _chatId = null; RefreshSavedChats(); } }, p => p is SavedChat);
+        PinSavedChatCommand = new RelayCommand(p => { if (p is SavedChat c) SetPinned(c, !c.Pinned); }, p => p is SavedChat);
+        TogglePinCommand = new RelayCommand(() => IsChatPinned = !IsChatPinned, () => Conversation.Count > 0);
+        RetryCommand = new RelayCommand(Retry, () => !IsChatBusy && Conversation.Count > 0);
+        EditTurnCommand = new RelayCommand(p => { if (p is ChatTurnViewModel t) EditTurn(t); }, p => p is ChatTurnViewModel);
         CycleRoutingPolicyCommand = new RelayCommand(() => RoutingPolicy = (RoutingPolicy)(((int)RoutingPolicy + 1) % 3));
-        Conversation.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasConversation)); ClearConversationCommand.Refresh(); };
+        Conversation.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasConversation)); ClearConversationCommand.Refresh(); RetryCommand.Refresh(); TogglePinCommand.Refresh(); if (_chatTitle is null) OnPropertyChanged(nameof(ChatTitle)); };
+        InitFolderCommands();
         ClearContinuationCommand = new RelayCommand(() => ClearContinuation("Starting fresh: the next prompt opens a new session."), () => Continuation is not null);
 
         _runtime.JobChanged += job => _ui.Post(() => OnJobChanged(job));
         _runtime.ToolCallActivity += e => _ui.Post(() =>
         {
             AddActivity(new ActivityItemViewModel(DateTimeOffset.UtcNow, e.JobId, e.Tool, ToolPhase.Describe(e), e.Detail ?? "", ToolPhase.IsProblem(e), ToolPhase.IsUncertain(e)));
+            OnToolRefusedFolder(e);
             if (Jobs.FirstOrDefault(j => j.JobId == e.JobId) is { } item)
             {
                 if (ToolPhase.IsUncertain(e)) item.UncertainCalls++;
@@ -91,6 +115,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         });
         _runtime.Notice += (_, message) => _ui.Post(() => StatusText = message);
         UpdateSuggestion();
+        _ = LoadModelOptionsAsync();
     }
 
     // ── Bindable state ───────────────────────────────────────────────────────────────────────────────
@@ -154,7 +179,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         set { if (SetProperty(ref _keepSubscription, value)) _ = RefreshRouteAsync(); }
     }
 
-    /// <summary>Which subscription Enter would use, or why none can ("Google AI Pro (Gemini CLI) — Claude Pro is at its limit until 15:00").</summary>
+    /// <summary>Which subscription Enter would use, or why none can ("Google AI Pro (Antigravity CLI) — Claude Pro is at its limit until 15:00").</summary>
     public string RouteText { get => _routeText; private set => SetProperty(ref _routeText, value); }
 
     public ApprovalViewModel? PendingApproval
@@ -460,6 +485,54 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
 
     // ── Prompt routing ───────────────────────────────────────────────────────────────────────────────
 
+    // ── User-made actions ([ + New action ]) ──────────────────────────────────────────────────────────
+
+    private bool _isEditingAction, _newActionNeedsFolder;
+    private string _newActionTitle = "", _newActionDescription = "", _newActionInstructions = "";
+    public bool IsEditingAction { get => _isEditingAction; set => SetProperty(ref _isEditingAction, value); }
+    public string NewActionTitle { get => _newActionTitle; set => SetProperty(ref _newActionTitle, value ?? ""); }
+    public string NewActionDescription { get => _newActionDescription; set => SetProperty(ref _newActionDescription, value ?? ""); }
+    public string NewActionInstructions { get => _newActionInstructions; set => SetProperty(ref _newActionInstructions, value ?? ""); }
+    public bool NewActionNeedsFolder { get => _newActionNeedsFolder; set => SetProperty(ref _newActionNeedsFolder, value); }
+    public RelayCommand NewActionCommand { get; }
+    public RelayCommand SaveActionCommand { get; }
+    public RelayCommand DeleteActionCommand { get; }
+
+    private static ActionTileViewModel CustomTile(CustomActionDef d) =>
+        new(d.Id, "", d.Title, d.Description.Length > 0 ? d.Description : d.Instructions, TaskCategory.Chat,
+            d.Title.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries), d.NeedsFolder, []) { Instructions = d.Instructions };
+
+    /// <summary>A user-made action: an assistant job whose prompt starts with the saved instructions; tools inferred from both.</summary>
+    public static JobSpec CustomSpec(ActionTileViewModel tile, string? folder, string prompt, LaunchMode launch)
+    {
+        var (tools, category) = JobSpecFactory.InferToolsAndCategory(tile.Instructions + " " + prompt, null);
+        var spec = JobSpecFactory.Assistant(folder, prompt.Length > 0 ? prompt : tile.Title, launch, tools, category);
+        return spec with { Title = tile.Title, Prompt = $"Saved action \"{tile.Title}\". Follow these instructions: {tile.Instructions}\n\n{spec.Prompt}" };
+    }
+
+    private void SaveNewAction()
+    {
+        string title = NewActionTitle.Trim(), instructions = NewActionInstructions.Trim();
+        if (title.Length == 0 || instructions.Length == 0) { StatusText = "Give the new action a name and instructions."; return; }
+        var def = new CustomActionDef("custom-" + Guid.NewGuid().ToString("N")[..8], title, NewActionDescription.Trim(), instructions, NewActionNeedsFolder);
+        UpdateSettings(_settings with { CustomActions = [.. _settings.CustomActions ?? [], def] });
+        Actions.Add(CustomTile(def));
+        ApplyFilter();
+        NewActionTitle = NewActionDescription = NewActionInstructions = "";
+        NewActionNeedsFolder = false;
+        IsEditingAction = false;
+        StatusText = $"Saved action: {title}";
+    }
+
+    private void DeleteAction(ActionTileViewModel? tile)
+    {
+        if (tile is not { IsCustom: true }) return;
+        UpdateSettings(_settings with { CustomActions = (_settings.CustomActions ?? []).Where(d => d.Id != tile.Id).ToList() });
+        Actions.Remove(tile);
+        ApplyFilter();
+        StatusText = $"Deleted action: {tile.Title}";
+    }
+
     private void ApplyFilter()
     {
         string q = PromptText.StartsWith('/') ? PromptText[1..] : "";
@@ -506,8 +579,100 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         return t.StartsWith('/') ? "" : t;
     }
 
+    // -- V10: one prompt at a time per chat, Stop, and the model / effort picker --
+
+    private const string ChatBusyMessage = "This chat is still working on your last prompt. Wait for it, or press Stop.";
+    private const string StopReason = "stopped by the user";
+    private bool _sending;
+
+    private void SetSending(bool value)
+    {
+        _sending = value;
+        RefreshBusy();
+    }
+
+    /// <summary>True while a prompt of this chat is starting or running: Send is off and Stop is on.</summary>
+    public bool IsChatBusy => _sending || Conversation.Any(t => t.IsRunning);
+    public RelayCommand StopCommand { get; }
+
+    private void RefreshBusy()
+    {
+        OnPropertyChanged(nameof(IsChatBusy));
+        SubmitPromptCommand.Refresh();
+        StopCommand.Refresh();
+        RetryCommand.Refresh();
+    }
+
+    /// <summary>Stops the running prompt of this chat: its CLI is killed and its grant revoked.</summary>
+    public void StopChat()
+    {
+        var running = Conversation.Where(t => t.IsRunning).ToList();
+        foreach (var t in running)
+        {
+            _runtime.KillJob(t.JobId, StopReason);
+            t.IsRunning = false;
+            t.ThinkingSummary = "Stopped";
+            if (t.ResponseText.Length == 0) t.ResponseText = "Stopped.";
+        }
+        StatusText = running.Count == 0 ? "Nothing running in this chat." : "Stopped.";
+        RefreshBusy();
+    }
+
+    /// <summary>Auto, then every model of every installed CLI.</summary>
+    public ObservableCollection<ModelOption> ModelOptions { get; } = new();
+    /// <summary>Auto, low, medium, high, xhigh, max.</summary>
+    public ObservableCollection<string> EffortOptions { get; }
+
+    private ModelOption _selectedModel = ModelOption.Auto;
+    public ModelOption SelectedModel
+    {
+        get => _selectedModel;
+        set
+        {
+            if (!SetProperty(ref _selectedModel, value ?? ModelOption.Auto)) return;
+            UpdateSettings(_settings with { ModelProvider = _selectedModel.ProviderKey, ModelId = _selectedModel.Model });
+        }
+    }
+
+    public string SelectedEffort
+    {
+        get => _settings.Effort ?? "Auto";
+        set
+        {
+            string? e = ModelCatalog.IsEffort(value) ? value : null;
+            if (e == _settings.Effort) return;
+            UpdateSettings(_settings with { Effort = e });
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Fills the picker from the installed CLIs and selects the saved choice.</summary>
+    public async Task LoadModelOptionsAsync()
+    {
+        IReadOnlyList<CliModels> found;
+        try { found = await _runtime.DetectModelsAsync().ConfigureAwait(true); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException) { found = []; }
+        _ui.Post(() =>
+        {
+            foreach (var cli in found)
+                foreach (var m in cli.Models)
+                    if (!ModelOptions.Any(o => o.Provider == cli.Provider && o.Model == m)) ModelOptions.Add(new ModelOption(cli.Cli + " · " + m, cli.Provider, m));
+            _selectedModel = ModelOptions.FirstOrDefault(o => o.ProviderKey == _settings.ModelProvider && o.Model == _settings.ModelId) ?? ModelOption.Auto;
+            OnPropertyChanged(nameof(SelectedModel));
+        });
+    }
+
+    /// <summary>The picked model and effort on a job. A model fixes the CLI; Auto leaves both to the routing rules.</summary>
+    public JobSpec ApplyModelPick(JobSpec spec)
+    {
+        if (SelectedModel.Provider is { } p) spec = spec with { Provider = p, Model = SelectedModel.Model, ModelFor = p };
+        if (_settings.Effort is { } e) spec = spec with { Effort = e };
+        return spec;
+    }
+
     private void SubmitPrompt()
     {
+        if (IsChatBusy) { StatusText = ChatBusyMessage; return; }
         if (IsContinuing)
         {
             _ = ContinueSessionAsync(PromptText.Trim());
@@ -519,6 +684,12 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         if (text.Length == 0) return;
         bool terminal = UseTerminal || text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase) || text.Contains("claude-terminal", StringComparison.OrdinalIgnoreCase);
         if (text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase)) text = text[9..].Trim();
+        // "/search …" and "/ask …" force a web search or a plain answer: no action tile, no folder, no local tools.
+        if (!terminal && ProviderRouter.ParsePrefix(text) is { Category: TaskCategory.Search or TaskCategory.Chat } ask)
+        {
+            if (ask.Remainder.Length > 0) _ = RunAssistantAsync(ask.Remainder, provider, [], ask.Category);
+            return;
+        }
         var tile = Route(text);
         if (tile is null) return;
         if (terminal) { _ = RunActionAsync(tile, PromptBody(text), provider); return; }
@@ -541,6 +712,173 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     /// <summary>Every headless run as a chat turn: prompt, CLI · model, steps, full answer.</summary>
     public ObservableCollection<ChatTurnViewModel> Conversation { get; } = new();
     public bool HasConversation => Conversation.Count > 0;
+
+    /// <summary>Opens the full-screen chat window (same conversation, prompt and attachments as the overlay).</summary>
+    public RelayCommand OpenFullViewCommand { get; }
+
+    // ── Saved chats: prompts, CLI answers and the resumable session, one JSON file per chat ─────────
+
+    private ChatStore? _chats;
+    private string? _chatId;                 // the open chat's file; null until its first answer is saved
+    private ContinuableSession? _lastSession; // the open chat's latest resumable session (kept even if the chip is dismissed)
+
+    /// <summary>Where chats are saved; null (tests) turns persistence off.</summary>
+    public ChatStore? Chats
+    {
+        get => _chats;
+        set
+        {
+            _chats = value;
+            RefreshSavedChats();
+            // Start where you left off: the most recent chat is reopened (and resumable) when the app starts.
+            if (Conversation.Count == 0 && SavedChats.Count > 0) OpenSavedChat(SavedChats[0], quiet: true);
+        }
+    }
+    public ObservableCollection<SavedChat> SavedChats { get; } = new();
+    public RelayCommand OpenSavedChatCommand { get; }
+    public RelayCommand DeleteSavedChatCommand { get; }
+
+    private void RefreshSavedChats()
+    {
+        SavedChats.Clear();
+        if (_chats is null) return;
+        string q = _chatSearch.Trim();
+        foreach (var c in _chats.List().Where(c => c.Matches(q))) SavedChats.Add(c);
+    }
+
+    // ── V10: chat-app features (search, rename, star, retry, edit, recall), as in the Claude app ─────
+
+    private string _chatSearch = "";
+    private string? _chatTitle;   // typed title of the open chat (null: the first prompt)
+    private bool _chatPinned;
+
+    /// <summary>Filters the sidebar by title, prompts and answers.</summary>
+    public string ChatSearch
+    {
+        get => _chatSearch;
+        set { if (SetProperty(ref _chatSearch, value ?? "")) RefreshSavedChats(); }
+    }
+
+    /// <summary>The open chat's title; typing a new one renames it (saved at once when the chat exists).</summary>
+    public string ChatTitle
+    {
+        get => _chatTitle ?? DefaultTitle();
+        set
+        {
+            string v = (value ?? "").Trim();
+            string? custom = v.Length == 0 || v == DefaultTitle() ? null : v;
+            if (custom == _chatTitle) return;
+            _chatTitle = custom;
+            OnPropertyChanged();
+            if (_chatId is not null) SaveChat();
+        }
+    }
+
+    /// <summary>Starred chats are listed first.</summary>
+    public bool IsChatPinned
+    {
+        get => _chatPinned;
+        set
+        {
+            if (!SetProperty(ref _chatPinned, value)) return;
+            if (_chatId is not null) SaveChat();
+        }
+    }
+
+    public RelayCommand PinSavedChatCommand { get; }
+    public RelayCommand TogglePinCommand { get; }
+    /// <summary>Runs the last prompt again (its answer is replaced).</summary>
+    public RelayCommand RetryCommand { get; }
+    /// <summary>Puts a turn's prompt back in the composer to change and resend.</summary>
+    public RelayCommand EditTurnCommand { get; }
+
+    private string DefaultTitle()
+    {
+        string first = Conversation.Count > 0 ? Conversation[0].UserPrompt.ReplaceLineEndings(" ").Trim() : "New chat";
+        return first.Length > 60 ? first[..60] + "…" : first;
+    }
+
+    private void SetPinned(SavedChat chat, bool pinned)
+    {
+        if (chat.Id == _chatId) { IsChatPinned = pinned; return; }
+        try { _chats?.Save(chat with { Pinned = pinned }); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { StatusText = "Could not save the chat: " + ex.Message; return; }
+        RefreshSavedChats();
+    }
+
+    private void Retry()
+    {
+        if (IsChatBusy || Conversation.Count == 0) return;
+        var last = Conversation[^1];
+        Conversation.RemoveAt(Conversation.Count - 1);
+        _turns.Remove(last.JobId);
+        PromptText = last.UserPrompt;
+        SubmitPrompt();
+    }
+
+    private void EditTurn(ChatTurnViewModel turn)
+    {
+        PromptText = turn.UserPrompt;
+        FocusPromptRequested?.Invoke();
+    }
+
+    /// <summary>Up arrow in an empty composer: the last prompt, to change and resend. False when there is none.</summary>
+    public bool RecallLastPrompt()
+    {
+        if (PromptText.Length > 0 || Conversation.Count == 0) return false;
+        PromptText = Conversation[^1].UserPrompt;
+        return true;
+    }
+
+    /// <summary>The newest answer (for Ctrl+Shift+C).</summary>
+    public string? LastResponse => Conversation.LastOrDefault(t => t.ResponseText.Length > 0)?.ResponseText;
+
+
+    private void SaveChat()
+    {
+        if (_chats is null || Conversation.Count == 0) return;
+        _chatId ??= ChatStore.NewId();
+        var turns = Conversation.Select(t => new SavedTurn(t.JobId, t.UserPrompt, t.BadgeText, t.ResponseText, t.Steps.ToList(), t.IsError)).ToList();
+        var resume = (Continuation?.Session ?? _lastSession) is { } s ? SavedResume.From(s) : null;
+        try { _chats.Save(new SavedChat(_chatId, DefaultTitle(), DateTimeOffset.Now, turns, resume, _chatPinned, _chatTitle, ChatFolders.ToList())); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { StatusText = "Could not save the chat: " + ex.Message; return; }
+        RefreshSavedChats();
+    }
+
+    /// <summary>Earlier turns as plain text (the tail, under 4000 chars) for CLIs that cannot resume natively.</summary>
+    private static string History(IEnumerable<SavedTurn> turns)
+    {
+        string all = string.Join("\n\n", turns.Select(t => "User: " + t.Prompt + "\nAssistant: " + t.Response));
+        return all.Length <= 3900 ? all : "…" + all[^3900..];
+    }
+
+    private void OpenSavedChat(SavedChat? chat, bool quiet = false)
+    {
+        if (chat is null) return;
+        Conversation.Clear();
+        _turns.Clear();
+        foreach (var t in chat.Turns)
+        {
+            var turn = new ChatTurnViewModel(t.JobId, t.Prompt, t.Badge) { ResponseText = t.Response, IsError = t.IsError, IsRunning = false };
+            foreach (var step in t.Steps) turn.Steps.Add(step);
+            Conversation.Add(turn);
+        }
+        _chatId = chat.Id;
+        _chatTitle = chat.CustomTitle;
+        _chatPinned = chat.Pinned;
+        ChatFolders.Clear();
+        foreach (var f in chat.Folders ?? []) ChatFolders.Add(f);
+        ClearFolderRequest();
+        OnPropertyChanged(nameof(ChatTitle));
+        OnPropertyChanged(nameof(IsChatPinned));
+        try { _lastSession = chat.Resume?.ToSession(chat.Updated, History(chat.Turns)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { _lastSession = null; }
+        Continuation = _lastSession is null ? null : new ContinuationViewModel(_lastSession);
+        if (quiet) return;
+        StatusText = _lastSession is null ? $"Opened \"{chat.Title}\" (read-only: no session to resume)." : $"Opened \"{chat.Title}\": your next prompt continues it.";
+        SelectedTab = 0;
+    }
+    public event Action? OpenFullViewRequested;
     public RelayCommand ClearConversationCommand { get; }
     public RelayCommand CycleRoutingPolicyCommand { get; }
 
@@ -560,7 +898,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     public string RoutingPolicyText => RoutingPolicyName(RoutingPolicy);
     public static string RoutingPolicyName(RoutingPolicy p) => p switch
     {
-        RoutingPolicy.ConserveClaude => "Quota Saver (Gemini)",
+        RoutingPolicy.ConserveClaude => "Quota Saver (Antigravity)",
         RoutingPolicy.PreferClaude => "Claude First",
         _ => "Auto Best",
     };
@@ -577,8 +915,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
 
     private ChatTurnViewModel? TurnFor(string jobId) => _turns.GetValueOrDefault(jobId);
 
+    /// <summary>"Web search · Claude Code · haiku": the route the prompt took, the CLI and the model.</summary>
     private static string Badge(RunningJob job) =>
-        (job.Provider is { } p ? (p == AiProvider.ClaudeCode ? "Claude Code" : "Gemini CLI") : "…") + " · " + (job.Model ?? job.Spec.Model ?? "default");
+        ProviderRouter.CategoryName(job.Spec.Category) + " · " + (job.Provider is { } p ? (p == AiProvider.ClaudeCode ? "Claude Code" : "Antigravity CLI") : "…") + " · " + (job.Model ?? job.Spec.Model ?? "default") + ((job.Effort ?? job.Spec.Effort) is { } e ? " · " + e : "");
 
     /// <summary>
     /// Asks the runtime which subscription the suggested action would use now, and lights that pill. Shows the
@@ -607,20 +946,47 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         });
     }
 
-    [GeneratedRegex(@"(?:[A-Za-z]:\\|\\\\|/)[^""<>|?*\r\n]+")]
-    private static partial Regex PathInText();
 
     /// <summary>A folder named in the prompt wins over the Explorer chip; then the first included folder chip.</summary>
+    // ── Save to…: the folder every job saves into, until cleared ─────────────────────────────────────────
+
+    public RelayCommand ChooseSaveFolderCommand { get; }
+    public RelayCommand ClearSaveFolderCommand { get; }
+    /// <summary>The view opens a folder picker and calls <see cref="SetSaveFolder"/>.</summary>
+    public event Action? BrowseForSaveFolderRequested;
+    public string? SaveFolder => _settings.SaveFolder is { } f && Directory.Exists(f) ? f : null;
+    public bool HasSaveFolder => SaveFolder is not null;
+    public string SaveFolderText => SaveFolder is { } f ? "Saving to " + f : "";
+
+    public void SetSaveFolder(string? folder)
+    {
+        UpdateSettings(_settings with { SaveFolder = folder is null ? null : Path.GetFullPath(folder) });
+        OnPropertyChanged(nameof(SaveFolder));
+        OnPropertyChanged(nameof(HasSaveFolder));
+        OnPropertyChanged(nameof(SaveFolderText));
+        ClearSaveFolderCommand.Refresh();
+        StatusText = folder is null ? "Save folder cleared: jobs use the folder selected in Explorer." : $"Jobs now save to {folder}";
+        if (SaveFolder is { } granted) _ = GrantRunningAsync(granted);
+    }
+
+    /// <summary>Save to while a turn runs: that job may write there at once (later turns get it as a root).</summary>
+    private async Task GrantRunningAsync(string folder)
+    {
+        foreach (var turn in Conversation.Where(t => t.IsRunning).ToList())
+            if (await _runtime.GrantFolderAsync(turn.JobId, folder).ConfigureAwait(true) is { } why) StatusText = $"Save to {folder}: {why}";
+    }
+
+    /// <summary>The job's folder: a path typed in the prompt, else the Save to… folder, else the Explorer selection.</summary>
     public string? ResolveFolder(string prompt)
     {
-        foreach (Match m in PathInText().Matches(prompt))
-        {
-            string candidate = m.Value.TrimEnd('.', ',', ';', ' ');
-            for (string? c = candidate; !string.IsNullOrEmpty(c); c = c.Contains(' ', StringComparison.Ordinal) ? c[..c.LastIndexOf(' ')] : null)
-                if (Directory.Exists(c)) return Path.GetFullPath(c);
-        }
-        return ContextChips.FirstOrDefault(c => c.IsIncluded && c.Kind == ContextKind.Folder)?.Value
-            ?? ContextChips.Where(c => c.IsIncluded && c.Kind == ContextKind.File).Select(c => Path.GetDirectoryName(c.Value)).FirstOrDefault(d => d is not null);
+        if (PromptPaths.TargetFolder(prompt) is { } named) return named;
+        return SaveFolder
+            ?? ContextChips.FirstOrDefault(c => c.IsIncluded && c.Kind == ContextKind.Folder)?.Value
+            ?? ContextChips.Where(c => c.IsIncluded && c.Kind == ContextKind.File).Select(c => Path.GetDirectoryName(c.Value)).FirstOrDefault(d => d is not null)
+            // A follow-up ("now create the parts and assemble them") works where the conversation already said: the newest
+            // folder an earlier message named, then the chat's allowed folders.
+            ?? Conversation.Reverse().Select(t => PromptPaths.TargetFolder(t.UserPrompt)).FirstOrDefault(f => f is not null)
+            ?? ChatFolders.LastOrDefault();
     }
 
     public async Task<RunningJob?> RunActionAsync(ActionTileViewModel tile, string prompt, AiProvider? provider = null)
@@ -629,22 +995,136 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         string? folder = ResolveFolder(prompt);
         if (tile.NeedsFolder && folder is null)
         {
-            StatusText = "Which folder? Select it in File Explorer before pressing the hotkey, or put its path in the prompt.";
+            StatusText = "Which folder? Click Save to… and pick one, select it in File Explorer before pressing the hotkey, or put its path in the prompt.";
             return null;
         }
         var launch = UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless;
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
-        JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList(), RoutingPolicy = RoutingPolicy };
+        JobSpec spec = (tile.IsCustom ? CustomSpec(tile, folder, prompt, launch) : SpecFor(tile.Id, folder, prompt, launch)) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList(), RoutingPolicy = RoutingPolicy };
         if (provider is not null) spec = spec with { Provider = provider };
         if (prompt.Length > 0 && spec.UserText is null) spec = spec with { UserText = prompt };
         return await StartAndShowAsync(spec, attached, $"Started: {spec.Title}").ConfigureAwait(true);
     }
 
+    // ── V10: folder permissions. A chat keeps the folders the user allowed (Allow folder, a job's folder request, Save to);
+    //    every job the chat starts, new or follow-up, may read and write them, and a running job gets them at once. ─────
+
+    /// <summary>Folders allowed for this chat (saved with it).</summary>
+    public ObservableCollection<string> ChatFolders { get; } = new();
+    private string? _folderRequest;
+
+    /// <summary>A folder a job was refused (it is outside its allowed folders); the view offers Allow / Dismiss.</summary>
+    public string? FolderRequest
+    {
+        get => _folderRequest;
+        private set
+        {
+            if (!SetProperty(ref _folderRequest, value)) return;
+            OnPropertyChanged(nameof(HasFolderRequest));
+            OnPropertyChanged(nameof(FolderRequestText));
+        }
+    }
+    public bool HasFolderRequest => _folderRequest is not null;
+    public string FolderRequestText => _folderRequest is { } f ? $"The job asked to use {f}, which it is not allowed to." : "";
+
+    public RelayCommand AllowFolderRequestCommand { get; private set; } = null!;
+    public RelayCommand DismissFolderRequestCommand { get; private set; } = null!;
+    /// <summary>Opens a folder picker; the picked folder is allowed for this chat.</summary>
+    public RelayCommand AllowFolderCommand { get; private set; } = null!;
+    public RelayCommand RemoveChatFolderCommand { get; private set; } = null!;
+    public event Action? BrowseForAllowFolderRequested;
+
+    private void InitFolderCommands()
+    {
+        AllowFolderRequestCommand = new RelayCommand(() => { if (_folderRequest is { } f) _ = AllowFolderAsync(f); }, () => HasFolderRequest);
+        DismissFolderRequestCommand = new RelayCommand(ClearFolderRequest, () => HasFolderRequest);
+        AllowFolderCommand = new RelayCommand(() => BrowseForAllowFolderRequested?.Invoke());
+        RemoveChatFolderCommand = new RelayCommand(p => { if (p is string f && ChatFolders.Remove(f)) { SaveChat(); StatusText = $"{f} is no longer allowed for new turns of this chat."; } }, p => p is string);
+    }
+
+    private void ClearFolderRequest()
+    {
+        FolderRequest = null;
+        AllowFolderRequestCommand?.Refresh();
+        DismissFolderRequestCommand?.Refresh();
+    }
+
+    /// <summary>"[path:outside_roots] C:\…\F40: outside this job's allowed folders…" in a failed tool call: the folder to offer.</summary>
+    public static string? RefusedFolder(string? detail)
+    {
+        const string Marker = "[path:outside_roots] ";
+        int at = detail?.IndexOf(Marker, StringComparison.Ordinal) ?? -1;
+        if (at < 0) return null;
+        int start = at + Marker.Length, end = detail!.IndexOf(": outside", start, StringComparison.Ordinal);
+        if (end <= start) return null;
+        string path = detail[start..end].Trim();
+        // A file (has an extension and is not a folder): allow the folder it would be in.
+        return Path.HasExtension(path) && !Directory.Exists(path) ? Path.GetDirectoryName(path) : path;
+    }
+
+    private void OnToolRefusedFolder(ToolCallEvent e)
+    {
+        if (RefusedFolder(e.Detail) is not { } folder || ChatFolders.Contains(folder, StringComparer.OrdinalIgnoreCase)) return;
+        FolderRequest = folder;
+        AllowFolderRequestCommand.Refresh();
+        DismissFolderRequestCommand.Refresh();
+    }
+
+    /// <summary>
+    /// Allows <paramref name="folder"/> for this chat: protected places are refused, a missing folder is created when a job
+    /// starts, and running turns get it immediately. Returns false (with a status message) when it cannot be allowed.
+    /// </summary>
+    public async Task<bool> AllowFolderAsync(string folder)
+    {
+        string full;
+        try { full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { StatusText = "Not a folder path: " + ex.Message; return false; }
+        if (ProtectedPathPolicy.CreateDefault().CheckJobRoot(full) is { } why) { StatusText = $"{full} cannot be allowed: {why}"; return false; }
+        if (!ChatFolders.Contains(full, StringComparer.OrdinalIgnoreCase)) ChatFolders.Add(full);
+        if (string.Equals(_folderRequest, full, StringComparison.OrdinalIgnoreCase)) ClearFolderRequest();
+        int live = 0;
+        foreach (var turn in Conversation.Where(t => t.IsRunning).ToList())
+            if (await _runtime.GrantFolderAsync(turn.JobId, full).ConfigureAwait(true) is null) live++;
+        if (_chatId is not null) SaveChat();
+        StatusText = live > 0 ? $"Allowed {full}: the running job can use it now, and so can later turns."
+                              : $"Allowed {full} for this chat: reply (e.g. \"go ahead\") and the job can use it.";
+        return true;
+    }
+
+    /// <summary>The chat's folders and the Save to folder join every job's roots; a Save to folder is where outputs go.</summary>
+    /// <summary>The chat's finished turns (oldest first), so a follow-up keeps the whole conversation's instructions.</summary>
+    private IReadOnlyList<JobSpecFactory.ConversationTurn> ConversationHistory() =>
+        Conversation.Where(t => !t.IsRunning && !string.IsNullOrWhiteSpace(t.UserPrompt))
+            .Select(t => new JobSpecFactory.ConversationTurn(t.UserPrompt, t.ResponseText, t.IsError)).ToList();
+
+    private JobSpec WithAllowedFolders(JobSpec spec)
+    {
+        // Files and folders the user names in the message ("use C:\Parts\wheel.SLDPRT") may be read, not changed.
+        var named = PromptPaths.ExistingPaths(spec.UserText ?? "");
+        if (named.Count > 0) spec = spec with { ReadRoots = spec.ReadRoots.Concat(named).Distinct(StringComparer.OrdinalIgnoreCase).ToList() };
+        var extra = ChatFolders.ToList();
+        if (SaveFolder is { } save) extra.Add(save);
+        var roots = spec.Roots.Concat(extra).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (roots.Count == spec.Roots.Count) return spec;
+        spec = spec with { Roots = roots };
+        // A folder typed in this message wins over Save to for this message.
+        if (SaveFolder is { } target && !spec.Prompt.Contains(target, StringComparison.OrdinalIgnoreCase) && PromptPaths.TargetFolder(spec.UserText ?? "") is null)
+            spec = spec with { Prompt = spec.Prompt + $"\n\nSave every output file in {target} (the user picked it with Save to; it is allowed)." };
+        return spec;
+    }
+
     private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started, bool stayOnActions = false)
     {
+        spec = WithAllowedFolders(spec);
+        // Every new turn of a chat carries the conversation (natively resumed sessions already have it). Without this a
+        // short follow-up after a failed turn ("now create the parts and assemble them") reached the model alone.
+        if (spec.Launch == LaunchMode.Headless) spec = JobSpecFactory.WithConversation(spec, ConversationHistory());
+        bool chat = spec.Launch == LaunchMode.Headless;
+        if (chat && IsChatBusy) { StatusText = ChatBusyMessage; return null; }
+        if (chat) SetSending(true);
         try
         {
-            var job = await _runtime.StartJobAsync(spec).ConfigureAwait(true);
+            var job = await _runtime.StartJobAsync(ApplyModelPick(spec)).ConfigureAwait(true);
             _ui.Post(() =>
             {
                 if (job.Spec.Launch == LaunchMode.Headless && !_turns.ContainsKey(job.JobId))
@@ -667,6 +1147,11 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         {
             _ui.Post(() => StatusText = ex.Message);
             return null;
+        }
+        finally
+        {
+            // Always unlock, whatever happened (posted after the turn is added, so a running turn keeps the chat busy).
+            if (chat) _ui.Post(() => SetSending(false));
         }
     }
 
@@ -727,7 +1212,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             return Route(PromptText) is { } tile ? await RunActionAsync(tile, PromptBody(PromptText)).ConfigureAwait(true) : null;
         }
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
-        var spec = JobSpecFactory.Continue(chip.Session, prompt, UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless, attached.Select(c => c.Attachment!).ToList()) with { RoutingPolicy = RoutingPolicy };
+        var spec = JobSpecFactory.Continue(chip.Session, prompt, UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless, attached.Select(c => c.Attachment!).ToList(), SelectedModel.Provider, ConversationHistory()) with { RoutingPolicy = RoutingPolicy };
         var job = await StartAndShowAsync(spec, attached, $"Continuing session {chip.Session.ShortId}: {chip.Session.Spec.Title}").ConfigureAwait(true);
         if (job is not null) _ui.Post(() => { if (ReferenceEquals(Continuation, chip)) Continuation = null; });
         return job;
@@ -736,20 +1221,53 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     /// <summary>The job recipe behind each tile.</summary>
     public static JobSpec SpecFor(string actionId, string? folder, string prompt, LaunchMode launch) => actionId switch
     {
-        "assemble" => JobSpecFactory.Assemble(folder!, launch),
+        "assemble" => JobSpecFactory.Assemble(folder!, launch, JobSpecFactory.RequestedAssemblyPath(prompt, folder!)),
         "codecad" => JobSpecFactory.CodeCad(folder!, prompt.Length > 0 ? prompt : "the parts described in this folder's notes", launch),
         "organize" => JobSpecFactory.Organize(folder!, prompt.Length > 0 ? prompt : "group by file type into Documents, Pictures, Archives, Installers", launch),
         "resolve" => JobSpecFactory.ResolveEdit(folder!, prompt.Length > 0 ? prompt : "a short rough cut in a sensible order", launch),
         "blender" => JobSpecFactory.BlenderScene(folder!, prompt.Length > 0 ? prompt : "a car driving through a city at night", launch),
-        "tutor" => JobSpecFactory.Tutor(folder!, prompt.Length > 0 ? prompt : "the chapter I am studying", launch),
+        "tutor" => JobSpecFactory.Tutor(folder, prompt.Length > 0 ? prompt : "help me study a topic", launch),
         "claude-terminal" => JobSpecFactory.ClaudeCodeSession(folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), prompt),
         _ => throw new InvalidOperationException($"No job recipe for action '{actionId}'."),
     };
 
     // ── Approvals (IApprovalPrompt) ──────────────────────────────────────────────────────────────────
 
+    private bool _autoApproveAll;
+
+    /// <summary>
+    /// Approve every tool request without asking (this session only: it is off again at the next start). Each request is
+    /// still logged in the chat turn of its job and audited by the bus. Turning it on also approves the cards waiting now.
+    /// </summary>
+    public bool AutoApproveAll
+    {
+        get => _autoApproveAll;
+        set
+        {
+            if (!SetProperty(ref _autoApproveAll, value)) return;
+            StatusText = value ? "Auto-approve is ON: every tool request runs without asking (logged in the chat)." : "Auto-approve is off: tool requests ask again.";
+            if (value) foreach (var card in _approvalQueue.ToList()) card.ApproveAllCommand.Execute(null);
+        }
+    }
+
+    /// <summary>Writes an approval decision into the chat turn of its job (shown with the steps).</summary>
+    private void LogApproval(ApprovalRequest request, string decision)
+    {
+        string tool = request.Tool.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? request.Tool["mcp__cockpit__".Length..] : request.Tool;
+        string args = request.Arguments.ValueKind == System.Text.Json.JsonValueKind.Object ? request.Arguments.GetRawText() : "";
+        if (args.Length > 160) args = args[..160] + "…";
+        string line = $"{decision}: {tool} ({request.Risk}) {args}".TrimEnd();
+        if (TurnFor(request.JobId) is { } turn) turn.Steps.Add(line);
+        else StatusText = line;
+    }
+
     public async Task<ApprovalResponse> AskAsync(ApprovalRequest request, CancellationToken ct)
     {
+        if (AutoApproveAll)
+        {
+            _ui.Post(() => LogApproval(request, "✔ Auto-approved"));
+            return ApprovalResponse.ApproveAll;
+        }
         var card = new ApprovalViewModel(request);
         card.Completed += c => _ui.Post(() => OnApprovalCompleted(c));
         using var registration = ct.Register(() => _ui.Post(card.Cancel));
@@ -774,6 +1292,13 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
 
     private void OnApprovalCompleted(ApprovalViewModel card)
     {
+        if (card.Answer.IsCompletedSuccessfully)
+        {
+            var answer = card.Answer.Result;
+            LogApproval(card.Request, answer.KillJob ? "✖ Job killed at" : !answer.Approved ? "✖ Denied"
+                : AutoApproveAll ? "✔ Auto-approved" : answer.ApprovedRows is { } rows ? $"✔ Approved {rows.Count} of {card.Rows.Count}" : "✔ Approved");
+        }
+        else LogApproval(card.Request, "✖ Not answered (cancelled or timed out)");
         _approvalQueue.Remove(card);
         if (ReferenceEquals(PendingApproval, card)) PendingApproval = _approvalQueue.FirstOrDefault();
         OnPropertyChanged(nameof(QueuedApprovalsText));
@@ -802,7 +1327,8 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             }
         }
         if (!item.IsActive && ContinuableSession.From(job) is { } session && (Continuation is null || Continuation.Session.EndedAt <= session.EndedAt))
-            Continuation = new ContinuationViewModel(session);
+            Continuation = new ContinuationViewModel(_lastSession = session);
+        if (!item.IsActive && TurnFor(job.JobId) is not null) SaveChat();
         if (!item.IsActive)
         {
             // Any approval still showing for an ended job can no longer matter.
@@ -819,6 +1345,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         OnPropertyChanged(nameof(ActiveJobCount));
         OnPropertyChanged(nameof(JobsTabHeader));
         KillAllCommand.Refresh();
+        RefreshBusy();
         UpdateReactor();
     }
 
@@ -842,6 +1369,12 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         while (Activity.Count > MaxActivity) Activity.RemoveAt(Activity.Count - 1);
     }
 
+    private readonly Dictionary<string, (string? Tool, int Chars)> _progress = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _progressKind = new(StringComparer.Ordinal);
+
+    private static string ShortTool(string name) =>
+        name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? name["mcp__cockpit__".Length..] : name;
+
     private void OnStreamEvent(string jobId, CockpitStreamEvent e)
     {
         switch (e)
@@ -853,8 +1386,21 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
                     turn.ThinkingSummary = "Writing…";
                 }
                 string text = t.Text.ReplaceLineEndings(" ");
-                string who = _jobProviders.GetValueOrDefault(jobId) == AiProvider.GeminiCli ? "gemini" : "claude";
+                string who = _jobProviders.GetValueOrDefault(jobId) == AiProvider.GeminiCli ? "agy" : "claude";
                 AddActivity(new ActivityItemViewModel(DateTimeOffset.UtcNow, jobId, who, "says", text.Length > 240 ? text[..240] + "…" : text));
+                break;
+            case ProgressEvent p when TurnFor(jobId) is { } liveTurn:
+                var (liveTool, liveChars) = _progress.GetValueOrDefault(jobId);
+                if (p.Tool is not null || p.Kind != _progressKind.GetValueOrDefault(jobId)) { liveTool = p.Tool; liveChars = 0; }
+                liveChars += p.Chars;
+                _progress[jobId] = (liveTool, liveChars);
+                _progressKind[jobId] = p.Kind;
+                liveTurn.ThinkingSummary = p.Kind switch
+                {
+                    "tool" => $"Preparing {ShortTool(liveTool ?? "a tool")}… {liveChars:N0} characters",
+                    "thinking" => $"Thinking… {liveChars:N0} characters",
+                    _ => $"Writing… {liveChars:N0} characters",
+                };
                 break;
             case ToolUseEvent tu when TurnFor(jobId) is { } stepTurn:
                 string tool = tu.Name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? tu.Name["mcp__cockpit__".Length..] : tu.Name;
@@ -865,6 +1411,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
                 if (doneTurn.ResponseText.Length == 0) doneTurn.ResponseText = done.ResultText ?? "";
                 doneTurn.IsError = done.IsError;
                 doneTurn.IsRunning = false;
+                _progress.Remove(jobId);
+                _progressKind.Remove(jobId);
+                RefreshBusy();
                 doneTurn.ThinkingSummary = doneTurn.Steps.Count == 0 ? "Done" : $"Done · {doneTurn.Steps.Count} step(s)";
                 break;
             case RunResultEvent { RateLimit: { } limit }:
@@ -897,17 +1446,17 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     public static IEnumerable<ActionTileViewModel> DefaultActions() =>
     [
         new("assemble", "\uE7B8", "Assemble SolidWorks parts", "Read the parts in a folder, propose mates, review them, build a new .SLDASM.",
-            TaskCategory.Cad, ["assembl", "solidworks", "sldprt", "mate"], needsFolder: true, JobSpecFactory.SwxTools),
+            TaskCategory.Cad, ["assembl", "solidworks", "sldprt", "mate"], needsFolder: true, JobSpecFactory.CadTools),
         new("codecad", "\uE8B9", "Design parametric parts", "Hubs, discs, springs, arms as build123d code → STEP → SolidWorks parts, checked against size envelopes.",
-            TaskCategory.Cad, ["design", "parametric", "generate part", "make part", "model a", "step", "build123d", "suspension", "hub", "brake", "spring", "bracket"], needsFolder: true, JobSpecFactory.CadTools),
+            TaskCategory.Cad, ["design", "parametric", "generate part", "make part", "model a", "step", "build123d", "create", "3d print", "stl", "solidworks", "cad ", " cad", "suspension", "hub", "brake", "spring", "bracket"], needsFolder: true, JobSpecFactory.CadTools),
         new("organize", "\uE8B7", "Organize a folder", "Plan moves from your description, review the batch, run it. Every move can be rolled back.",
             TaskCategory.Files, ["organi", "sort", "tidy", "clean up", "declutter", "move files", "folder"], needsFolder: true, JobSpecFactory.FileTools),
         new("resolve", "\uE714", "Rough cut for DaVinci Resolve", "Probe the clips, plan the cut, review it, export FCPXML + EDL to import in one step.",
             TaskCategory.Resolve, ["davinci", "resolve", "video", "clips", "edit my", "timeline", "rough cut", "footage"], needsFolder: true, JobSpecFactory.ResolveTools),
         new("blender", "\uF158", "Blender car scene", "A car driving through a procedural city with a chase camera; renders a preview.",
             TaskCategory.Blender, ["blender", "scene", "3d", "render", "animat", "car driving"], needsFolder: true, JobSpecFactory.BlenderTools),
-        new("tutor", "\uE82D", "Linear algebra tutor", "Learn a textbook chapter from its PDF; every matrix result is checked exactly.",
-            TaskCategory.Tutor, ["tutor", "teach", "learn", "explain", "chapter", "study", "linear algebra", "matrix", "eigen", "determinant"], needsFolder: true, JobSpecFactory.TutorTools),
+        new("tutor", "\uE82D", "Ask & learn", "Ask any question or learn a topic. Reads PDFs you attach or select; math results are checked exactly.",
+            TaskCategory.Tutor, ["tutor", "teach me", "study", "chapter", "textbook", "linear algebra", "matrix", "eigen", "determinant"], needsFolder: false, JobSpecFactory.TutorTools),
         new("claude-terminal", "\uE756", "Claude Code in a terminal", "Open Claude Code in this folder with your prompt. You drive it; billing stays on your Pro login.",
             TaskCategory.Code, ["code", "app", "poc", "finish", "fix", "terminal", "repo", "bug"], needsFolder: false, []),
     ];

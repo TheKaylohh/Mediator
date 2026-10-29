@@ -43,7 +43,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OutDir = (Join-Path $PSScriptRoot '..\dist\AiCockpit'),
+    [string]$OutDir,
     [string]$Runtime = 'win-x64',
     [string]$SolidWorksInteropDir,
     [switch]$RequireSolidWorks,
@@ -59,7 +59,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# $PSScriptRoot can be empty in param defaults on Windows PowerShell 5.1, so resolve it here.
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$root = (Resolve-Path (Join-Path $scriptDir '..')).Path
+if (-not $OutDir) { $OutDir = Join-Path $root 'dist\AiCockpit' }
 Set-Location $root
 
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
@@ -126,7 +129,7 @@ else {
 # -- 2. Offline tests (optional) ------------------------------------------------------------------------
 if ($RunTests) {
     Step 'Offline verification suite'
-    Invoke-Checked 'verification suite' { & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'run-tests.ps1') }
+    Invoke-Checked 'verification suite' { & powershell -ExecutionPolicy Bypass -File (Join-Path $scriptDir 'run-tests.ps1') }
     # Verify and ship builds share obj\ folders; clear them so the ship restore starts clean.
     Get-ChildItem -Path src, verify -Directory -Recurse -Filter obj | Remove-Item -Recurse -Force
 }
@@ -146,7 +149,8 @@ function Get-PublishPlan([bool]$offline) {
             'src\Cockpit.Wpf'       = @($sc)
             'src\Cockpit.CliHost'   = @($sc)
             'src\Cockpit.SwxWorker' = @($sc)
-            'src\Cockpit.Bridge'    = if ($nativeAot) { @('-p:PublishAot=true') } else { @('-p:PublishAot=false', $sc) }
+            # @( ) around the if: PowerShell unrolls a one-item array returned by an if, and splatting a string passes it char by char.
+            'src\Cockpit.Bridge'    = @(if ($nativeAot) { '-p:PublishAot=true' } else { '-p:PublishAot=false'; $sc })
         }
         Offline  = $offline
         Aot      = $nativeAot
@@ -199,10 +203,16 @@ foreach ($dir in Get-ChildItem $staging -Directory) {
         if (-not $IncludeSymbols -and $rel -like '*.pdb') { continue }
         $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash
         if ($seen.ContainsKey($rel)) {
+            if ($seen[$rel].Hash -ne $hash -and $file.VersionInfo.FileVersion -and $file.VersionInfo.FileVersion -eq $seen[$rel].Version) {
+                # Same package version built for net8.0 vs net8.0-windows (e.g. SQLitePCLRaw): interchangeable; the overlay's copy wins.
+                Write-Host "  same version, different TFM build: $rel (keeping $(if ($dir.Name -eq 'src_Cockpit.Wpf') { $dir.Name } else { $seen[$rel].From }))"
+                if ($dir.Name -eq 'src_Cockpit.Wpf') { Copy-Item $file.FullName (Join-Path $OutDir $rel) -Force; $seen[$rel].From = $dir.Name }
+                continue
+            }
             if ($seen[$rel].Hash -ne $hash) { throw "Conflict: $rel differs between $($seen[$rel].From) and $($dir.Name). Publish with one runtime version, or -FrameworkDependent." }
             continue
         }
-        $seen[$rel] = @{ Hash = $hash; From = $dir.Name }
+        $seen[$rel] = @{ Hash = $hash; From = $dir.Name; Version = $file.VersionInfo.FileVersion }
         $target = Join-Path $OutDir $rel
         New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
         Copy-Item $file.FullName $target
@@ -211,9 +221,11 @@ foreach ($dir in Get-ChildItem $staging -Directory) {
 Remove-Item $staging -Recurse -Force
 
 # -- 5. Launchers, shortcut script, readme, version, checksums ------------------------------------------
-Copy-Item (Join-Path $PSScriptRoot 'launch-cockpit.bat') (Join-Path $OutDir 'launch.bat')
-Copy-Item (Join-Path $PSScriptRoot 'install-shortcut.vbs') (Join-Path $OutDir 'install-shortcut.vbs')
-Copy-Item (Join-Path $PSScriptRoot 'Create-Desktop-Shortcut.ps1') $OutDir
+Copy-Item (Join-Path $scriptDir 'launch-cockpit.bat') (Join-Path $OutDir 'launch.bat')
+Copy-Item (Join-Path $scriptDir 'install-shortcut.vbs') (Join-Path $OutDir 'install-shortcut.vbs')
+Copy-Item (Join-Path $scriptDir 'Create-Desktop-Shortcut.ps1') $OutDir
+$guide = Join-Path $root 'docs\AI-Cockpit-User-Guide.pdf'
+if (Test-Path $guide) { Copy-Item $guide $OutDir }
 
 $required = @('AiCockpit.exe', 'cockpit.exe', 'cockpit-mcp-bridge.exe', 'cockpit-swx-worker.exe',
               'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs')

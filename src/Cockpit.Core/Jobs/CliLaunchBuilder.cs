@@ -70,17 +70,28 @@ public sealed class CliLaunchBuilder
     /// <paramref name="resumeSessionId"/> (V9) continues that session with `--resume`; it must be a safe token
     /// (<see cref="SessionIds.IsSafe"/>), since it is the one value here that came from a previous run's output.
     /// </summary>
-    public ProcessStartInfo ClaudeHeadless(JobWorkspace ws, string workingDirectory, int maxTurns, string? model = null, bool allowMeteredBilling = false, string? resumeSessionId = null)
+    /// <param name="webSearch">V10 Search jobs: Claude's WebSearch and WebFetch are allowed without a prompt.</param>
+    /// <param name="noLocalFiles">V10 Chat and Search jobs: Claude's own file and shell tools are disallowed, so the run
+    /// cannot read anything on the machine (it would otherwise read its working folder without asking).</param>
+    /// <summary>Claude Code's built-in tools that touch the local machine (files, shell, notebooks).</summary>
+    public static readonly string[] ClaudeLocalTools = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "NotebookEdit", "NotebookRead"];
+
+    public ProcessStartInfo ClaudeHeadless(JobWorkspace ws, string workingDirectory, int maxTurns, string? model = null, bool allowMeteredBilling = false,
+        string? resumeSessionId = null, bool webSearch = false, bool noLocalFiles = false, string? effort = null)
     {
         var args = new List<string>
         {
             "-p", "--output-format", "stream-json", "--verbose",
+            // Live progress while a long answer or a big tool call (a CAD recipe) is written; otherwise minutes look frozen.
+            "--include-partial-messages",
             "--mcp-config", ws.ClaudeMcpConfigPath, "--strict-mcp-config",
             // Our gate is authoritative, so Claude's own prompt for these tools would only duplicate it.
-            "--allowedTools", $"mcp__{JobWorkspaceFactory.ServerName}",
+            "--allowedTools", $"mcp__{JobWorkspaceFactory.ServerName}" + (webSearch ? ",WebSearch,WebFetch" : ""),
             "--max-turns", maxTurns.ToString(CultureInfo.InvariantCulture),
         };
+        if (noLocalFiles) { args.Add("--disallowedTools"); args.Add(string.Join(",", ClaudeLocalTools)); }
         if (model is not null) { args.Add("--model"); args.Add(model); }
+        if (ModelCatalog.IsEffort(effort)) { args.Add("--effort"); args.Add(effort!); }
         if (resumeSessionId is not null) { args.Add("--resume"); args.Add(RequireSafeSession(resumeSessionId)); }
 
         var psi = WrapForShim(_claudeExecutable, args);

@@ -65,11 +65,12 @@ public static class JobWorkspaceFactory
         };
         WriteOwnerOnly(claudePath, claude.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
-        // Gemini CLI: project settings in <cwd>/.gemini/settings.json. "trust": true skips Gemini's own
-        // confirmation because the Cockpit gate is the authority; "timeout" (ms) must exceed the bridge's.
-        string geminiDir = Path.Combine(root, ".gemini");
-        Directory.CreateDirectory(geminiDir);
-        string geminiPath = Path.Combine(geminiDir, "settings.json");
+        // Antigravity CLI (Google AI Pro): workspace MCP servers in <cwd>/.agents/mcp_config.json. Approval of the
+        // cockpit tools is the user-level rule mcp(cockpit/*) (AgyLaunchBuilder.EnsureCockpitToolsAllowed); the Cockpit
+        // gate stays the authority. "timeoutSeconds" (per call) must exceed the bridge's timeout.
+        string agyDir = Path.Combine(root, ".agents");
+        Directory.CreateDirectory(agyDir);
+        string geminiPath = Path.Combine(agyDir, "mcp_config.json");
         var gemini = new JsonObject
         {
             ["mcpServers"] = new JsonObject
@@ -79,8 +80,7 @@ public static class JobWorkspaceFactory
                     ["command"] = bridgeExecutable,
                     ["args"] = args.DeepClone(),
                     ["env"] = new JsonObject { [TokenVariable] = grant.Token },
-                    ["timeout"] = (long)(bridgeTimeout + TimeSpan.FromSeconds(30)).TotalMilliseconds,
-                    ["trust"] = true,
+                    ["timeoutSeconds"] = (long)(bridgeTimeout + TimeSpan.FromSeconds(30)).TotalSeconds,
                 },
             },
         };

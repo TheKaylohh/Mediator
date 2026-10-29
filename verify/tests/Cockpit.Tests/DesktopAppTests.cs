@@ -177,7 +177,7 @@ static class DesktopAppTests
         var running = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: n => n == "SLDWORKS" ? 4242 : null).SolidWorks();
         Check.True(running.Available && running.Detail.Contains("PID 4242", StringComparison.Ordinal) && running.Detail.Contains(sw24, StringComparison.Ordinal), $"running ({running.Detail})");
         var idle = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: _ => null).SolidWorks();
-        Check.True(!idle.Available && idle.Detail.Contains("installed: SOLIDWORKS 2024", StringComparison.Ordinal) && idle.Detail.Contains("not running", StringComparison.Ordinal), $"installed, not running ({idle.Detail})");
+        Check.True(idle.Available && idle.Detail.Contains("installed: SOLIDWORKS 2024", StringComparison.Ordinal) && idle.Detail.Contains("not running", StringComparison.Ordinal), $"installed, not running ({idle.Detail})");
         var absent = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: NewMachine().Locator(), runningProcess: _ => null).SolidWorks();
         Check.True(!absent.Available && absent.Detail.StartsWith("not installed", StringComparison.Ordinal) && absent.Detail.Contains(@"SOLIDWORKS <year>\Setup", StringComparison.Ordinal), $"not installed ({absent.Detail})");
 

@@ -119,7 +119,7 @@
                 </ControlTemplate>
               </ToggleButton.Template>
             </ToggleButton>
-            <!-- V10: routing policy pill (Auto Best / Quota Saver (Gemini) / Claude First) -->
+            <!-- V10: routing policy pill (Auto Best / Quota Saver (Antigravity) / Claude First) -->
             <Button Style="{StaticResource FlatButton}" Padding="8,3" Margin="0,0,2,0" Command="{Binding CycleRoutingPolicyCommand}"
                     ToolTip="Which subscription goes first when you do not pick one (click to change)" AutomationProperties.Name="Routing policy">
               <TextBlock Text="{Binding RoutingPolicyText}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
@@ -142,6 +142,7 @@
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <TextBlock Style="{StaticResource MutedText}" Text="{Binding StatusText}" ToolTip="{Binding StatusText}" VerticalAlignment="Center" />
           <CheckBox Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center" FontSize="11.5"
@@ -150,7 +151,10 @@
           <CheckBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="11.5"
                     IsChecked="{Binding UseTerminal}" Content="Terminal"
                     ToolTip="Run jobs as an interactive Claude Code terminal (billing-safe fallback) instead of headless" />
-          <Button Grid.Column="3" Style="{StaticResource DangerButton}" Padding="12,5" Command="{Binding KillAllCommand}"
+          <CheckBox Grid.Column="3" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="11.5"
+                    IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
+                    ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged in the chat." />
+          <Button Grid.Column="4" Style="{StaticResource DangerButton}" Padding="12,5" Command="{Binding KillAllCommand}"
                   ToolTip="Kill switch: end every running job now (grants revoked, processes terminated)">
             <StackPanel Orientation="Horizontal">
               <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE71A;" Margin="0,0,6,0" />
@@ -177,6 +181,7 @@
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*" />
               <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Border CornerRadius="{DynamicResource CardCornerRadius}" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
               <Grid ClipToBounds="True">
@@ -187,12 +192,8 @@
                 <TextBlock Style="{StaticResource Icon}" FontSize="13" Margin="10,0,4,0" Text="&#xE721;" Foreground="{DynamicResource MutedBrush}" />
                 <TextBox x:Name="PromptBox" Grid.Column="1" Padding="4,8" Background="Transparent" BorderThickness="0"
                          Foreground="{DynamicResource TextBrush}" CaretBrush="{DynamicResource TextBrush}" SelectionBrush="{DynamicResource SelectionBrush}" FontSize="14"
-                         AcceptsReturn="False" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto"
-                         Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}">
-                  <TextBox.InputBindings>
-                    <KeyBinding Key="Enter" Command="{Binding SubmitPromptCommand}" />
-                  </TextBox.InputBindings>
-                </TextBox>
+                         AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="90" VerticalScrollBarVisibility="Auto"
+                         Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Enter to send · Shift+Enter for a new line · Up for your last prompt · Esc to stop" />
                 <TextBlock Grid.Column="1" Margin="6,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="14"
                            Foreground="{DynamicResource MutedBrush}" Text="Ask anything, / to search, Ctrl+V to paste a screenshot"
                            Visibility="{Binding PromptText, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
@@ -234,7 +235,47 @@
                 <TextBlock Text="Attach" FontSize="12" VerticalAlignment="Center" />
               </StackPanel>
             </Button>
+            <Button Grid.Column="2" Style="{StaticResource OutlineButton}" Margin="6,0,0,0" Padding="9,0" Command="{Binding ChooseSaveFolderCommand}"
+                    ToolTip="Choose the folder jobs save into (a Windows folder picker). Stays until you clear it."
+                    AutomationProperties.Name="Save to">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE74E;" Margin="0,0,5,0" />
+                <TextBlock Text="Save to" FontSize="12" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
           </Grid>
+          <DockPanel Margin="0,6,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="10,3" Margin="6,0,0,0" Command="{Binding StopCommand}"
+                    Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVisibility}}" ToolTip="Stop the running prompt" AutomationProperties.Name="Stop">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE71A;" Margin="0,0,5,0" />
+                <TextBlock Text="Stop" FontSize="12" VerticalAlignment="Center" />
+              </StackPanel>
+            </Button>
+            <ComboBox DockPanel.Dock="Left" MinWidth="190" Margin="0,0,6,0" FontSize="11.5" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
+                      DisplayMemberPath="Label" ToolTip="Model: Auto lets the routing rules pick; any other entry runs on that CLI and model" AutomationProperties.Name="Model" />
+            <ComboBox DockPanel.Dock="Left" MinWidth="70" Margin="0,0,6,0" FontSize="11.5" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
+                      ToolTip="Reasoning effort (--effort). Auto: the CLI's default" AutomationProperties.Name="Effort" />
+          </DockPanel>
+          <DockPanel Margin="4,4,0,0" Visibility="{Binding HasSaveFolder, Converter={StaticResource BoolToVisibility}}">
+            <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="4,0" Command="{Binding ClearSaveFolderCommand}"
+                    ToolTip="Clear: jobs use the folder selected in Explorer again" AutomationProperties.Name="Clear save folder">
+              <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
+            </Button>
+            <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="{Binding SaveFolderText}" ToolTip="{Binding SaveFolder}" />
+          </DockPanel>
+          <Border Margin="0,6,0,0" Padding="8,5" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}"
+                  Visibility="{Binding HasFolderRequest, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" Margin="4,0,0,0" Command="{Binding DismissFolderRequestCommand}"
+                      Content="Dismiss" FontSize="11.5" AutomationProperties.Name="Dismiss folder request" />
+              <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="8,2" Command="{Binding AllowFolderRequestCommand}"
+                      ToolTip="Let this chat's jobs read and write this folder (the running job gets it now)" AutomationProperties.Name="Allow folder">
+                <TextBlock Text="Allow" FontSize="11.5" />
+              </Button>
+              <TextBlock Text="{Binding FolderRequestText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="11.5" />
+            </DockPanel>
+          </Border>
           <TextBlock Style="{StaticResource MutedText}" Margin="4,4,0,0" Text="{Binding SuggestionText}"
                      Visibility="{Binding SuggestionText, Converter={StaticResource EmptyToCollapsed}}" />
           <TextBlock Margin="4,2,0,0" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Text="{Binding RouteText}"
@@ -320,10 +361,18 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                  <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Right" Padding="8,2" Command="{Binding ClearConversationCommand}"
-                          AutomationProperties.Name="Clear conversation">
-                    <TextBlock Text="Clear conversation" FontSize="11" />
-                  </Button>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding OpenFullViewCommand}" AutomationProperties.Name="Open full view">
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE740;" Margin="0,0,5,0" />
+                        <TextBlock Text="Full view" FontSize="11" />
+                      </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding ClearConversationCommand}"
+                            AutomationProperties.Name="Clear conversation">
+                      <TextBlock Text="Clear conversation" FontSize="11" />
+                    </Button>
+                  </StackPanel>
                 </StackPanel>
                 <ItemsControl ItemsSource="{Binding FilteredActions}" Margin="8,6,8,6" Focusable="False">
                   <ItemsControl.ItemTemplate>
@@ -346,9 +395,16 @@
                             <TextBlock Text="{Binding DisabledReason}" Foreground="{DynamicResource WarningBrush}" FontSize="10.5" TextWrapping="Wrap"
                                        Visibility="{Binding IsEnabled, Converter={StaticResource InverseBoolToVisibility}}" />
                           </StackPanel>
-                          <Button Grid.Column="2" Style="{StaticResource AccentButton}" VerticalAlignment="Center" Content="Run"
-                                  Command="{Binding DataContext.RunActionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                  CommandParameter="{Binding}" IsEnabled="{Binding IsEnabled}" />
+                          <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" Margin="0,0,4,0" ToolTip="Delete this action"
+                                    Command="{Binding DataContext.DeleteActionCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                                    Visibility="{Binding IsCustom, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Delete action">
+                              <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE74D;" />
+                            </Button>
+                            <Button Style="{StaticResource AccentButton}" Content="Run"
+                                    Command="{Binding DataContext.RunActionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}" IsEnabled="{Binding IsEnabled}" />
+                          </StackPanel>
                         </Grid>
                       </Border>
                       <DataTemplate.Triggers>
@@ -359,6 +415,30 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                <!-- User-made actions: a name and instructions; the prompt is the input when it runs. -->
+                <Button Style="{StaticResource FlatButton}" HorizontalAlignment="Left" Margin="12,0,0,8" Padding="8,4" Command="{Binding NewActionCommand}"
+                        AutomationProperties.Name="New action">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE710;" Margin="0,0,6,0" />
+                    <TextBlock Text="New action" FontSize="12" />
+                  </StackPanel>
+                </Button>
+                <Border Style="{StaticResource Card}" Margin="8,0,8,8" Visibility="{Binding IsEditingAction, Converter={StaticResource BoolToVisibility}}">
+                  <StackPanel>
+                    <TextBlock Style="{StaticResource MutedText}" Text="Name" />
+                    <TextBox Margin="0,2,0,6" Text="{Binding NewActionTitle, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Style="{StaticResource MutedText}" Text="Short description (optional)" />
+                    <TextBox Margin="0,2,0,6" Text="{Binding NewActionDescription, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Style="{StaticResource MutedText}" Text="Instructions (what the AI should do; your prompt is added when it runs)" TextWrapping="Wrap" />
+                    <TextBox Margin="0,2,0,6" MinHeight="60" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             Text="{Binding NewActionInstructions, UpdateSourceTrigger=PropertyChanged}" />
+                    <CheckBox Content="Needs a folder (selected in Explorer or named in the prompt)" FontSize="11.5" IsChecked="{Binding NewActionNeedsFolder}" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                      <Button Style="{StaticResource FlatButton}" Padding="10,4" Margin="0,0,6,0" Content="Cancel" Command="{Binding NewActionCommand}" />
+                      <Button Style="{StaticResource AccentButton}" Content="Save action" Command="{Binding SaveActionCommand}" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
@@ -400,10 +480,17 @@
                                          Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
                               <TextBlock Style="{StaticResource TechLabel}" FontSize="10" Text="{Binding JobId}" />
                             </StackPanel>
-                            <Button Grid.Column="2" Style="{StaticResource OutlineButton}" VerticalAlignment="Center" Command="{Binding KillCommand}"
-                                    Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" ToolTip="Kill this job">
-                              <TextBlock Text="Kill" Foreground="{DynamicResource DangerBrush}" />
-                            </Button>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                              <Button Style="{StaticResource FlatButton}" Padding="6,4" Margin="0,0,4,0" ToolTip="Open full view"
+                                      Command="{Binding DataContext.OpenFullViewCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                      AutomationProperties.Name="Open full view">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE740;" />
+                              </Button>
+                              <Button Style="{StaticResource OutlineButton}" Command="{Binding KillCommand}"
+                                      Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" ToolTip="Kill this job">
+                                <TextBlock Text="Kill" Foreground="{DynamicResource DangerBrush}" />
+                              </Button>
+                            </StackPanel>
                           </Grid>
                         </Border>
                       </DataTemplate>
@@ -499,6 +586,7 @@
                                          Visibility="{Binding HasCooldown, Converter={StaticResource BoolToVisibility}}" />
                             </StackPanel>
                             <Button Grid.Column="2" Style="{StaticResource OutlineButton}" VerticalAlignment="Center" Content="Sign In" Command="{Binding SignInCommand}"
+                                    Visibility="{Binding IsSignedInLikely, Converter={StaticResource InverseBoolToVisibility}}"
                                     ToolTip="Opens a terminal with the CLI (API-key variables removed) so you sign in with your subscription" />
                           </Grid>
                         </Border>

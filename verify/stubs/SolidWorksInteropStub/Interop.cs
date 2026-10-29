@@ -13,6 +13,10 @@ namespace SolidWorks.Interop.sldworks
         ModelDoc2 OpenDoc6(string FileName, int Type, int Options, string Configuration, ref int Errors, ref int Warnings);
         object NewDocument(string TemplateName, int PaperSize, double Width, double Height);
         string GetUserPreferenceStringValue(int UserPreferenceValue);
+        bool GetUserPreferenceToggle(int UserPreferenceValue);
+        void SetUserPreferenceToggle(int UserPreferenceValue, bool OnFlag);
+        int GetUserPreferenceIntegerValue(int UserPreferenceValue);
+        bool SetUserPreferenceIntegerValue(int UserPreferenceValue, int Value);
         void CloseDoc(string Name);
         int GetDocumentCount();
         void ExitApp();
@@ -78,6 +82,7 @@ namespace SolidWorks.Interop.sldworks
         object GetModelDoc2();
         object GetCorrespondingEntity(object Entity);
         bool Select4(bool Append, SelectData Data, bool ShowPopup);
+        object FeatureByName(string Name);
     }
 
     public interface Body2 { object GetFaces(); }
@@ -108,6 +113,7 @@ namespace SolidWorks.Interop.sldworks
         string Name { get; set; }
         string GetTypeName2();
         object GetNextFeature();
+        bool Select2(bool Append, int Mark);
         object GetFirstSubFeature();
         object GetNextSubFeature();
         int GetErrorCode2(out bool IsWarning);

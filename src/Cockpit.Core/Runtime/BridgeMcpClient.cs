@@ -17,7 +17,7 @@ public sealed record McpToolCallResult(bool IsError, string Text, JsonNode? Stru
 public sealed class McpClientException(string message) : Exception(message);
 
 /// <summary>
-/// A minimal MCP client that drives cockpit-mcp-bridge over stdio, exactly as Claude Code or Gemini CLI would.
+/// A minimal MCP client that drives cockpit-mcp-bridge over stdio, exactly as Claude Code or Antigravity CLI would.
 /// Used by deterministic CLI commands (`cockpit organize --rules`), by `cockpit doctor`'s self-test and by the
 /// integration tests, so those paths go through the same bus, gate, leases and audit as a model would.
 /// </summary>

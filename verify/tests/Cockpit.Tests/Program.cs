@@ -93,7 +93,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("overlay VM: all 7 actions enabled; prefix/keyword routing → action, tools, subscription; failover moves the active pill", Cockpit.Tests.OverlayTests.AllActionsAndFailoverPills),
     ("overlay XAML: well-formed, resources defined, every binding resolves on the ViewModels, every theme pack URI resolves", Cockpit.Tests.OverlayTests.XamlBindings),
     ("interactive: wt.exe exits at once, bridge connects 200 ms later and works; done/kill/closed tab/no start end the job", () => Cockpit.Tests.LaunchTests.InteractiveSurvivesLauncherExit(bridgeDll, testsDll)),
-    ("gemini stream-json: chunks, BOM, tool errors, stats, 429 → synthesized limit, daily reset, json mode", Cockpit.Tests.LaunchTests.GeminiParser),
+    ("antigravity stream-json: chunks, BOM, tool errors, joined deltas, usage, 429 → synthesized limit, daily reset, result-only", Cockpit.Tests.LaunchTests.GeminiParser),
     ("router: category defaults, explicit provider, missing CLI fallback, prefixes", Cockpit.Tests.LaunchTests.RouterRules),
     ("failover: Claude cooling → Gemini with settings.json + scrub + usage; NeverDowngrade refuses; Gemini quota recorded", () => Cockpit.Tests.LaunchTests.FailoverToGemini(bridgeDll, testsDll)),
     ("resolve: probe + export through the bus, 1 of 4 cuts unticked → FCPXML 1.9 with 3 asset-clips at exact 29.97 frames, EDL, Studio script", () => Cockpit.Tests.ProviderTests.ResolveTimeline(bridgeDll)),
@@ -118,6 +118,28 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("journal faults: disk full under the journal (real 1 MiB tmpfs): stops consistently, reconciles, finishes", Cockpit.Tests.JournalFaultTests.DiskFullJournal),
     ("journal faults (Windows): locked file (sharing violation)", Cockpit.Tests.JournalFaultTests.LockedFileWindows),
     // V6 Phase 3: providers, failover, usage
+    ("chat V10: one prompt at a time (double click starts one job), Stop kills the running turn and frees the chat", Cockpit.Tests.ModelChoiceTests.OnePromptAtATimeAndStop),
+    ("model picker V10: every installed CLI's models + efforts, pick fixes CLI/model/effort and is remembered; Auto untouched", Cockpit.Tests.ModelChoiceTests.PickerAppliesModelAndEffort),
+    ("effort V10: --effort on claude and agy command lines; unknown values never passed", Cockpit.Tests.ModelChoiceTests.EffortOnCommandLine),
+    ("F40 pipeline V10: folder from the prompt (existing, file path, new; system folders refused), CAD tools, capable model tier on both CLIs", Cockpit.Tests.ModelChoiceTests.F40Pipeline),
+    ("app session V10: CAD jobs start SolidWorks early (others do not), every SolidWorks tool waits for it, a failed start is a clear error", () => Cockpit.Tests.AppSessionTests.SolidWorksStartedForCadJobs(bridgeDll)),
+    ("chat app V10: search (titles, prompts, answers), rename, star (saved, listed first), retry, edit, Up recalls, new chat resets", Cockpit.Tests.ChatAppTests.SearchRenameStarRetryEdit),
+    ("folder permissions V10: refusals list allowed folders; a running job is granted a folder (created, audited, protected places refused)", () => Cockpit.Tests.FolderPermissionTests.GrantWhileRunning(bridgeDll)),
+    ("chat folders V10: Allow folder / a refusal / Save to reach every turn of the chat, outputs go to Save to, saved with the chat", Cockpit.Tests.FolderPermissionTests.ChatFoldersAndSaveToReachEveryTurn),
+    ("cad toolset V10: parts + assembly prompts get part building AND part cards/assembly in one job, Assemble builds missing parts, 60-turn CAD budget", () => { Cockpit.Tests.AppSessionTests.PartsAndAssemblyInOneJob(); return Task.CompletedTask; }),
+    ("live progress V10: partial messages show the tool being prepared and characters written, on the turn while it runs", () => { Cockpit.Tests.ChatAppTests.LiveProgressWhileWriting(); return Task.CompletedTask; }),
+    ("cad import V10: DXF/SVG profiles chain into outlines (arcs, bulges, curves, units, transforms), width/centre, import paths checked", () => { Cockpit.Tests.CadToolsetTests.DxfAndSvgProfiles(); return Task.CompletedTask; }),
+    ("cad toolset V10: session/document/export tools in every CAD job; files named in a prompt are readable, not writable", () => { Cockpit.Tests.CadToolsetTests.ToolsetAndReadRoots(); return Task.CompletedTask; }),
+    ("output folder V10: parts are saved INTO the allowed folder, an existing or a new folder below it; the folder itself is never replaced", () => { Cockpit.Tests.FollowUpContextTests.OutputFolderInsideAllowedFolder(); return Task.CompletedTask; }),
+    ("follow-up context V10: every turn carries the whole conversation (first request whole, failed turns marked), also after a failed turn", Cockpit.Tests.FollowUpContextTests.FollowUpKeepsTheFirstRequest),
+    ("user request V10: every job's prompt holds what the user typed, even when the action template (Assemble) has no slot for it", () => Cockpit.Tests.FollowUpContextTests.ActionTemplatesKeepTheRequest(bridgeDll)),
+    ("auto-approve V10: the toggle approves every request (and the waiting ones) without a card; every decision is logged in the chat; off at start", Cockpit.Tests.AutoApproveTests.ToggleApprovesAndLogs),
+    ("assembly name V10: the .SLDASM name a request gives is the output (folder or full path); default planes front/top/right as mate ids", () => { Cockpit.Tests.AssemblyRequestTests.RequestedNameAndPlaneIds(); return Task.CompletedTask; }),
+    ("default-plane mates V10: a plan mating front/top/right planes is validated and reaches SolidWorks as planes; never for Concentric", () => Cockpit.Tests.AssemblyRequestTests.DefaultPlaneMatesReachTheBackend(bridgeDll)),
+    ("swx worker V10: mates on default planes (by tree position), prompts quiet during the build and the user's settings restored", Cockpit.Tests.SwxTests.DefaultPlaneMatesAndQuietPrompts),
+    ("iterations V10: saving vN deletes Cockpit's older versions (and backups, copies, STLs, views) only; views returned as images; proportions vs reference", () => { Cockpit.Tests.ChatAppTests.IterationsVersionsAndViews(); return Task.CompletedTask; }),
+    ("part tool V10: schema offers every builder op (loft, sweep, revolve, surfaces, shell, mirror...) and fitBoxMm", () => { Cockpit.Tests.AppSessionTests.PartToolSchemaCoversSurfacing(); return Task.CompletedTask; }),
+    ("saved chats V10: tools, category and folder survive a restart; old chats inferred; follow-ups gain the tools they need", Cockpit.Tests.ModelChoiceTests.SavedChatKeepsTools),
     ("providers: pre-launch routing matrix (each unavailable, both unavailable, both cooling, NeverDowngrade) with original + reason", Cockpit.Tests.FailoverTests.RouterMatrix),
     ("providers: REAL captures (Claude Code 2.1.309 invalid key, Gemini 0.65.0 no-auth/untrusted/no-result) classified; result-then-abnormal-exit", Cockpit.Tests.FailoverTests.RealCapturesClassified),
     ("usage: unknown stays unknown (never 0), duplicate results counted once, no-result runs recorded, V5 ledger migrated", Cockpit.Tests.FailoverTests.UsageUnknownNotZero),
@@ -498,7 +520,7 @@ static class Tests
         Check.True(argv.SequenceEqual(new[] { "--job-id", "job-gen", "--endpoint", "pipe:ai-cockpit-bus", "--timeout-seconds", "1200" }), "bridge args carry no token");
         Check.True(!argv.Any(a => a.Contains(grant.Token, StringComparison.Ordinal)), "the token is not in argv");
         var gemini = JsonNode.Parse(File.ReadAllText(ws.GeminiSettingsPath))!;
-        Check.True((long)gemini["mcpServers"]!["cockpit"]!["timeout"]! > 1_200_000, "Gemini timeout exceeds bridge timeout");
+        Check.True(ws.GeminiSettingsPath.EndsWith(Path.Combine(".agents", "mcp_config.json"), StringComparison.Ordinal) && (long)gemini["mcpServers"]!["cockpit"]!["timeoutSeconds"]! > 1_200, "Antigravity workspace MCP config; timeout exceeds bridge timeout");
         Check.Equal(grant.Token, (string?)claude["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Claude config passes the token in env");
         Check.Equal(grant.Token, (string?)gemini["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Gemini config passes the token in env");
         if (!OperatingSystem.IsWindows())

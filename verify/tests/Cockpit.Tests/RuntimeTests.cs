@@ -77,7 +77,9 @@ static class RuntimeTests
         await using (var client = await runtime.ConnectClientAsync(job))
         {
             var tools = await client.ListToolsAsync();
-            Check.True(tools.OrderBy(t => t, StringComparer.Ordinal).SequenceEqual(new[] { "cockpit_operation_status", "swx_build_assembly", "swx_part_cards" }), "only the SolidWorks tools (+ operation status) are visible: " + string.Join(",", tools));
+            // V10: an assembly job may build missing parts first, so it sees the whole CAD toolset (and nothing else).
+            var expected = JobSpecFactory.CadTools.Append("cockpit_operation_status").Order(StringComparer.Ordinal);
+            Check.True(tools.OrderBy(t => t, StringComparer.Ordinal).SequenceEqual(expected), "only the CAD tools (+ operation status) are visible: " + string.Join(",", tools));
 
             var cards = await client.CallToolAsync("swx_part_cards", new JsonObject { ["folder"] = parts }, TimeSpan.FromSeconds(30));
             Check.True(!cards.IsError, "part cards: " + cards.Text);

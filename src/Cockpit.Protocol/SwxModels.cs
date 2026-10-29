@@ -39,6 +39,33 @@ public sealed record PathError(string Path, string Code, string Message);
 [JsonConverter(typeof(JsonStringEnumConverter<FaceKind>))]
 public enum FaceKind { Cylinder, Plane }
 
+/// <summary>
+/// A part's three default planes, usable as mate entities by these face IDs (V10): "front" (XY, normal +Z), "top" (XZ,
+/// normal +Y), "right" (YZ, normal +X). They are found by position in the feature tree (the first three reference planes),
+/// so renamed or translated planes work too. They are how to centre parts whose faces offer no middle plane (a cylinder
+/// on a block: its Right plane coincident with the block's Right plane).
+/// </summary>
+public static class StandardPlanes
+{
+    public static readonly IReadOnlyList<string> Ids = ["front", "top", "right"];
+
+    /// <summary>Index 0..2 in the feature tree for a plane ID ("front", "Front Plane", "plane:top"...), or -1.</summary>
+    public static int IndexOf(string? id)
+    {
+        string t = (id ?? "").Trim().ToLowerInvariant();
+        if (t.StartsWith("plane:", StringComparison.Ordinal)) t = t[6..].Trim();
+        if (t.EndsWith(" plane", StringComparison.Ordinal)) t = t[..^6].Trim();
+        for (int i = 0; i < Ids.Count; i++) if (t == Ids[i]) return i;
+        return -1;
+    }
+
+    /// <summary>The plane as a face (point = origin, normal along its axis, no persist reference).</summary>
+    public static FaceInfo Face(int index) => new(Ids[index], FaceKind.Plane, 0, [0, 0, 0],
+        index switch { 0 => [0, 0, 1], 1 => [0, 1, 0], _ => [1, 0, 0] }, null, null, null, false);
+
+    public static bool IsStandard(FaceInfo face) => face.PersistRefBase64 is null && face.EntityName is null && IndexOf(face.Id) >= 0;
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<MateKind>))]
 public enum MateKind { Coincident, Concentric, Parallel, Distance }
 

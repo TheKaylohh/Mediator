@@ -17,7 +17,7 @@ public sealed class UsageLedger : IAsyncDisposable
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_utc                TEXT    NOT NULL,
             job_id                TEXT    NOT NULL,
-            provider              TEXT    NOT NULL,       -- 'claude-code', 'gemini-cli', ...
+            provider              TEXT    NOT NULL,       -- 'claude-code', 'gemini-cli' (= Antigravity CLI; id kept for existing ledgers), ...
             session_id            TEXT,
             model                 TEXT,
             subtype               TEXT,
@@ -210,7 +210,7 @@ public sealed class UsageLedger : IAsyncDisposable
 /// <summary>
 /// Reads a headless CLI run's stdout, turns it into events for the overlay, records usage when the run ends, sets
 /// a provider cooldown on a usage limit, and raises a billing alarm if the run authenticated with an API key
-/// (Claude Code reports this in system/init; Gemini CLI does not, so for Gemini the environment scrub is the guard).
+/// (Claude Code reports this in system/init; Antigravity CLI does not, so for Antigravity the environment scrub is the guard).
 /// </summary>
 public class CliRunMonitor
 {

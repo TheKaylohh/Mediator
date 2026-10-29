@@ -28,9 +28,9 @@
         var types = new Dictionary<string, string>
         {
             ["Window"] = "System.Windows.Window", ["Application"] = "System.Windows.Application",
-            ["UserControl"] = "System.Windows.Controls.UserControl", ["TextBox"] = "System.Windows.Controls.TextBox",
+            ["UserControl"] = "System.Windows.Controls.UserControl", ["TextBox"] = "System.Windows.Controls.TextBox", ["ScrollViewer"] = "System.Windows.Controls.ScrollViewer",
             ["TextBlock"] = "System.Windows.Controls.TextBlock", ["Border"] = "System.Windows.Controls.Border",
-            ["Grid"] = "System.Windows.Controls.Grid", ["StackPanel"] = "System.Windows.Controls.StackPanel",
+            ["Grid"] = "System.Windows.Controls.Grid", ["ColumnDefinition"] = "System.Windows.Controls.ColumnDefinition", ["StackPanel"] = "System.Windows.Controls.StackPanel",
             ["Canvas"] = "System.Windows.Controls.Canvas", ["ToggleButton"] = "System.Windows.Controls.Primitives.ToggleButton",
             ["Ellipse"] = "System.Windows.Shapes.Ellipse", ["Rectangle"] = "System.Windows.Shapes.Rectangle", ["Path"] = "System.Windows.Shapes.Path",
             ["RotateTransform"] = "System.Windows.Media.RotateTransform", ["ScaleTransform"] = "System.Windows.Media.ScaleTransform",
