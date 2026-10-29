@@ -92,6 +92,10 @@ public sealed record JobSpec
     /// <see cref="JobSpecFactory.Continue"/> from a <see cref="ContinuableSession"/>.
     /// </summary>
     public string? ContinueSessionId { get; init; }
+    /// <summary>V10: the user's own words (model choice and cross-CLI context use them, not the full instructions).</summary>
+    public string? UserText { get; init; }
+    /// <summary>V10: which subscription goes first when <see cref="Provider"/> is null.</summary>
+    public RoutingPolicy RoutingPolicy { get; init; } = RoutingPolicy.AutoBest;
 }
 
 /// <summary>A started job. Thread-safe: the state changes on the runtime's threads, observers read snapshots.</summary>
@@ -128,6 +132,8 @@ public sealed class RunningJob
     public RunOutcome? Outcome { get; internal set; }
     /// <summary>V9: the CLI's session id from its stream (init or result event), for a later `--resume`.</summary>
     public string? SessionId { get; internal set; }
+    /// <summary>V10: the model the current run uses (the job's, or <see cref="ProviderRouter.SelectModel"/>'s choice).</summary>
+    public string? Model { get; internal set; }
     /// <summary>Every routing decision for this job, oldest first (also in the audit as cockpit/route).</summary>
     public IReadOnlyList<string> RoutingHistory => _routing;
     internal readonly List<string> _routing = new();
@@ -240,6 +246,9 @@ public interface ICockpitRuntime
     event Action<string, string>? BillingAlarm;
     /// <summary>(jobId, message): routing switched subscriptions, an interactive session ended, and similar news for the status line.</summary>
     event Action<string, string>? Notice;
+
+    /// <summary>V10: the working folder for general chat jobs (no file roots). Default: a temp folder.</summary>
+    string ChatDirectory => Path.Combine(Path.GetTempPath(), "AiCockpit-chat");
 
     /// <summary>Attach the overlay or console prompt here. With nothing attached every approval is denied.</summary>
     SwappableApprovalPrompt Approvals { get; }
@@ -404,7 +413,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         {
             try
             {
-                route = await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
+                route = await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade, spec.RoutingPolicy).ConfigureAwait(false); // throws before anything is issued
             }
             catch (ProviderUnavailableException ex)
             {
@@ -493,12 +502,16 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         return true;
     }
 
-    public async Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false)
+    public Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false) =>
+        RouteAsync(category, provider, neverDowngrade, RoutingPolicy.AutoBest);
+
+    /// <summary>V10: routing with a <see cref="RoutingPolicy"/> (Quota Saver puts Gemini first, Claude First puts Claude first).</summary>
+    public async Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider, bool neverDowngrade, RoutingPolicy policy)
     {
         var cooldowns = new Dictionary<AiProvider, DateTimeOffset?>();
         foreach (var p in Enum.GetValues<AiProvider>())
             cooldowns[p] = await Usage.GetCooldownAsync(ProviderRouter.Id(p)).ConfigureAwait(false);
-        return ProviderRouter.Route(category, provider, neverDowngrade, p => cooldowns[p], p => ExecutableFor(p) is not null);
+        return ProviderRouter.Route(category, provider, neverDowngrade, p => cooldowns[p], p => ExecutableFor(p) is not null, policy);
     }
 
     /// <summary>
@@ -570,10 +583,13 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     private ProcessStartInfo HeadlessStartInfo(RunningJob job)
     {
         var spec = job.Spec;
-        return job.Provider == AiProvider.GeminiCli
-            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Headless(job.Workspace, spec.Model, spec.AllowMeteredBilling)
+        var provider = job.Provider ?? AiProvider.ClaudeCode;
+        // V10: a job without a model gets one per run, for the provider actually used (a mid-job switch re-selects it).
+        job.Model = spec.Model ?? ProviderRouter.SelectModel(provider, spec.Category, spec.UserText ?? spec.Prompt);
+        return provider == AiProvider.GeminiCli
+            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Headless(job.Workspace, job.Model, spec.AllowMeteredBilling, spec.WorkingDirectory)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, spec.Model, spec.AllowMeteredBilling, spec.ContinueSessionId);
+                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, job.Model, spec.AllowMeteredBilling, spec.ContinueSessionId);
     }
 
     private async Task LaunchHeadlessAsync(RunningJob job, CancellationToken ct)
@@ -784,6 +800,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     /// <summary>V9: the most recent finished headless Claude run that a follow-up can continue (`--resume`), or null.</summary>
     public ContinuableSession? LastContinuableSession { get; private set; }
+
+    /// <summary>V10: where general chat jobs run (no file roots).</summary>
+    public string ChatDirectory => Path.Combine(Paths.DataDirectory, "chat");
 
     private void OnRevoked(string jobId)
     {

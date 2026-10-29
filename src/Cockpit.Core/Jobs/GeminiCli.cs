@@ -34,9 +34,13 @@ public sealed class GeminiLaunchBuilder
     public static IReadOnlyList<string> VariablesToScrub(bool allowMeteredBilling) =>
         allowMeteredBilling ? [] : CliLaunchBuilder.BillingVariables.Concat(GoogleBillingVariables).Distinct(StringComparer.Ordinal).ToList();
 
-    public ProcessStartInfo Headless(JobWorkspace ws, string? model = null, bool allowMeteredBilling = false)
+    /// <param name="workingDirectory">V10: the user's folder. Gemini runs in the job workspace (for its .gemini/settings.json),
+    /// so the folder is added with --include-directories; Gemini's own read tools can then see it directly.</param>
+    public ProcessStartInfo Headless(JobWorkspace ws, string? model = null, bool allowMeteredBilling = false, string? workingDirectory = null)
     {
         var args = new List<string> { "--output-format", "stream-json", "--allowed-mcp-server-names", JobWorkspaceFactory.ServerName };
+        if (!string.IsNullOrEmpty(workingDirectory) && !string.Equals(Path.GetFullPath(workingDirectory).TrimEnd('\\', '/'), Path.GetFullPath(ws.Root).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+        { args.Add("--include-directories"); args.Add(Path.GetFullPath(workingDirectory)); }
         if (_skipTrust) args.Add("--skip-trust");
         if (model is not null) { args.Add("-m"); args.Add(model); }
         var psi = CliLaunchBuilder.WrapForShim(_geminiExecutable, args);

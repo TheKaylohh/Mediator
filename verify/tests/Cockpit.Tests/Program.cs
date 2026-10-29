@@ -159,6 +159,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported", () => Cockpit.Tests.ConnectorTests.CustomMcpRegistry(testsDll)),
     ("custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited", () => Cockpit.Tests.ConnectorTests.CustomMcpThroughGate(bridgeDll, testsDll)),
     ("connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys", Cockpit.Tests.ConnectorTests.ProbeOnLinux),
+    ("overlay V10: SelectModel + Quota Saver routing; free text runs headless (no terminal) and streams a >500-char answer untruncated; cross-CLI continuation", () => Cockpit.Tests.OverlayTests.V10ChatRoutingAndContinuation(bridgeDll, testsDll)),
     // V9: session continuation (claude --resume)
     ("session V9: a finished run's session_id is offered; the follow-up runs claude -p --resume <id> in the same folder with a new job and grant; unsafe ids, Gemini and a limited Claude are refused; killed runs are not offered", () => Cockpit.Tests.SessionTests.RuntimeContinuation(bridgeDll, testsDll)),
     ("overlay V9: ↩ Continue session chip appears auto-selected, Enter continues, click deselects, × and a folder switch remove it, a different folder in the prompt starts fresh, the chip returns after the follow-up", () => Cockpit.Tests.SessionTests.OverlayContinuation(bridgeDll, testsDll)),

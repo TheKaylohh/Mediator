@@ -23,6 +23,8 @@ public sealed record CockpitSettings
     public bool FirstRunCompleted { get; init; }
     /// <summary>What the user last chose; the Run key itself is the source of truth and is re-read at start.</summary>
     public bool RunOnStartup { get; init; }
+    /// <summary>V10: Auto Best / Quota Saver (Gemini first) / Claude First.</summary>
+    public Cockpit.Core.Jobs.RoutingPolicy RoutingPolicy { get; init; } = Cockpit.Core.Jobs.RoutingPolicy.AutoBest;
 }
 
 public interface ISettingsStore
@@ -51,6 +53,7 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
                 Hotkey = HotkeyGesture.TryParse((string?)o["hotkey"], out var g, out _) ? g.ToString() : d.Hotkey,
                 FirstRunCompleted = (bool?)o["firstRunCompleted"] ?? false,
                 RunOnStartup = (bool?)o["runOnStartup"] ?? false,
+                RoutingPolicy = Enum.TryParse<Cockpit.Core.Jobs.RoutingPolicy>((string?)o["routingPolicy"], ignoreCase: true, out var rp) && Enum.IsDefined(rp) ? rp : d.RoutingPolicy,
             };
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or IOException)
@@ -67,6 +70,7 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
         ["hotkey"] = settings.Hotkey,
         ["firstRunCompleted"] = settings.FirstRunCompleted,
         ["runOnStartup"] = settings.RunOnStartup,
+        ["routingPolicy"] = settings.RoutingPolicy.ToString(),
     }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 }
 

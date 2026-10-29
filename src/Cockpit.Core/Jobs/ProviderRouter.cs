@@ -6,7 +6,10 @@ namespace Cockpit.Core.Jobs;
 public enum AiProvider { ClaudeCode, GeminiCli }
 
 /// <summary>Task categories, from the overlay's actions and the prompt prefixes /cad /code /files /tutor /resolve /blender.</summary>
-public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender }
+public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat }
+
+/// <summary>V10: which subscription goes first when the user did not pick one. AutoBest = per-category defaults.</summary>
+public enum RoutingPolicy { AutoBest, ConserveClaude, PreferClaude }
 
 /// <param name="Original">The provider the job would have used (explicit choice or the category default).</param>
 /// <param name="Reason">Why the original was not used (null when it was).</param>
@@ -55,6 +58,32 @@ public static class ProviderRouter
         _ => (AiProvider.GeminiCli, AiProvider.ClaudeCode),
     };
 
+    /// <summary>
+    /// V10: the model alias for a run when the job did not set one. Claude Code: opus / sonnet / haiku (CLI aliases).
+    /// Gemini CLI: gemini-2.5-pro / gemini-2.5-flash. Short chat and file requests take the fast model.
+    /// </summary>
+    public static string SelectModel(AiProvider provider, TaskCategory category, string prompt)
+    {
+        prompt ??= "";
+        bool light = category is TaskCategory.Chat or TaskCategory.Files;
+        if (provider == AiProvider.ClaudeCode)
+        {
+            if (new[] { "/opus", "architecture", "full assembly", "complex" }.Any(k => prompt.Contains(k, StringComparison.OrdinalIgnoreCase))) return "opus";
+            return light && prompt.Length < 160 ? "haiku" : "sonnet";
+        }
+        return light && prompt.Length < 200 ? "gemini-2.5-flash" : "gemini-2.5-pro";
+    }
+
+    /// <summary>V10: "/gemini summarise this" → (GeminiCli, "summarise this"); "/claude …" likewise. Null without a provider prefix.</summary>
+    public static (AiProvider Provider, string Remainder)? ParseProviderPrefix(string prompt)
+    {
+        string t = (prompt ?? "").TrimStart();
+        int space = t.IndexOf(' ', StringComparison.Ordinal);
+        string head = space < 0 ? t : t[..space];
+        AiProvider? p = head.ToLowerInvariant() switch { "/gemini" => AiProvider.GeminiCli, "/claude" => AiProvider.ClaudeCode, _ => null };
+        return p is { } provider ? (provider, space < 0 ? "" : t[(space + 1)..].Trim()) : null;
+    }
+
     private static readonly Dictionary<string, TaskCategory> Prefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         ["/cad"] = TaskCategory.Cad, ["/code"] = TaskCategory.Code, ["/files"] = TaskCategory.Files,
@@ -73,9 +102,14 @@ public static class ProviderRouter
     /// <param name="cooldownUntil">Per provider, the reset time of an active cooldown (null = available).</param>
     /// <param name="installed">Providers whose CLI was found.</param>
     public static RouteDecision Route(TaskCategory category, AiProvider? explicitProvider, bool neverDowngrade,
-        Func<AiProvider, DateTimeOffset?> cooldownUntil, Func<AiProvider, bool> installed)
+        Func<AiProvider, DateTimeOffset?> cooldownUntil, Func<AiProvider, bool> installed, RoutingPolicy policy = RoutingPolicy.AutoBest)
     {
-        var (primary, fallback) = Defaults(category);
+        var (primary, fallback) = policy switch
+        {
+            RoutingPolicy.ConserveClaude => (AiProvider.GeminiCli, AiProvider.ClaudeCode),
+            RoutingPolicy.PreferClaude => (AiProvider.ClaudeCode, AiProvider.GeminiCli),
+            _ => Defaults(category),
+        };
         if (explicitProvider is { } chosen) { primary = chosen; fallback = chosen == AiProvider.ClaudeCode ? AiProvider.GeminiCli : AiProvider.ClaudeCode; }
 
         string? why = Unavailable(primary, cooldownUntil, installed);
