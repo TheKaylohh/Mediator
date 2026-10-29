@@ -726,6 +726,56 @@
                 </StackPanel>
               </ScrollViewer>
             </TabItem>
+
+            <!-- Usage (V14): 5-hour and weekly use per subscription; reading it runs no model -->
+            <TabItem Header="Usage">
+              <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420" DataContext="{Binding Usage}">
+                <StackPanel Margin="10,2,10,8">
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,3" Command="{Binding RefreshCommand}" ToolTip="Check again (uses no tokens)">
+                      <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72C;" />
+                    </Button>
+                    <TextBlock Style="{StaticResource SectionTitle}" Text="SUBSCRIPTION USAGE" />
+                  </DockPanel>
+                  <ItemsControl ItemsSource="{Binding Subscriptions}" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Style="{StaticResource Card}">
+                          <StackPanel>
+                            <DockPanel>
+                              <Ellipse Width="9" Height="9" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                  <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
+                                    <Style.Triggers>
+                                      <DataTrigger Binding="{Binding NeedsAttention}" Value="True">
+                                        <Setter Property="Fill" Value="{DynamicResource WarningBrush}" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </Ellipse.Style>
+                              </Ellipse>
+                              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            </DockPanel>
+                            <StackPanel Margin="19,6,0,0" Visibility="{Binding HasMeter, Converter={StaticResource BoolToVisibility}}">
+                              <TextBlock Text="{Binding FiveHourText}" />
+                              <ProgressBar Height="6" Margin="0,3,0,8" Minimum="0" Maximum="100" Value="{Binding FiveHourPercent, Mode=OneWay}"
+                                           Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource RaisedBrush}" BorderThickness="0" />
+                              <TextBlock Text="{Binding WeekText}" />
+                              <ProgressBar Height="6" Margin="0,3,0,4" Minimum="0" Maximum="100" Value="{Binding WeekPercent, Mode=OneWay}"
+                                           Foreground="{DynamicResource AccentBrush}" Background="{DynamicResource RaisedBrush}" BorderThickness="0" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="19,4,0,0" Text="{Binding Note}" />
+                            <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="19,2,0,0" Text="{Binding LocalText}" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="2,4,0,0" Text="{Binding Status}" />
+                </StackPanel>
+              </ScrollViewer>
+            </TabItem>
           </TabControl>
 
           <!-- ── First-run card ── -->

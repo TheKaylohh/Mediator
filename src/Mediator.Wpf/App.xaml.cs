@@ -72,6 +72,7 @@ public partial class App : Application
         var probe = new ConnectorProbe(DefaultProcessRunner.Instance);
         vm.Connectors = new ConnectorsViewModel(probe, _runtime, _runtime.CustomMcp, dispatcher, browser: _browser,
             copyText: text => Clipboard.SetText(text));
+        vm.Usage = new UsageViewModel(_runtime, new ClaudePlanUsage(), dispatcher); // V14: reads meters only; runs no model
         var onboarding = new OnboardingViewModel(probe, new StartupRegistration(), vm);
         vm.Onboarding = onboarding;
 

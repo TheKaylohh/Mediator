@@ -145,16 +145,22 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         private set { if (SetProperty(ref _isVisible, value) && value) FocusPromptRequested?.Invoke(); }
     }
 
-    /// <summary>0 Actions, 1 Jobs, 2 Activity, 3 Connectors.</summary>
+    /// <summary>0 Actions, 1 Jobs, 2 Activity, 3 Connectors, 4 Usage.</summary>
     public int SelectedTab
     {
         get => _selectedTab;
         set
         {
-            if (SetProperty(ref _selectedTab, value) && value == ConnectorsTab && Connectors is { IsBusy: false } c) _ = c.RefreshAsync();
+            if (!SetProperty(ref _selectedTab, value)) return;
+            if (value == ConnectorsTab && Connectors is { IsBusy: false } c) _ = c.RefreshAsync();
+            if (value == UsageTab && Usage is { IsBusy: false } u) _ = u.RefreshAsync();
         }
     }
     public const int ConnectorsTab = 3;
+    public const int UsageTab = 4;
+
+    /// <summary>The Usage tab (V14): 5-hour and weekly use per subscription. Set by the host; null in hosts without one.</summary>
+    public UsageViewModel? Usage { get; set; }
 
     /// <summary>The Connectors tab (V7). Set by the host after construction; null in hosts without one.</summary>
     public ConnectorsViewModel? Connectors { get; set; }

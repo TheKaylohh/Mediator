@@ -274,6 +274,8 @@ public interface IMediatorRuntime
     Task EndJobAsync(string jobId);
     /// <summary>When a provider ("claude-code", "gemini-cli") hit a usage limit, the reported reset time; null when available.</summary>
     Task<DateTimeOffset?> GetCooldownAsync(string provider);
+    /// <summary>V14: what Mediator's own runs of a provider reported since a time (a local query; no model call). Null without a ledger.</summary>
+    Task<UsageLedger.ProviderTotals?> UsageSinceAsync(string provider, DateTimeOffset since) => Task.FromResult<UsageLedger.ProviderTotals?>(null);
     /// <summary>Which subscription a job of this category would run on right now (for the overlay's pills). Throws <see cref="ProviderUnavailableException"/>.</summary>
     Task<RouteDecision> RouteAsync(TaskCategory category, AiProvider? provider = null, bool neverDowngrade = false);
 
@@ -944,6 +946,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     }
 
     public Task<DateTimeOffset?> GetCooldownAsync(string provider) => Usage.GetCooldownAsync(provider);
+    public async Task<UsageLedger.ProviderTotals?> UsageSinceAsync(string provider, DateTimeOffset since) => await Usage.TotalsAsync(provider, since).ConfigureAwait(false);
 
     public Task EndJobAsync(string jobId)
     {

@@ -2,6 +2,12 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V14: Usage tab (2026-10-29)
+
+- **Usage tab** in the overlay: one card per subscription. **Claude Pro** shows the 5-hour and weekly bars with their reset times, the same figures as Claude Code's `/usage` (claude.ai plus every Claude Code session). They come from Anthropic's account usage endpoint, using the OAuth token Claude Code saved at sign-in. **Google AI Pro** has no published meter, so its card shows a rate-limit cooldown if one is active and what Mediator's own Antigravity runs reported. Both cards list Mediator's own runs and tokens for the last 5 hours and 7 days, from the usage ledger.
+- **No tokens**: no model runs. Results are cached for a minute; the tab refreshes when opened and with its refresh button. The token is read per request, sent only to api.anthropic.com, never logged, and never refreshed by Mediator (refreshing would sign Claude Code out). The endpoint is not a published API, so every failure is shown as a sentence instead of a wrong 0%.
+- 2 new tests (150).
+
 ## V13: Mediator for Chrome (2026-10-29)
 
 Mediator's own Chrome extension, shipped with the app. Claude Code or Antigravity can read and operate the user's Chrome tabs through `browser_*` tools on the bus ("/chrome open … and …"). Before this, Browser jobs needed Anthropic's Claude in Chrome extension and only worked with Claude.

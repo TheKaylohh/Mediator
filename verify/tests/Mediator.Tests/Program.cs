@@ -143,6 +143,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("chrome V13: upgrade checks (origin, loopback Host, path, headers) and proofs", () => { Mediator.Tests.ExtensionBridgeTests.UpgradeChecks(); return Task.CompletedTask; }),
     ("chrome V13: shipped MV3 extension (permissions, key = admitted id, methods), install/update, pairing.json, secret kept", () => { Mediator.Tests.ExtensionBridgeTests.PackagingAndPairingFiles(); return Task.CompletedTask; }),
     ("chrome V13: browser_* tools through the real bridge and bus: compact read, repeatable clicks, screenshot image, approvals, audit", () => Mediator.Tests.ExtensionBridgeTests.ToolsThroughTheBus(bridgeDll)),
+    ("usage V14: Claude plan meter (5 h + week) read with Claude Code's token, cached a minute, never refreshed; failures readable, token never shown", Mediator.Tests.UsageTests.ClaudePlanMeter),
+    ("usage V14: Usage tab: Claude meters + 80% flag, Mediator's own runs from the ledger, Google AI Pro cooldown, no tokens used", () => Mediator.Tests.UsageTests.UsageTab(bridgeDll)),
     ("iterations V10: saving vN deletes Mediator's older versions (and backups, copies, STLs, views) only; views returned as images; proportions vs reference", () => { Mediator.Tests.ChatAppTests.IterationsVersionsAndViews(); return Task.CompletedTask; }),
     ("part tool V10: schema offers every builder op (loft, sweep, revolve, surfaces, shell, mirror...) and fitBoxMm", () => { Mediator.Tests.AppSessionTests.PartToolSchemaCoversSurfacing(); return Task.CompletedTask; }),
     ("saved chats V10: tools, category and folder survive a restart; old chats inferred; follow-ups gain the tools they need", Mediator.Tests.ModelChoiceTests.SavedChatKeepsTools),
