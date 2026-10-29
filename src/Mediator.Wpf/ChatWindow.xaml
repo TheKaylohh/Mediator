@@ -8,8 +8,12 @@
         Title="Mediator" Width="1200" Height="800" WindowState="Maximized" WindowStartupLocation="CenterScreen"
         AllowDrop="True" Background="{DynamicResource WindowBackgroundBrush}"
         FontFamily="{DynamicResource UiFont}" FontSize="14" Foreground="{DynamicResource TextBrush}">
+  <!-- No Windows title bar: the window keeps resizing, snapping and the taskbar; the auto-hiding bar below replaces it. -->
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0" />
+  </WindowChrome.WindowChrome>
   <!-- Full-screen chat: same view model as the overlay (conversation, prompt, attachments, jobs), laid out like a chat app. -->
-  <Grid>
+  <Grid x:Name="RootGrid">
     <Grid.ColumnDefinitions>
       <ColumnDefinition x:Name="SidebarColumn" Width="270" />
       <ColumnDefinition Width="*" />
@@ -285,5 +289,26 @@
         </StackPanel>
       </ScrollViewer>
     </DockPanel>
+
+    <!-- Window bar: shows when the mouse reaches the top edge, hides about two seconds after it leaves. Drag it to move the
+         window, double-click it to maximize or restore. -->
+    <Border x:Name="WindowBar" Grid.ColumnSpan="2" VerticalAlignment="Top" Height="34" Opacity="0" IsHitTestVisible="False" Panel.ZIndex="100"
+            Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
+            MouseLeftButtonDown="WindowBarMouseDown">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Style="{StaticResource FlatButton}" Width="44" Click="MinimizeClick" ToolTip="Minimize" AutomationProperties.Name="Minimize">
+            <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE921;" />
+          </Button>
+          <Button Style="{StaticResource FlatButton}" Width="44" Click="MaximizeClick" ToolTip="Maximize or restore" AutomationProperties.Name="Maximize or restore">
+            <TextBlock x:Name="MaximizeGlyph" Style="{StaticResource Icon}" FontSize="10" Text="&#xE923;" />
+          </Button>
+          <Button Style="{StaticResource FlatButton}" Width="44" Click="CloseClick" ToolTip="Close (the chat is kept)" AutomationProperties.Name="Close">
+            <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8BB;" />
+          </Button>
+        </StackPanel>
+        <TextBlock Text="MEDIATOR" Style="{StaticResource TechLabel}" VerticalAlignment="Center" Margin="14,0,0,0" />
+      </DockPanel>
+    </Border>
   </Grid>
 </Window>

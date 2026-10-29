@@ -107,20 +107,57 @@ public static class BrowserExtension
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
-    /// <summary>The three steps the user does once in Chrome, as shown in Connectors.</summary>
+    /// <summary>The steps the user does once in Chrome, as shown in Connectors.</summary>
     public static string SetupSteps(string installDirectory) =>
-        "In Chrome at chrome://extensions (a tab opened; else type it in the address bar): 1. turn on Developer mode (top right); 2. click Load unpacked; 3. paste the folder path "
-        + "(already copied) and press Select Folder: " + installDirectory + ". The Mediator icon then shows a green ON.";
+        "In Chrome, type chrome://extensions in the address bar (Chrome does not let apps open that page): 1. turn on Developer mode (top right); "
+        + "2. click Load unpacked; 3. paste the folder path (already copied) and press Select Folder: " + installDirectory + ". The Mediator icon then shows a green ON.";
 
-    /// <summary>Opens chrome://extensions in the user's Chrome (null when Chrome is not found).</summary>
-    public static ProcessStartInfo? OpenExtensionsPage(Func<string, string?>? env = null)
+    /// <summary>True when Google Chrome is installed.</summary>
+    public static bool ChromeInstalled(Func<string, string?>? env = null) => ChromeSession.Locate(env ?? Environment.GetEnvironmentVariable) is not null;
+
+    /// <summary>Chrome's user data folder (%LOCALAPPDATA%\Google\Chrome\User Data).</summary>
+    public static string ChromeUserDataDirectory(Func<string, string?>? env = null) =>
+        Path.Combine((env ?? Environment.GetEnvironmentVariable)("LOCALAPPDATA") ?? "", "Google", "Chrome", "User Data");
+
+    /// <summary>
+    /// The folders Chrome loads Mediator for Chrome from, one per profile that has it (read from each profile's
+    /// Secure Preferences / Preferences; read only, best effort). Empty when no profile has it.
+    /// </summary>
+    public static IReadOnlyList<string> LoadedFrom(string chromeUserData)
     {
-        string? chrome = ChromeSession.Locate(env ?? Environment.GetEnvironmentVariable);
-        if (chrome is null) return null;
-        var psi = new ProcessStartInfo(chrome) { UseShellExecute = false };
-        psi.ArgumentList.Add("chrome://extensions/");
-        return psi;
+        var found = new List<string>();
+        if (!Directory.Exists(chromeUserData)) return found;
+        foreach (var profile in Directory.EnumerateDirectories(chromeUserData))
+        {
+            foreach (var name in new[] { "Secure Preferences", "Preferences" })
+            {
+                string file = Path.Combine(profile, name);
+                if (!File.Exists(file)) continue;
+                try
+                {
+                    using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    if (JsonNode.Parse(stream)?["extensions"]?["settings"]?[Id]?["path"] is JsonValue v && v.TryGetValue(out string? path)
+                        && Path.IsPathFullyQualified(path) && !found.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        found.Add(path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException) { }
+            }
+        }
+        return found;
     }
+
+    /// <summary>The first folder Chrome loads the extension from that is not <paramref name="installDirectory"/> (such a copy never pairs), or null.</summary>
+    public static string? WrongFolder(string installDirectory, IEnumerable<string> loadedFrom)
+    {
+        string want = Normalize(installDirectory);
+        return loadedFrom.FirstOrDefault(p => !string.Equals(Normalize(p), want, StringComparison.OrdinalIgnoreCase));
+        static string Normalize(string p) => Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    /// <summary>What Connectors says when Chrome loaded another copy of the extension (the repository's, or an old one).</summary>
+    public static string WrongFolderSteps(string loadedFrom, string installDirectory) =>
+        "Chrome loaded Mediator for Chrome from " + loadedFrom + ", which never pairs. In Chrome, type chrome://extensions in the address bar, remove Mediator for Chrome, "
+        + "then click Load unpacked and select " + installDirectory + " (Set up copies this path).";
 }
 
 /// <summary>

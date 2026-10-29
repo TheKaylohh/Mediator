@@ -540,55 +540,59 @@
               </ListBox>
             </TabItem>
 
-            <!-- Connectors: subscriptions, desktop apps, custom MCP servers -->
+            <!-- Connectors (V15): every connector the Mediator offers, live or not, by category. Each row shows the app's icon,
+                 its name, one line and a status; the chevron opens the details. -->
             <TabItem Header="Connectors">
               <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420" DataContext="{Binding Connectors}">
                 <StackPanel Margin="10,2,10,8">
-                  <DockPanel>
+                  <DockPanel Margin="0,6,0,0">
                     <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,3" Command="{Binding RefreshCommand}" ToolTip="Check again">
                       <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72C;" />
                     </Button>
-                    <TextBlock Style="{StaticResource SectionTitle}" Text="SUBSCRIPTION CLIS" />
+                    <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="11.5" Foreground="{DynamicResource MutedBrush}" Text="{Binding LiveSummary}" />
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" FontSize="13" Text="Connection center" />
                   </DockPanel>
+
+                  <TextBlock Style="{StaticResource SectionTitle}" Text="SUBSCRIPTION CLIS" />
                   <ItemsControl ItemsSource="{Binding Clis}" Focusable="False">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <Border Style="{StaticResource Card}">
-                          <Grid>
-                            <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="Auto" />
-                              <ColumnDefinition Width="*" />
-                              <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Ellipse Width="9" Height="9" Margin="0,5,10,0" VerticalAlignment="Top">
-                              <Ellipse.Style>
-                                <Style TargetType="Ellipse">
-                                  <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
-                                  <Style.Triggers>
-                                    <DataTrigger Binding="{Binding NeedsAttention}" Value="True">
-                                      <Setter Property="Fill" Value="{DynamicResource WarningBrush}" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsInstalled}" Value="False">
-                                      <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
-                                    </DataTrigger>
-                                  </Style.Triggers>
-                                </Style>
-                              </Ellipse.Style>
-                            </Ellipse>
-                            <StackPanel Grid.Column="1">
-                              <TextBlock>
-                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
-                                <Run Text="{Binding VersionText, Mode=OneWay}" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}" FontSize="11" />
-                              </TextBlock>
-                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding Subscription}" />
+                          <StackPanel>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <Grid Width="24" Height="24" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Foreground="{DynamicResource MutedBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IconPath, Converter={StaticResource FileIconMissing}}" />
+                                <Image Width="24" Height="24" Source="{Binding IconPath, Converter={StaticResource FileIcon}}" />
+                              </Grid>
+                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Text="{Binding Subscription}" />
+                              </StackPanel>
+                              <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
+                                      BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
+                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                              </Border>
+                              <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
+                              </Button>
+                            </Grid>
+                            <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
+                              <TextBlock FontSize="11.5" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}" Text="{Binding VersionText}" />
                               <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding AuthText}" Foreground="{DynamicResource TextBrush}" />
                               <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding CooldownText}" Foreground="{DynamicResource WarningBrush}"
                                          Visibility="{Binding HasCooldown, Converter={StaticResource BoolToVisibility}}" />
                             </StackPanel>
-                            <Button Grid.Column="2" Style="{StaticResource OutlineButton}" VerticalAlignment="Center" Content="Sign In" Command="{Binding SignInCommand}"
+                            <Button HorizontalAlignment="Left" Margin="34,6,0,0" Style="{StaticResource OutlineButton}" Padding="8,2" Content="Sign In" Command="{Binding SignInCommand}"
                                     Visibility="{Binding IsSignedInLikely, Converter={StaticResource InverseBoolToVisibility}}"
                                     ToolTip="Opens a terminal with the CLI (API-key variables removed) so you sign in with your subscription" />
-                          </Grid>
+                          </StackPanel>
                         </Border>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -599,24 +603,35 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <Border Style="{StaticResource Card}">
-                          <DockPanel>
-                            <Ellipse Width="9" Height="9" Margin="0,5,10,0" VerticalAlignment="Top">
-                              <Ellipse.Style>
-                                <Style TargetType="Ellipse">
-                                  <Setter Property="Fill" Value="{DynamicResource MutedBrush}" />
-                                  <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsAvailable}" Value="True">
-                                      <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
-                                    </DataTrigger>
-                                  </Style.Triggers>
-                                </Style>
-                              </Ellipse.Style>
-                            </Ellipse>
-                            <StackPanel>
-                              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                          <StackPanel>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <Grid Width="24" Height="24" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Foreground="{DynamicResource MutedBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IconPath, Converter={StaticResource FileIconMissing}}" />
+                                <Image Width="24" Height="24" Source="{Binding IconPath, Converter={StaticResource FileIcon}}" />
+                              </Grid>
+                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Text="{Binding Summary}" />
+                              </StackPanel>
+                              <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
+                                      BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
+                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                              </Border>
+                              <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
+                              </Button>
+                            </Grid>
+                            <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
                               <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Detail}" />
                             </StackPanel>
-                          </DockPanel>
+                          </StackPanel>
                         </Border>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -624,35 +639,85 @@
 
                   <TextBlock Style="{StaticResource SectionTitle}" Text="CHROME EXTENSION" />
                   <Border Style="{StaticResource Card}" DataContext="{Binding Browser}">
-                    <DockPanel>
-                      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-                        <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding OpenFolderCommand}"
-                                ToolTip="Opens the folder Chrome loads the extension from">
-                          <TextBlock Text="Folder" FontSize="11.5" />
-                        </Button>
-                        <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding SetUpCommand}"
-                                ToolTip="Copies the extension folder path and opens chrome://extensions: turn on Developer mode, Load unpacked, paste">
-                          <TextBlock Text="{Binding SetUpText}" FontSize="11.5" />
-                        </Button>
-                      </StackPanel>
-                      <Ellipse Width="9" Height="9" Margin="0,5,10,0" VerticalAlignment="Top">
-                        <Ellipse.Style>
-                          <Style TargetType="Ellipse">
-                            <Setter Property="Fill" Value="{DynamicResource MutedBrush}" />
-                            <Style.Triggers>
-                              <DataTrigger Binding="{Binding IsConnected}" Value="True">
-                                <Setter Property="Fill" Value="{DynamicResource SuccessBrush}" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </Ellipse.Style>
-                      </Ellipse>
-                      <StackPanel>
-                        <TextBlock Text="Mediator for Chrome" FontWeight="SemiBold" />
-                        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Detail}" />
-                      </StackPanel>
-                    </DockPanel>
+                    <StackPanel>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <Grid Width="24" Height="24" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Foreground="{DynamicResource MutedBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IconPath, Converter={StaticResource FileIconMissing}}" />
+                                <Image Width="24" Height="24" Source="{Binding IconPath, Converter={StaticResource FileIcon}}" />
+                              </Grid>
+                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Mediator for Chrome" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Text="Read and use your Chrome tabs; chat in the side panel" />
+                              </StackPanel>
+                              <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
+                                      BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
+                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                              </Border>
+                              <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
+                              </Button>
+                            </Grid>
+                            <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
+                              <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Detail}" />
+                              <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Style="{StaticResource OutlineButton}" Padding="8,2" Command="{Binding SetUpCommand}"
+                                        ToolTip="Prepares the extension folder and copies its path: in chrome://extensions turn on Developer mode, Load unpacked, paste">
+                                  <TextBlock Text="{Binding SetUpText}" FontSize="11.5" />
+                                </Button>
+                                <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding OpenFolderCommand}"
+                                        ToolTip="Opens the folder Chrome loads the extension from">
+                                  <TextBlock Text="Folder" FontSize="11.5" />
+                                </Button>
+                              </StackPanel>
+                            </StackPanel>
+                    </StackPanel>
                   </Border>
+
+                  <TextBlock Style="{StaticResource SectionTitle}" Text="FILE FORMATS (BUILT IN)" />
+                  <ItemsControl ItemsSource="{Binding Formats}" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Border Style="{StaticResource Card}">
+                          <StackPanel>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <Grid Width="24" Height="24" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Foreground="{DynamicResource MutedBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IconPath, Converter={StaticResource FileIconMissing}}" />
+                                <Image Width="24" Height="24" Source="{Binding IconPath, Converter={StaticResource FileIcon}}" />
+                              </Grid>
+                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Text="{Binding Summary}" />
+                              </StackPanel>
+                              <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
+                                      BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
+                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                              </Border>
+                              <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
+                              </Button>
+                            </Grid>
+                            <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
+                              <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Detail}" />
+                            </StackPanel>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
 
                   <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,6,0,0" Command="{Binding ToggleAddCommand}">
@@ -686,16 +751,32 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <Border Style="{StaticResource Card}">
-                          <Grid>
-                            <Grid.ColumnDefinitions>
-                              <ColumnDefinition Width="Auto" />
-                              <ColumnDefinition Width="*" />
-                              <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <CheckBox VerticalAlignment="Top" Margin="0,2,8,0" IsChecked="{Binding IsEnabled}" ToolTip="Offer this server's tools to new jobs" />
-                            <StackPanel Grid.Column="1">
-                              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                              <TextBlock Style="{StaticResource TechLabel}" TextTrimming="CharacterEllipsis" Text="{Binding CommandLine}" ToolTip="{Binding CommandLine}" />
+                          <StackPanel>
+                            <Grid>
+                              <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                              </Grid.ColumnDefinitions>
+                              <Grid Width="24" Height="24" Margin="0,0,10,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Foreground="{DynamicResource MutedBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding IconPath, Converter={StaticResource FileIconMissing}}" />
+                                <Image Width="24" Height="24" Source="{Binding IconPath, Converter={StaticResource FileIcon}}" />
+                              </Grid>
+                              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource TechLabel}" TextTrimming="CharacterEllipsis" Text="{Binding CommandLine}" ToolTip="{Binding CommandLine}" />
+                              </StackPanel>
+                              <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
+                                      BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
+                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                              </Border>
+                              <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
+                              </Button>
+                            </Grid>
+                            <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
                               <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding HealthText}">
                                 <TextBlock.Style>
                                   <Style TargetType="TextBlock">
@@ -710,14 +791,15 @@
                               </TextBlock>
                               <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" MaxHeight="44" Text="{Binding ToolsText}"
                                          Visibility="{Binding ToolsText, Converter={StaticResource EmptyToCollapsed}}" />
+                              <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <CheckBox VerticalAlignment="Center" Margin="0,0,10,0" IsChecked="{Binding IsEnabled}" Content="Enabled" ToolTip="Offer this server's tools to new jobs" />
+                                <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,0,6,0" Content="Check" Command="{Binding PingCommand}" />
+                                <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding RemoveCommand}">
+                                  <TextBlock Text="Remove" Foreground="{DynamicResource DangerBrush}" FontSize="11.5" />
+                                </Button>
+                              </StackPanel>
                             </StackPanel>
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                              <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,0,0,4" Content="Check" Command="{Binding PingCommand}" />
-                              <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding RemoveCommand}">
-                                <TextBlock Text="Remove" Foreground="{DynamicResource DangerBrush}" FontSize="11.5" />
-                              </Button>
-                            </StackPanel>
-                          </Grid>
+                          </StackPanel>
                         </Border>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>

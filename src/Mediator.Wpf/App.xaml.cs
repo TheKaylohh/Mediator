@@ -21,6 +21,7 @@ public partial class App : Application
     private Mutex? _single;
     private Mediator.Core.Browser.BrowserExtensionHost? _browser;
     private MediatorRuntime? _runtime;
+    private Mediator.Core.Browser.BrowserPanelChats? _panelChats;
     private HotkeyManager? _hotkey;
     private TrayIcon? _tray;
 
@@ -51,6 +52,9 @@ public partial class App : Application
             Shutdown(1);
             return;
         }
+
+        // V14.1: the chat in the extension's side panel runs Browser jobs on this runtime.
+        if (_browser is not null) _panelChats = Mediator.Core.Browser.BrowserPanelChats.Attach(_runtime, _browser.Bridge, log);
 
         var dispatcher = new WpfDispatcher(Dispatcher);
         var settings = new JsonSettingsStore(_runtime.Paths.SettingsFile);
@@ -125,6 +129,7 @@ public partial class App : Application
         IsQuitting = true;
         _hotkey?.Dispose();
         _tray?.Dispose();
+        _panelChats?.Dispose();
         if (_runtime is not null) await _runtime.DisposeAsync(); // kills running jobs, stops the bus, closes databases
         if (_browser is not null) await _browser.DisposeAsync();
         _single?.ReleaseMutex();

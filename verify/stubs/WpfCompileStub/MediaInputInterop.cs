@@ -145,6 +145,12 @@ namespace System.Windows.Media.Imaging
     }
 
     public sealed class PngBitmapEncoder : BitmapEncoder { }
+
+    public sealed class BitmapSizeOptions
+    {
+        public static BitmapSizeOptions FromEmptyOptions() => new();
+        public static BitmapSizeOptions FromWidthAndHeight(int pixelWidth, int pixelHeight) => new();
+    }
 }
 
 namespace System.Windows.Input
@@ -177,6 +183,18 @@ namespace System.Windows.Input
         public bool IsRepeat { get; }
     }
     public delegate void KeyEventHandler(object sender, KeyEventArgs e);
+
+    public class MouseEventArgs : InputEventArgs
+    {
+        public Point GetPosition(IInputElement relativeTo) => default;
+    }
+    public delegate void MouseEventHandler(object sender, MouseEventArgs e);
+
+    public class MouseButtonEventArgs : MouseEventArgs
+    {
+        public int ClickCount { get; }
+    }
+    public delegate void MouseButtonEventHandler(object sender, MouseButtonEventArgs e);
 }
 
 namespace System.Windows.Interop
@@ -203,6 +221,11 @@ namespace System.Windows.Interop
         public void AddHook(HwndSourceHook hook) { }
         public void RemoveHook(HwndSourceHook hook) { }
         public void Dispose() { }
+    }
+
+    public static class Imaging
+    {
+        public static Media.Imaging.BitmapSource CreateBitmapSourceFromHIcon(IntPtr icon, Int32Rect sourceRect, Media.Imaging.BitmapSizeOptions sizeOptions) => null;
     }
 
     public sealed class WindowInteropHelper
@@ -312,5 +335,18 @@ namespace Mediator.Verify.WpfStub
             throw new System.IO.IOException($"Cannot locate resource '{uri?.ToString().ToLowerInvariant()}'.");
 
         internal static System.Windows.ResourceDictionary LoadResource(Uri uri) => ResourceLoader(uri);
+    }
+}
+
+namespace System.Windows
+{
+    public struct Int32Rect
+    {
+        public Int32Rect(int x, int y, int width, int height) { X = x; Y = y; Width = width; Height = height; }
+        public static Int32Rect Empty => default;
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
     }
 }

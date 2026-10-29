@@ -19,8 +19,38 @@ public sealed class DefaultProcessLauncher : IProcessLauncher
     public void Start(ProcessStartInfo psi) { using var p = Process.Start(psi); }
 }
 
+/// <summary>V15: the status pill on every connector row: "live" (green), "warn" (amber) or "off" (grey).</summary>
+public static class ConnectorStatus
+{
+    public const string Live = "live", Warn = "warn", Off = "off";
+}
+
+/// <summary>V15: what every Connectors row shows by default (icon, name, one-line summary, status pill); the long
+/// detail text is folded away until the row is clicked.</summary>
+public abstract class ConnectorRowViewModel : ObservableObject
+{
+    private bool _isExpanded;
+    private string _statusText = "Checking";
+    private string _statusKind = ConnectorStatus.Off;
+    private string? _iconPath;
+
+    protected ConnectorRowViewModel() => ToggleCommand = new RelayCommand(() => IsExpanded = !IsExpanded);
+
+    /// <summary>An .exe whose icon is shown, or a file extension (".docx") for the icon of that file type; null: the glyph.</summary>
+    public string? IconPath { get => _iconPath; internal set => SetProperty(ref _iconPath, value); }
+    /// <summary>Segoe MDL2 glyph shown when there is no icon.</summary>
+    public string Glyph { get; protected init; } = "\uE71D";
+    public string StatusText { get => _statusText; internal set => SetProperty(ref _statusText, value); }
+    public string StatusKind { get => _statusKind; internal set { if (SetProperty(ref _statusKind, value)) OnPropertyChanged(nameof(IsLive)); } }
+    public bool IsLive => StatusKind == ConnectorStatus.Live;
+    public bool IsExpanded { get => _isExpanded; set => SetProperty(ref _isExpanded, value); }
+    public RelayCommand ToggleCommand { get; }
+
+    internal void SetStatus(string text, string kind) { StatusText = text; StatusKind = kind; }
+}
+
 /// <summary>A CLI row in the Connectors tab: version, sign-in state, usage-limit cooldown, [ Sign In ].</summary>
-public sealed class CliConnectorViewModel : ObservableObject
+public sealed class CliConnectorViewModel : ConnectorRowViewModel
 {
     private string _version = "checking…";
     private string _auth = "";
@@ -34,6 +64,7 @@ public sealed class CliConnectorViewModel : ObservableObject
         Id = id;
         Name = name;
         Subscription = subscription;
+        Glyph = "\uE756";
         SignInCommand = new RelayCommand(() => signIn(this), () => IsInstalled);
     }
 
@@ -53,19 +84,42 @@ public sealed class CliConnectorViewModel : ObservableObject
     public RelayCommand SignInCommand { get; }
 }
 
-/// <summary>A desktop app row: SolidWorks, DaVinci Resolve, Blender.</summary>
-public sealed class AppConnectorViewModel(string id, string name) : ObservableObject
+/// <summary>A desktop app row (SolidWorks, DaVinci Resolve, Blender, Word, Excel, PowerPoint, Outlook) or, V15, a file
+/// format the Mediator handles itself (always live).</summary>
+public sealed class AppConnectorViewModel : ConnectorRowViewModel
 {
     private string _detail = "checking…";
     private bool _isAvailable;
-    public string Id { get; } = id;
-    public string Name { get; } = name;
+
+    public AppConnectorViewModel(string id, string name, string summary = "", string glyph = "\uE7F8", string? iconPath = null)
+    {
+        Id = id;
+        Name = name;
+        Summary = summary;
+        Glyph = glyph;
+        IconPath = iconPath;
+    }
+
+    public string Id { get; }
+    public string Name { get; }
+    /// <summary>What it is for, in a few words ("Parts, assemblies, drawings").</summary>
+    public string Summary { get; }
     public string Detail { get => _detail; internal set => SetProperty(ref _detail, value); }
     public bool IsAvailable { get => _isAvailable; internal set => SetProperty(ref _isAvailable, value); }
+
+    internal void Apply(AppStatus status)
+    {
+        Detail = status.Detail;
+        IsAvailable = status.Available;
+        if (status.Executable is not null) IconPath = status.Executable;
+        if (status.Available) SetStatus(status.Detail.StartsWith("running", StringComparison.Ordinal) ? "Running" : "Live", ConnectorStatus.Live);
+        else if (status.Executable is not null) SetStatus("Set up needed", ConnectorStatus.Warn);
+        else SetStatus(status.Detail == "Windows only" ? "Windows only" : "Not installed", ConnectorStatus.Off);
+    }
 }
 
 /// <summary>A custom MCP server row.</summary>
-public sealed class McpServerViewModel : ObservableObject
+public sealed class McpServerViewModel : ConnectorRowViewModel
 {
     private bool _isEnabled;
     private readonly Action<McpServerViewModel, bool> _setEnabled;
@@ -73,6 +127,7 @@ public sealed class McpServerViewModel : ObservableObject
     internal McpServerViewModel(CustomMcpServer server, Action<McpServerViewModel, bool> setEnabled, Action<McpServerViewModel> remove, Func<McpServerViewModel, Task> ping)
     {
         Name = server.Name;
+        Glyph = "\uE943";
         _setEnabled = setEnabled;
         Update(server);
         RemoveCommand = new RelayCommand(() => remove(this));
@@ -106,6 +161,9 @@ public sealed class McpServerViewModel : ObservableObject
         };
         ToolsText = server.ToolNames.Count == 0 ? "" : string.Join(", ", server.ToolNames.Select(t => CustomMcpService.ExposedName(server.Name, t)));
         _isEnabled = server.Enabled;
+        if (!server.Enabled) SetStatus("Off", ConnectorStatus.Off);
+        else if (IsHealthy) SetStatus("Live", ConnectorStatus.Live);
+        else SetStatus(server.LastPing is null ? "Not checked" : "Failing", ConnectorStatus.Warn);
         OnPropertyChanged(nameof(CommandLine));
         OnPropertyChanged(nameof(HealthText));
         OnPropertyChanged(nameof(IsHealthy));
@@ -144,9 +202,19 @@ public sealed class ConnectorsViewModel : ObservableObject
         _launcher = launcher ?? DefaultProcessLauncher.Instance;
         Clis.Add(new CliConnectorViewModel("claude", "Claude Code CLI", "Claude Pro", SignIn));
         Clis.Add(new CliConnectorViewModel("agy", "Antigravity CLI", "Google AI Pro", SignIn));
-        Apps.Add(new AppConnectorViewModel("solidworks", "SolidWorks"));
-        Apps.Add(new AppConnectorViewModel("resolve", "DaVinci Resolve"));
-        Apps.Add(new AppConnectorViewModel("blender", "Blender"));
+        Apps.Add(new AppConnectorViewModel("solidworks", "SolidWorks", "Parts, assemblies, drawings, STEP import and export", "\uF158"));
+        Apps.Add(new AppConnectorViewModel("resolve", "DaVinci Resolve", "Video timelines from your clips", "\uE714"));
+        Apps.Add(new AppConnectorViewModel("blender", "Blender", "3D scenes and renders", "\uF158"));
+        Apps.Add(new AppConnectorViewModel("word", "Microsoft Word", "Open the documents Mediator writes", "\uE8A5"));
+        Apps.Add(new AppConnectorViewModel("excel", "Microsoft Excel", "Open the workbooks Mediator writes", "\uE80A"));
+        Apps.Add(new AppConnectorViewModel("powerpoint", "Microsoft PowerPoint", "Open the decks Mediator writes", "\uE8A1"));
+        Apps.Add(new AppConnectorViewModel("outlook", "Microsoft Outlook", "Search and read mail, write drafts, calendar", "\uE715"));
+        foreach (var (id, name, summary, glyph, ext, detail) in FileFormatCatalog)
+        {
+            var row = new AppConnectorViewModel(id, name, summary, glyph, ext) { Detail = detail, IsAvailable = true };
+            row.SetStatus("Built in", ConnectorStatus.Live);
+            Formats.Add(row);
+        }
         Browser = new BrowserExtensionViewModel(browser, ui, _launcher, copyText);
         RefreshCommand = new RelayCommand(() => _ = RefreshAsync(), () => !IsBusy);
         ToggleAddCommand = new RelayCommand(() => IsAddOpen = !IsAddOpen, () => _mcp is not null);
@@ -162,6 +230,33 @@ public sealed class ConnectorsViewModel : ObservableObject
     public ObservableCollection<CliConnectorViewModel> Clis { get; } = new();
     public ObservableCollection<AppConnectorViewModel> Apps { get; } = new();
     public ObservableCollection<McpServerViewModel> McpServers { get; } = new();
+    /// <summary>V15: file types the Mediator reads and writes itself, with no other program.</summary>
+    public ObservableCollection<AppConnectorViewModel> Formats { get; } = new();
+
+    /// <summary>V15: the built-in file formats (id, name, summary, glyph, extension whose icon is shown, detail).</summary>
+    public static readonly IReadOnlyList<(string Id, string Name, string Summary, string Glyph, string Extension, string Detail)> FileFormatCatalog =
+    [
+        ("office-files", "Word, Excel, PowerPoint files", ".docx  .xlsx  .pptx", "\uE8A5", ".docx",
+            "Read any .docx, .xlsx or .pptx (text, tables, sheets, slides and notes) and create new ones from headings, tables, sheets and slides. Office does not need to be installed. Old .doc/.xls/.ppt files: save them in the new format first. Try: /office make a budget spreadsheet for a trip."),
+        ("meshes", "3D meshes", ".stl  .obj  .ply  .3mf", "\uF158", ".stl",
+            "Size in mm, triangle count, area, volume, watertight or open edges, inside-out normals and unit hints; convert between formats, scale, change units (inch to mm) and centre. The original is never changed."),
+        ("step-iges", "STEP and IGES models", ".step  .stp  .iges  .igs", "\uF158", ".step",
+            "Which program wrote it, units, part names, solids or surfaces, approximate size. To edit or turn one into an STL, SolidWorks imports it."),
+        ("profiles", "2D profiles", ".dxf  .svg", "\uE70F", ".dxf",
+            "Outlines, circles and size of a DXF or SVG drawing, and extruding it into a SolidWorks part."),
+        ("pdf-images", "PDFs and images", ".pdf  .png  .jpg", "\uE8B9", ".pdf",
+            "Attach images and the model sees them; PDF chapters are read by the tutor. Drop or paste them into the chat."),
+    ];
+
+    /// <summary>V15: "9 of 15 live" over every row in the tab.</summary>
+    public string LiveSummary
+    {
+        get
+        {
+            var rows = Clis.Cast<ConnectorRowViewModel>().Concat(Apps).Append(Browser).Concat(Formats).Concat(McpServers).ToList();
+            return $"{rows.Count(r => r.IsLive)} of {rows.Count} live";
+        }
+    }
     /// <summary>V13: the Mediator for Chrome card.</summary>
     public BrowserExtensionViewModel Browser { get; }
 
@@ -213,11 +308,26 @@ public sealed class ConnectorsViewModel : ObservableObject
                     cli.IsSignedInLikely = tool.Found && cred == CredentialState.FilePresent;
                     cli.CooldownText = until is { } u ? "usage limit until " + u.ToLocalTime().ToString("ddd HH:mm", CultureInfo.InvariantCulture) : "";
                     cli.NeedsAttention = !cli.IsSignedInLikely || until is not null;
+                    cli.IconPath = tool.Path;
+                    if (!tool.Found) cli.SetStatus("Not installed", ConnectorStatus.Off);
+                    else if (until is not null) cli.SetStatus("At usage limit", ConnectorStatus.Warn);
+                    else if (!cli.IsSignedInLikely) cli.SetStatus("Sign in needed", ConnectorStatus.Warn);
+                    else cli.SetStatus("Live", ConnectorStatus.Live);
                 });
             }
-            foreach (var (app, status) in Apps.Zip(new[] { _probe.SolidWorks(), _probe.Resolve(), _probe.Blender() }))
-                _ui.Post(() => { app.Detail = status.Detail; app.IsAvailable = status.Available; });
+            foreach (var app in Apps)
+            {
+                var status = app.Id switch
+                {
+                    "solidworks" => _probe.SolidWorks(),
+                    "resolve" => _probe.Resolve(),
+                    "blender" => _probe.Blender(),
+                    _ => _probe.Office(app.Id),
+                };
+                _ui.Post(() => app.Apply(status));
+            }
             _ui.Post(Browser.Update);
+            _ui.Post(() => OnPropertyChanged(nameof(LiveSummary)));
             _ui.Post(() => Status = "Checked " + DateTimeOffset.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
         }
         finally
@@ -304,6 +414,7 @@ public sealed class ConnectorsViewModel : ObservableObject
             else McpServers.Add(new McpServerViewModel(s, SetEnabled, Remove, PingAsync));
         }
         OnPropertyChanged(nameof(HasMcpServers));
+        OnPropertyChanged(nameof(LiveSummary));
     }
 
     private void SetEnabled(McpServerViewModel row, bool enabled)

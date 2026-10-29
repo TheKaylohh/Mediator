@@ -691,9 +691,10 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         bool terminal = UseTerminal || text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase) || text.Contains("claude-terminal", StringComparison.OrdinalIgnoreCase);
         if (text.StartsWith("/terminal", StringComparison.OrdinalIgnoreCase)) text = text[9..].Trim();
         // "/search …" and "/ask …" force a web search or a plain answer: no action tile, no folder, no local tools.
-        if (!terminal && ProviderRouter.ParsePrefix(text) is { Category: TaskCategory.Search or TaskCategory.Chat } ask)
+        if (!terminal && ProviderRouter.ParsePrefix(text) is { Category: TaskCategory.Search or TaskCategory.Chat or TaskCategory.Office } ask)
         {
-            if (ask.Remainder.Length > 0) _ = RunAssistantAsync(ask.Remainder, provider, [], ask.Category);
+            // V15: "/office …" and "/outlook …" have no tile: an assistant job with the Office tools.
+            if (ask.Remainder.Length > 0) _ = RunAssistantAsync(ask.Remainder, provider, ask.Category == TaskCategory.Office ? JobSpecFactory.OfficeTools : [], ask.Category);
             return;
         }
         var tile = Route(text);
@@ -705,7 +706,10 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         string body = PromptBody(text);
         var (tools, category) = JobSpecFactory.InferToolsAndCategory(body, _activeApp);
         string? folder = ResolveFolder(body);
-        bool specific = category != TaskCategory.Browser && tile.Id != "claude-terminal" && (!tile.NeedsFolder || folder is not null) && tools.All(t => tile.Tools.Contains(t));
+        // V14.1: a CAD tile runs only for a CAD request. Tile keywords match inside words ("material" has "mate", "github"
+        // has "hub", "step" and "create" are everywhere in code talk), and a CAD tile starts SolidWorks.
+        bool specific = category != TaskCategory.Browser && tile.Id != "claude-terminal" && (!tile.NeedsFolder || folder is not null) && tools.All(t => tile.Tools.Contains(t))
+            && (tile.Category != TaskCategory.Cad || category == TaskCategory.Cad);
         if (specific) _ = RunActionAsync(tile, body, provider);
         else _ = RunAssistantAsync(body, provider, tools, category);
     }
@@ -1332,7 +1336,8 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
                 if (job.State != JobState.Succeeded && turn.ResponseText.Length == 0) { turn.IsError = true; turn.ResponseText = job.Detail ?? job.State.ToString(); }
             }
         }
-        if (!item.IsActive && ContinuableSession.From(job) is { } session && (Continuation is null || Continuation.Session.EndedAt <= session.EndedAt))
+        if (!item.IsActive && job.Spec.Kind != Mediator.Core.Browser.BrowserPanelChats.Kind // V14.1: the side panel keeps its own chats
+            && ContinuableSession.From(job) is { } session && (Continuation is null || Continuation.Session.EndedAt <= session.EndedAt))
             Continuation = new ContinuationViewModel(_lastSession = session);
         if (!item.IsActive && TurnFor(job.JobId) is not null) SaveChat();
         if (!item.IsActive)

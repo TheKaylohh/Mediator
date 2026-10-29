@@ -20,6 +20,9 @@
       <local:BoolToVisibilityConverter x:Key="InverseBoolToVisibility" Invert="True" />
       <local:EmptyToVisibilityConverter x:Key="EmptyToCollapsed" />
       <local:JobStateToBrushConverter x:Key="JobStateBrush" />
+      <local:FileIconConverter x:Key="FileIcon" />
+      <local:FileIconConverter x:Key="FileIconMissing" Missing="True" />
+      <local:StatusKindToBrushConverter x:Key="StatusBrush" />
 
       <!-- Flat button: transparent until hovered. -->
       <Style x:Key="FlatButton" TargetType="Button">

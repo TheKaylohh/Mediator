@@ -193,6 +193,8 @@ public sealed record RuntimeOptions
     public IDesktopAppSession? SolidWorksSession { get; init; }
     /// <summary>V11: starts Chrome for Browser jobs. Null: the real Chrome on Windows unless simulating (tests), else nothing.</summary>
     public IDesktopAppSession? ChromeSession { get; init; }
+    /// <summary>V15: classic desktop Outlook for the outlook_* tools. Null: the real one (it reports itself unavailable off Windows).</summary>
+    public Office.IOutlookClient? Outlook { get; init; }
     /// <summary>V13: the Mediator for Chrome extension bridge (started by the overlay). Null: browser_* tools report it unavailable and
     /// Browser jobs use Claude in Chrome.</summary>
     public Browser.ChromeBridgeServer? BrowserBridge { get; init; }
@@ -396,6 +398,8 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             ? CadCode.SandboxPython.Probe(local.Executable) : null);
         Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
+        Tools.Register(new Office.OfficeToolProvider(options.Outlook)); // V15: Word, Excel, PowerPoint files and classic Outlook
+        Tools.Register(new CadFiles.CadFileToolProvider());             // V15: STL/OBJ/PLY/3MF, STEP, IGES, DXF/SVG
         Tools.Register(new OperationsToolProvider(operations));
         Tools.Register(Briefs);
         Tools.Register(Attachments);
@@ -526,9 +530,10 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
                 route.Original, route.Provider, route.Reason).ConfigureAwait(false);
         }
         PrepareRoots(spec);
-        // A job that will drive SolidWorks starts it now, so it is loading while the model reads and plans.
-        if (spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t)))
-            SolidWorks.WarmUp();
+        // A job that will drive SolidWorks starts it now, so it is loading while the model reads and plans. V14.1: only when
+        // this request asks for SolidWorks (an action tile, or CAD words in what the user typed). A follow-up in a chat that
+        // once used CAD keeps the tools, and SolidWorks starts on the first SolidWorks tool call if the model needs it.
+        if (WarmsSolidWorks(spec)) SolidWorks.WarmUp();
         // The user's own words always reach the model, whatever template the action used (Assemble had no slot for them).
         spec = spec with { Prompt = JobSpecFactory.WithUserText(spec) };
         if (spec.Attachments.Count > 0) spec = spec with { Prompt = spec.Prompt + AttachmentPromptSuffix(spec.Attachments) };
@@ -972,6 +977,14 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     private bool ExtensionAvailable() =>
         BrowserBridge is { } b && (b.IsConnected || Browser.BrowserExtension.EverConnected(Paths.DataDirectory));
 
+    /// <summary>
+    /// V14.1: SolidWorks is started ahead of the model only for a SolidWorks action (Assemble, parametric parts) or a request
+    /// whose own words ask for CAD. Having the CAD tools is not enough: a follow-up in a chat that once used CAD keeps them.
+    /// </summary>
+    public static bool WarmsSolidWorks(JobSpec spec) =>
+        spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t))
+        && (spec.Kind is "assemble" or "codecad" || JobSpecFactory.AsksForSolidWorks(spec.UserText ?? spec.Prompt));
+
     /// <summary>V13: when an extension job ends, the extension detaches from its tabs (Chrome's "is debugging" bar goes away).</summary>
     private void ReleaseBrowser(RunningJob job)
     {
@@ -1041,7 +1054,14 @@ public static partial class JobSpecFactory
         SwxPartToolProvider.SessionTool, SwxPartToolProvider.DocumentTool, SwxPartToolProvider.ExportTool, // open/save/close, STEP/STL/PDF
         CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, // code → STEP → part
         SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool,                  // part cards → assembly
+        CadFiles.CadFileToolProvider.InspectTool, CadFiles.CadFileToolProvider.ConvertTool, // V15: read and convert CAD files
     ];
+
+    /// <summary>V15: CAD files without SolidWorks: inspect meshes, STEP, IGES and profiles; convert meshes.</summary>
+    public static readonly string[] CadFileTools = CadFiles.CadFileToolProvider.Names;
+
+    /// <summary>V15: Word, Excel and PowerPoint files, and classic Outlook mail and calendar.</summary>
+    public static readonly string[] OfficeTools = Office.OfficeToolProvider.Names;
 
     /// <summary>
     /// Turns (model replies, one per tool call) a CAD job may take: several parts, their fixes and version iterations,

@@ -155,6 +155,31 @@ static class OverlayTests
         }
     }
 
+    /// <summary>V14.1: the Chrome side panel chat on the app side, without a CLI: the start fails and the panel is told why.</summary>
+    public static async Task PanelChatErrors()
+    {
+        var rt = new FakeRuntime();
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<JsonObject>();
+        using var chats = new Mediator.Core.Browser.BrowserPanelChats(rt, m => { sent.Enqueue(m); return Task.CompletedTask; });
+        chats.Handle(new JsonObject { ["type"] = "panel_chat", ["chatId"] = "", ["text"] = "hi" });
+        chats.Handle(new JsonObject { ["type"] = "panel_chat", ["chatId"] = "c1", ["text"] = "   " });
+        chats.Handle(new JsonObject { ["type"] = "something_else", ["chatId"] = "c1" });
+        await Task.Delay(50);
+        Check.True(rt.Started.Count == 0 && sent.IsEmpty, "no chat id, empty text or an unknown type: nothing runs");
+
+        chats.Handle(new JsonObject { ["type"] = "panel_chat", ["chatId"] = "c1", ["text"] = "help me answer this", ["tab"] = new JsonObject { ["id"] = 7, ["url"] = "https://example.org/q", ["title"] = "Q" } });
+        for (int i = 0; i < 100 && sent.IsEmpty; i++) await Task.Delay(10);
+        Check.True(rt.Started.Count == 1 && rt.Started[0].Kind == Mediator.Core.Browser.BrowserPanelChats.Kind && rt.Started[0].Category == TaskCategory.Browser,
+            "a panel message starts a Browser job of the panel's kind");
+        Check.True(sent.TryDequeue(out var err) && (string?)err["kind"] == "error" && (string?)err["chatId"] == "c1"
+            && ((string?)err["text"] ?? "").Contains("not on PATH", StringComparison.Ordinal), "a failed start is reported to the panel with the reason");
+        chats.Handle(new JsonObject { ["type"] = "panel_stop", ["chatId"] = "c1" });
+        chats.Handle(new JsonObject { ["type"] = "panel_reset", ["chatId"] = "c1" });
+        chats.Handle(new JsonObject { ["type"] = "panel_chat", ["chatId"] = "c1", ["text"] = "again" });
+        for (int i = 0; i < 100 && sent.IsEmpty; i++) await Task.Delay(10);
+        Check.True(rt.Started.Count == 2 && !sent.IsEmpty, "after a failure the chat takes the next message (not stuck as busy)");
+    }
+
     /// <summary>Zero-token routing, context chips, folder resolution, provider pills, banners.</summary>
     public static async Task RoutingAndContext()
     {
@@ -535,6 +560,15 @@ static class OverlayTests
         Check.True(!gemini.SignInCommand.CanExecute(null) && claude.SignInCommand.CanExecute(null), "Sign In only for installed CLIs");
         Check.True(c.Apps.Single(x => x.Id == "solidworks") is { IsAvailable: true } sw && sw.Detail.Contains("PID 4242", StringComparison.Ordinal), "SolidWorks PID");
         Check.True(!c.Apps.Single(x => x.Id == "blender").IsAvailable, "Blender missing");
+        // V15: every connector is listed, live or not, with a short status; details are folded away by default.
+        Check.True(new[] { "word", "excel", "powerpoint", "outlook" }.All(id => c.Apps.Any(x => x.Id == id)), "Office apps listed");
+        Check.True(c.Apps.Single(x => x.Id == "outlook") is { IsLive: false, StatusText: "Not installed" }, "an unchecked Office app is shown as not live");
+        Check.True(c.Apps.Single(x => x.Id == "solidworks") is { IsLive: true, StatusText: "Running", IsExpanded: false }, "SolidWorks: Running pill, details folded");
+        Check.True(c.Formats.Count >= 5 && c.Formats.All(f => f.IsLive && f.IconPath!.StartsWith('.')), "built-in file formats are live, with their file-type icon");
+        Check.True(claude.StatusText == "At usage limit" && claude.IconPath == "/usr/bin/claude" && gemini.StatusText == "Not installed", "CLI pills: " + claude.StatusText);
+        Check.True(System.Text.RegularExpressions.Regex.IsMatch(c.LiveSummary, @"^\d+ of \d+ live$"), "live summary: " + c.LiveSummary);
+        c.Apps[0].ToggleCommand.Execute(null);
+        Check.True(c.Apps[0].IsExpanded, "the chevron opens the details");
 
         claude.SignInCommand.Execute(null);
         Check.True(launcher.Started.Single().ArgumentList.Contains("claude") && c.Status.Contains("/login", StringComparison.Ordinal), "Sign In opens a terminal and explains /login");
@@ -811,6 +845,14 @@ static class OverlayTests
         Check.True(JobSpecFactory.InferToolsAndCategory(pptx, null) is { Category: TaskCategory.Search, Tools.Count: 0 }, "pptx troubleshooting → Search, no tools");
         Check.True(ProviderRouter.Route(TaskCategory.Search, null, false, _ => null, _ => true).Provider == AiProvider.ClaudeCode, "Search → Claude Code first (allowable WebSearch)");
         Check.True(JobSpecFactory.InferToolsAndCategory("estimate the climate impact, mostly in summer", null).Category == TaskCategory.Chat, "word-start keywords: estimate/mostly are not mate/stl");
+        // V14.1: code talk is not CAD (each of these started SolidWorks): .NET assemblies, materials, C++'s STL.
+        foreach (string code in new[] { "load the plugin assembly at startup and update the code", "change the material colour in the theme", "use an stl vector instead of the array" })
+            Check.True(JobSpecFactory.InferToolsAndCategory(code, null).Category != TaskCategory.Cad && !JobSpecFactory.AsksForSolidWorks(code), $"'{code}' is not a CAD request");
+        Check.True(JobSpecFactory.InferToolsAndCategory("export the bracket as an stl file", null).Category == TaskCategory.Cad, "an STL file is still CAD");
+        // SolidWorks is started early only when this request asks for it, not because an earlier turn used CAD.
+        var cadChat = JobSpecFactory.Assistant(null, "mate the bracket to the plate in solidworks", LaunchMode.Headless, JobSpecFactory.CadTools, TaskCategory.Cad);
+        Check.True(MediatorRuntime.WarmsSolidWorks(cadChat) && !MediatorRuntime.WarmsSolidWorks(cadChat with { UserText = "now fix the null check in my C# code" })
+            && !MediatorRuntime.WarmsSolidWorks(JobSpecFactory.Assistant(null, "what is a fillet", LaunchMode.Headless, [], TaskCategory.Chat)), "SolidWorks warm-up only for SolidWorks requests");
         Check.True(JobSpecFactory.InferToolsAndCategory("organize my downloads", null).Category == TaskCategory.Files
             && JobSpecFactory.InferToolsAndCategory(@"summarise C:\reports\q3", null).Category == TaskCategory.Files, "explicit files or a path → Files");
         Check.True(ProviderRouter.ParsePrefix("/search excel links blank") == (TaskCategory.Search, "excel links blank") && ProviderRouter.ParsePrefix("/ask hi") == (TaskCategory.Chat, "hi"), "/search and /ask");

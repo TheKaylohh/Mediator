@@ -32,12 +32,73 @@ function setStatus(state, detail = '') {
   chrome.action.setBadgeText({ text: badge[0] }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ color: badge[1] }).catch(() => {});
   chrome.action.setTitle({ title: 'Mediator: ' + state + (detail ? ' - ' + detail : '') }).catch(() => {});
+  broadcast({ type: 'status', ...status, version: VERSION });
 }
+
+// ---------------------------------------------------------------------------------------------- side panel chat
+//
+// The side panel (sidepanel.html) talks to this worker over ports named "panel". Its messages go to Mediator as
+// panel_chat / panel_stop / panel_reset; Mediator's panel_event messages come back and go to every open panel (each
+// keeps only its own chatId). The events of each chat's latest message are kept so a reopened panel can catch up.
+
+const panelPorts = new Set();
+const panelEvents = new Map();   // chatId -> events since its latest message
+const MAX_KEPT_CHATS = 20;
+
+function broadcast(msg) { for (const p of panelPorts) { try { p.postMessage(msg); } catch { panelPorts.delete(p); } } }
+
+function sendToMediator(msg) {
+  if (!socket || socket.readyState !== WebSocket.OPEN || status.state !== 'connected') return false;
+  socket.send(JSON.stringify(msg));
+  return true;
+}
+
+function keepEvent(ev) {
+  const list = panelEvents.get(ev.chatId);
+  if (list) list.push(ev);
+}
+
+// Clicking the toolbar icon opens the panel (Chrome 116+).
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'panel' || port.sender?.id !== chrome.runtime.id) return;
+  panelPorts.add(port);
+  port.postMessage({ type: 'status', ...status, version: VERSION });
+  port.onDisconnect.addListener(() => panelPorts.delete(port));
+  port.onMessage.addListener(msg => {
+    if (!msg || typeof msg.chatId !== 'string' && msg.type !== 'reconnect') return;
+    switch (msg.type) {
+      case 'chat': {
+        panelEvents.delete(msg.chatId);
+        panelEvents.set(msg.chatId, []);
+        while (panelEvents.size > MAX_KEPT_CHATS) panelEvents.delete(panelEvents.keys().next().value);
+        const sent = sendToMediator({ type: 'panel_chat', chatId: msg.chatId, text: String(msg.text || ''), tab: msg.tab || null });
+        if (!sent) {
+          const ev = { type: 'panel_event', chatId: msg.chatId, kind: 'error', text: 'Mediator is not connected. Start the Mediator app on this PC, then try again.' };
+          keepEvent(ev);
+          port.postMessage(ev);
+        }
+        break;
+      }
+      case 'stop': sendToMediator({ type: 'panel_stop', chatId: msg.chatId }); break;
+      case 'reset': panelEvents.delete(msg.chatId); sendToMediator({ type: 'panel_reset', chatId: msg.chatId }); break;
+      case 'replay': {
+        const list = panelEvents.get(msg.chatId);
+        if (!list) port.postMessage({ type: 'replay_missing', chatId: msg.chatId });
+        else for (const ev of list) port.postMessage(ev);
+        break;
+      }
+      case 'reconnect': backoff = 1000; if (socket) socket.close(); else connect(); break;
+    }
+  });
+});
 
 async function loadPairing() {
   let res;
   try { res = await fetch(chrome.runtime.getURL('pairing.json'), { cache: 'no-store' }); } catch { res = null; }
-  if (!res || !res.ok) throw new Error('Not paired yet: in Mediator open Connectors > Chrome extension > Set up.');
+  if (!res || !res.ok) throw new Error('No pairing file in the folder Chrome loaded this extension from. Mediator pairs only the copy in '
+    + '%LOCALAPPDATA%\\Mediator\\chrome-extension: at chrome://extensions remove this one, then Load unpacked that folder (Set up in Mediator copies its path).');
   const p = await res.json();
   if (!p || typeof p.token !== 'string' || p.token.length < 32 || !Number.isInteger(p.port)) throw new Error('pairing.json is incomplete; press Set up in Mediator again.');
   return p;
@@ -104,6 +165,7 @@ async function connect() {
       return;
     }
     if (msg.type === 'pong' || msg.type === 'ping') { if (msg.type === 'ping') ws.send('{"type":"pong"}'); return; }
+    if (msg.type === 'panel_event' && typeof msg.chatId === 'string') { keepEvent(msg); broadcast(msg); return; }
     if (msg.id !== undefined && typeof msg.method === 'string') handleRequest(ws, msg);
   };
   ws.onerror = () => {}; // onclose follows with the details
@@ -128,7 +190,7 @@ chrome.alarms.onAlarm.addListener(a => { if (a.name === 'mediator-reconnect') co
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
 
-// The popup asks for the status and can force a reconnect.
+// Older panels (and tests) ask for the status or a reconnect with one-off messages.
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return false;
   if (msg && msg.type === 'status') { reply({ ...status, version: VERSION }); return false; }

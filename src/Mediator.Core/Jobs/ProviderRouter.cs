@@ -13,7 +13,7 @@ public enum AiProvider { ClaudeCode, GeminiCli }
 /// Files and the app categories = only the Mediator tools of that category, through the approval gate.
 /// </summary>
 /// <summary>Browser (V11): work in the user's Chrome through Claude in Chrome (Claude Code only).</summary>
-public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat, Search, Browser }
+public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat, Search, Browser, Office }
 
 /// <summary>V10: which subscription goes first when the user did not pick one. AutoBest = per-category defaults.</summary>
 public enum RoutingPolicy { AutoBest, ConserveClaude, PreferClaude }
@@ -132,6 +132,7 @@ public static class ProviderRouter
         ["/cad"] = TaskCategory.Cad, ["/code"] = TaskCategory.Code, ["/files"] = TaskCategory.Files,
         ["/tutor"] = TaskCategory.Tutor, ["/resolve"] = TaskCategory.Resolve, ["/blender"] = TaskCategory.Blender,
         ["/search"] = TaskCategory.Search, ["/ask"] = TaskCategory.Chat, ["/chrome"] = TaskCategory.Browser, ["/browser"] = TaskCategory.Browser,
+        ["/office"] = TaskCategory.Office, ["/outlook"] = TaskCategory.Office,
     };
 
     /// <summary>What the chat badge calls a category ("Search", "Chat", "Files", ...).</summary>

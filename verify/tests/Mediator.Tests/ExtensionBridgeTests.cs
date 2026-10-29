@@ -20,6 +20,7 @@ static class ExtensionBridgeTests
     {
         public readonly ClientWebSocket Ws = new();
         public readonly ConcurrentQueue<JsonObject> Requests = new();
+        public readonly ConcurrentQueue<JsonObject> Notes = new();
         public Func<string, JsonObject, JsonNode?> Answer = (_, _) => new JsonObject { ["ok"] = true };
         Task? _loop;
 
@@ -46,6 +47,7 @@ static class ExtensionBridgeTests
             {
                 JsonNode? msg;
                 try { msg = await ReceiveAsync(); } catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or IOException or ObjectDisposedException) { return; }
+                if (msg is JsonObject note && note["method"] is null && note["type"] is not null) { Notes.Enqueue(note); continue; }
                 if (msg is not JsonObject o || o["method"] is null) continue;
                 Requests.Enqueue(o);
                 var result = Answer((string)o["method"]!, (JsonObject)o["params"]!);
@@ -181,6 +183,66 @@ static class ExtensionBridgeTests
         Check.True(!BrowserExtension.EverConnected(data), "not connected yet");
         BrowserExtension.MarkConnected(data);
         Check.True(BrowserExtension.EverConnected(data), "remembered after the first pairing");
+    }
+
+    /// <summary>V14.1: the side panel chat's messages both ways over the paired connection, and how a panel message becomes a job.</summary>
+    public static async Task PanelChatMessages()
+    {
+        await using var server = new ChromeBridgeServer(Token, BrowserExtension.Origin, firstPort: 0);
+        server.Start();
+        var got = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.ExtensionMessage += m => got.TrySetResult(m);
+        Check.True(!await server.NotifyAsync(new JsonObject { ["type"] = "panel_event" }), "nothing connected: a notice is not sent");
+        await using var ext = await FakeExtension.ConnectAsync(server.Port);
+        await ext.SendAsync(new JsonObject { ["type"] = "panel_chat", ["chatId"] = "c1", ["text"] = "teach me this" });
+        var msg = await got.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Check.True((string?)msg["type"] == "panel_chat" && (string?)msg["text"] == "teach me this", "a message the extension starts reaches Mediator");
+        Check.True(await server.NotifyAsync(new JsonObject { ["type"] = "panel_event", ["chatId"] = "c1", ["kind"] = "done", ["text"] = "ok" }), "Mediator sends a notice");
+        for (int i = 0; i < 100 && ext.Notes.IsEmpty; i++) await Task.Delay(20);
+        Check.True(ext.Notes.TryDequeue(out var note) && (string?)note["kind"] == "done", "the extension receives it");
+
+        var tab = new JsonObject { ["id"] = 42, ["url"] = "https://www.w3schools.com/quiztest/", ["title"] = "W3Schools \"Quiz\"" };
+        var first = BrowserPanelChats.SpecFor("Teach me this", tab, null, [], Path.GetTempPath());
+        Check.True(first.Kind == BrowserPanelChats.Kind && first.Category == TaskCategory.Browser && first.Roots.Count == 0 && first.Tools.Count == 0
+            && first.UserText == "Teach me this" && first.Prompt.Contains(ClaudeInChrome.Guidance, StringComparison.Ordinal)
+            && first.Prompt.Contains("tab 42", StringComparison.Ordinal) && first.Prompt.Contains("w3schools.com/quiztest", StringComparison.Ordinal)
+            && first.Prompt.Contains("do not pick or submit answers", StringComparison.Ordinal), "a panel message: a Browser job about the tab beside the panel, teach mode rules");
+        var session = new ContinuableSession("turn-x", AiProvider.GeminiCli, first.WorkingDirectory, "chrome-panel-1", first, DateTimeOffset.Now) { LastResponseText = "A loop repeats code." };
+        var next = BrowserPanelChats.SpecFor("now quiz me", tab, session, [new JobSpecFactory.ConversationTurn("Teach me this", "A loop repeats code.")], Path.GetTempPath());
+        Check.True(next.Kind == BrowserPanelChats.Kind && next.Category == TaskCategory.Browser && next.UserText == "now quiz me"
+            && next.Prompt.Contains("A loop repeats code.", StringComparison.Ordinal) && next.Prompt.Contains(ClaudeInChrome.Guidance, StringComparison.Ordinal), "a follow-up carries the chat so far");
+        Check.True(BrowserPanelChats.StepName("mcp__mediator__browser_click") == "click" && BrowserPanelChats.StepName("navigate") == "navigate", "step names");
+    }
+
+    /// <summary>Chrome's profiles say where the extension was loaded from; a copy outside the install folder is flagged.</summary>
+    public static void WrongFolderDetected()
+    {
+        string userData = RuntimeTests.TempDir();
+        string install = BrowserExtension.InstallDirectory(RuntimeTests.TempDir());
+        string repo = Path.Combine(RuntimeTests.TempDir(), "chrome-extension");
+        Check.Equal(0, BrowserExtension.LoadedFrom(Path.Combine(userData, "missing")).Count, "no Chrome: nothing loaded");
+
+        void Profile(string name, string file, string? path)
+        {
+            Directory.CreateDirectory(Path.Combine(userData, name));
+            var settings = new JsonObject { ["someotherextensionidaaaaaaaaaaaa"] = new JsonObject { ["path"] = @"C:\elsewhere" } };
+            if (path is not null) settings[BrowserExtension.Id] = new JsonObject { ["path"] = path, ["location"] = 4 };
+            File.WriteAllText(Path.Combine(userData, name, file), new JsonObject { ["extensions"] = new JsonObject { ["settings"] = settings } }.ToJsonString());
+        }
+        Profile("Default", "Secure Preferences", install + Path.DirectorySeparatorChar);
+        Profile("Profile 1", "Preferences", null);
+        Directory.CreateDirectory(Path.Combine(userData, "Profile 2"));
+        File.WriteAllText(Path.Combine(userData, "Profile 2", "Secure Preferences"), "{ not json");
+        var loaded = BrowserExtension.LoadedFrom(userData);
+        Check.Equal(1, loaded.Count, "only the profile that has Mediator for Chrome; broken files skipped");
+        Check.True(BrowserExtension.WrongFolder(install, loaded) is null, "the install folder (trailing slash, any case) is right");
+
+        Profile("Profile 3", "Secure Preferences", repo);
+        loaded = BrowserExtension.LoadedFrom(userData);
+        Check.Equal(repo, BrowserExtension.WrongFolder(install, loaded), "the repository copy is flagged");
+        string steps = BrowserExtension.WrongFolderSteps(repo, install);
+        Check.True(steps.Contains(repo) && steps.Contains(install) && steps.Contains("chrome://extensions"), "the card names both folders and the page to type");
+        Check.True(BrowserExtension.SetupSteps(install).Contains("type chrome://extensions"), "Set up tells the user to type the page (Chrome ignores it from apps)");
     }
 
     public static async Task ToolsThroughTheBus(string bridgeDll)

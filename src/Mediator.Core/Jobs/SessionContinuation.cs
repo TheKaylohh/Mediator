@@ -121,7 +121,14 @@ public static partial class JobSpecFactory
         var (moreTools, moreCategory) = InferToolsAndCategory(prompt, null);
         var tools = previous.Tools.Concat(moreTools).Distinct(StringComparer.Ordinal).ToList();
         var category = previous.Category == TaskCategory.Chat && moreTools.Count > 0 ? moreCategory : previous.Category;
-        var spec = previous with { Title = title, Launch = launch, JobId = null, Attachments = attachments, UserText = prompt, Tools = tools, Category = category };
+        // "Using the chrome extension, now do it" after a plain answer: the follow-up becomes a Browser job (browser tools
+        // are added when it starts; a Browser job gets no folder and no other Mediator tool).
+        bool toBrowser = moreCategory == TaskCategory.Browser && previous.Category != TaskCategory.Browser;
+        if (toBrowser) { category = TaskCategory.Browser; tools = []; }
+        string userText = prompt;
+        if (category == TaskCategory.Browser && (toBrowser || !session.NativeResume))
+            prompt = Browser.ClaudeInChrome.Guidance + "\n\nUser: " + prompt;
+        var spec = previous with { Title = title, Launch = launch, JobId = null, Attachments = attachments, UserText = userText, Tools = tools, Category = category, Roots = category == TaskCategory.Browser ? [] : previous.Roots };
         if (session.NativeResume && targetProvider is null or AiProvider.ClaudeCode)
             return spec with { Prompt = prompt, Provider = AiProvider.ClaudeCode, NeverDowngrade = true, ContinueSessionId = session.SessionId };
         var turns = history is { Count: > 0 } ? history : [new ConversationTurn(previous.UserText ?? previous.Prompt, session.LastResponseText)];
@@ -175,13 +182,24 @@ public static partial class JobSpecFactory
     public static bool IsNoLocalAccess(TaskCategory category) => category is TaskCategory.Chat or TaskCategory.Search or TaskCategory.Browser;
 
     /// <summary>Words that ask for the browser itself: "claude in chrome", "in chrome", "open ... in the browser", "this tab".</summary>
-    private static readonly string[] BrowserIntent = ["chrome", "browser", "this tab", "new tab", "web page", "webpage"];
+    private static readonly string[] BrowserIntent = ["chrome", "browser", "this tab", "new tab", "web page", "webpage", "website", "web site"];
 
-    /// <summary>True when the prompt asks for work in the user's browser (V11).</summary>
+    /// <summary>"go to / visit / navigate to" ... (V14.1)</summary>
+    private static readonly string[] NavigateIntent = ["go to", "goto", "visit", "navigate to", "browse to", "head to", "head over to", "open up"];
+
+    /// <summary>... together with something only a web page has: "go to w3 schools and take an mcq".</summary>
+    private static readonly string[] WebTaskIntent = ["quiz", "mcq", "online", "youtube", "w3", "khan academy", "wikipedia"];
+
+    /// <summary>A web address: http(s)://, www., or a name with a common site ending ("w3schools.com"; not "asp.net" or "file.js").</summary>
+    [GeneratedRegex(@"https?://|\bwww\.|\b[a-z0-9-]{2,}\.(?:com|org|edu|gov|io|co|uk|fr|de|ca|au)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex WebAddress();
+
+    /// <summary>True when the prompt asks for work in the user's browser (V11; V14.1: also a web address or "go to ... quiz").</summary>
     public static bool IsBrowserRequest(string? prompt)
     {
         string t = (prompt ?? "").ToLowerInvariant();
-        return BrowserIntent.Any(k => HasWord(t, k));
+        return BrowserIntent.Any(k => HasWord(t, k)) || WebAddress().IsMatch(t)
+            || (NavigateIntent.Any(k => HasWord(t, k)) && WebTaskIntent.Any(k => HasWord(t, k)));
     }
 
     /// <summary>A Browser job runs Claude Code with --chrome (Claude in Chrome); no other CLI can drive the browser.</summary>
@@ -195,6 +213,42 @@ public static partial class JobSpecFactory
 
     private static readonly string[] CreateIntent = ["create", "make", "model", "design", "build", "3d print", "stl", "print"];
 
+    /// <summary>"mate" as a CAD word only: mate, mates, mated, mating (not "material", "matey").</summary>
+    [GeneratedRegex(@"\bmat(?:e|es|ed|ing)\b")]
+    private static partial Regex MateWord();
+
+    /// <summary>
+    /// What makes "assembly" mean a SolidWorks assembly and not a .NET assembly or assembly language: a part, SolidWorks,
+    /// a mate or CAD in the same request ("assemble the parts in this folder").
+    /// </summary>
+    [GeneratedRegex(@"\b(?:parts?|solidworks|sldprt|sldasm|cad|bolts?|brackets?|shafts?|housing)\b")]
+    private static partial Regex AssemblyContext();
+
+    /// <summary>"stl" as a print file (".stl", "stl file"), not C++'s STL.</summary>
+    [GeneratedRegex(@"\.stl\b|\bstls?\s+files?\b|\bstls\b")]
+    private static partial Regex StlFile();
+
+    /// <summary>True when the request itself asks for SolidWorks work (used to start SolidWorks early only for those).</summary>
+    public static bool AsksForSolidWorks(string? prompt) => InferAppTools(prompt ?? "", null).Tools.Contains(CadTools[0], StringComparer.Ordinal);
+
+    /// <summary>V15: a CAD file named by type or extension (".stl", "step file", "the 3mf"), not words like "step" or C++'s STL.</summary>
+    [GeneratedRegex(@"\.(?:stl|obj|ply|3mf|step|stp|iges|igs|dxf)\b|\b(?:stl|step|stp|iges|igs|3mf|obj|ply|dxf)\s+(?:files?|models?|meshes?)\b|\bstls\b|\b3mf\b")]
+    private static partial Regex CadFileWord();
+
+    /// <summary>V15: Word, Excel and PowerPoint files by extension.</summary>
+    [GeneratedRegex(@"\.(?:docx|xlsx|pptx|docm|xlsm|pptm|doc|xls|ppt|csv)\b|\b(?:docx|xlsx|pptx)\b")]
+    private static partial Regex OfficeFileWord();
+
+    /// <summary>V15: asking for Office apps, documents, mail or the calendar (phrases, so "email validation" in code is not mail).</summary>
+    private static readonly string[] OfficeIntent =
+        ["word document", "word doc", "word file", "inbox", "my email", "my emails", "my mail", "unread email", "email to", "email from", "draft an email",
+         "write an email", "reply to the email", "my calendar", "on my calendar", "meeting invite", "my meetings"];
+
+    /// <summary>V15: app and document names that mean Office work only with a doing word ("make a spreadsheet", "turn this into a
+    /// PowerPoint"); a question about PowerPoint or Excel ("the links in my powerpoint go blank") is a search, not a file job.</summary>
+    private static readonly string[] OfficeNames = ["excel", "spreadsheet", "workbook", "powerpoint", "slide deck", "slides", "presentation", "outlook", "in word", "an email"];
+    private static readonly string[] OfficeAction = ["create", "make", "build", "write", "draft", "turn", "convert", "summari", "generate", "export", "fill in", "put", "list"];
+
     /// <summary>"cad" as a whole word only ("cadence", "decade" are not CAD).</summary>
     [GeneratedRegex(@"\bcad\b")]
     private static partial Regex CadWord();
@@ -204,8 +258,10 @@ public static partial class JobSpecFactory
         string t = (prompt ?? "").ToLowerInvariant(), app = (activeApp ?? "").ToLowerInvariant();
         var groups = new (string[] Keys, string? App, string[] Tools, TaskCategory Category)[]
         {
-            (["assembl", "solidworks", "sldprt", "mate"], "sldworks", CadTools, TaskCategory.Cad),
-            (["parametric", "build123d", "3d print", "stl", "generate part", "make part", ".step", "step file"], null, CadTools, TaskCategory.Cad),
+            (["solidworks", "sldprt", "sldasm"], "sldworks", CadTools, TaskCategory.Cad),
+            (["parametric", "build123d", "3d print", "generate part", "make part"], null, CadTools, TaskCategory.Cad),
+            ([], null, CadFileTools, TaskCategory.Cad),       // V15: CAD files (matched by CadFileWord below)
+            (OfficeIntent, null, OfficeTools, TaskCategory.Office), // V15: Word, Excel, PowerPoint, Outlook (and OfficeFileWord)
             (["organi", "sort my", "tidy", "declutter", "move files", "rename files"], null, FileTools, TaskCategory.Files),
             (["davinci", "rough cut", "footage", "timeline"], "resolve", ResolveTools, TaskCategory.Resolve),
             (["blender", "render", "3d scene"], "blender", BlenderTools, TaskCategory.Blender),
@@ -213,9 +269,15 @@ public static partial class JobSpecFactory
         };
         // Every SolidWorks job gets the whole CAD toolset (parts AND assemblies), so "make the parts and mate them" works in
         // one job. "cad" as a word counts only with a make/create word: "explain what a fillet is in CAD" is a question.
+        // V14.1: "assembly", "mate" and "stl" only in their CAD sense, so a coding request ("load the assembly", "the
+        // material", "C++ STL") is not a SolidWorks job (which started SolidWorks).
         bool create = CreateIntent.Any(k => HasWord(t, k));
-        if (create && CadWord().IsMatch(t)) groups[0] = (["assembl", "solidworks", "sldprt", "mate", "cad"], "sldworks", CadTools, TaskCategory.Cad);
-        var hits = groups.Where(g => g.Keys.Any(k => HasWord(t, k)) || (g.App is not null && app.Contains(g.App, StringComparison.Ordinal))).ToList();
+        bool cad = (create && CadWord().IsMatch(t)) || MateWord().IsMatch(t)
+            || (HasWord(t, "assembl") && AssemblyContext().IsMatch(t));
+        bool cadFile = CadFileWord().IsMatch(t) || StlFile().IsMatch(t);
+        bool officeFile = OfficeFileWord().IsMatch(t) || (OfficeNames.Any(k => HasWord(t, k)) && OfficeAction.Any(k => HasWord(t, k)));
+        bool Special(int i) => (i == 0 && cad) || (i == 2 && cadFile) || (i == 3 && officeFile);
+        var hits = groups.Where((g, i) => Special(i) || g.Keys.Any(k => HasWord(t, k)) || (g.App is not null && app.Contains(g.App, StringComparison.Ordinal))).ToList();
         if (hits.Count == 0) return ([], TaskCategory.Chat);
         return (hits.SelectMany(h => h.Tools).Distinct(StringComparer.Ordinal).ToList(), hits[0].Category);
     }
@@ -228,6 +290,8 @@ public static partial class JobSpecFactory
     {
         // Chat and Search never get a folder, even one selected in Explorer or set with Save to…: a general question
         // must not give the model the user's files.
+        // V15: an Office job with no folder named saves new documents in Documents\Mediator.
+        if (folder is null && category == TaskCategory.Office) folder = DefaultOfficeFolder();
         string? full = folder is null || IsNoLocalAccess(category) ? null : Path.GetFullPath(folder);
         string work = full ?? chatDirectory ?? Path.Combine(Path.GetTempPath(), "Mediator-chat");
         Directory.CreateDirectory(work);
@@ -255,5 +319,15 @@ public static partial class JobSpecFactory
     }
 
     public const string FollowUpPrefix = "Follow-up: ";
+
+    /// <summary>V15: Documents\Mediator (created), where Office jobs without a folder save what they make.</summary>
+    public static string DefaultOfficeFolder()
+    {
+        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (docs.Length == 0) docs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
+        string dir = Path.Combine(docs, "Mediator");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
 }
 }

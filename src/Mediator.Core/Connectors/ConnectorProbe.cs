@@ -18,8 +18,10 @@ public sealed record ToolProbe(string Id, string DisplayName, string? Path, stri
 /// </summary>
 public enum CredentialState { NotFound, FilePresent, LastRunFailed }
 
-/// <summary>A desktop application the Mediator drives (SolidWorks, Resolve, Blender).</summary>
-public sealed record AppStatus(string Id, string DisplayName, bool Available, string Detail);
+/// <summary>A desktop application the Mediator drives (SolidWorks, Resolve, Blender, Office). V15: Executable is the installed
+/// .exe when known (the Connectors tab shows its icon); installed but not usable (e.g. Outlook without a profile) is
+/// Available false with an Executable.</summary>
+public sealed record AppStatus(string Id, string DisplayName, bool Available, string Detail, string? Executable = null);
 
 public interface IConnectorProbe
 {
@@ -30,6 +32,8 @@ public interface IConnectorProbe
     AppStatus SolidWorks();
     AppStatus Resolve();
     AppStatus Blender();
+    /// <summary>V15: "word", "excel", "powerpoint" or "outlook".</summary>
+    AppStatus Office(string id) => new(id, Mediator.Core.Office.OfficeApps.DisplayName(id), false, "not checked");
     /// <summary>A visible terminal running the CLI with API-key variables removed, so it signs in with the subscription. Null with a reason when not possible.</summary>
     (ProcessStartInfo? StartInfo, string? Problem) SignIn(string cliId);
 }
@@ -119,10 +123,10 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
         var install = _apps.Find(DesktopApp.SolidWorks);
         string installed = install is null ? "installation not found in the registry or the default folder" : $"installed: {Label(install)}";
         if (_running("SLDWORKS") is { } pid)
-            return new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it. {installed}");
+            return new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it. {installed}", install?.Executable);
         return install is null
             ? new AppStatus("solidworks", "SolidWorks", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.SolidWorks))})")
-            : new AppStatus("solidworks", "SolidWorks", true, $"{installed}; not running: the Mediator starts it when a SolidWorks job needs it");
+            : new AppStatus("solidworks", "SolidWorks", true, $"{installed}; not running: the Mediator starts it when a SolidWorks job needs it", install.Executable);
     }
 
     public AppStatus Resolve()
@@ -135,7 +139,7 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
             ? "Studio: the scripting bridge can create the timeline (enable External scripting: Local)"
             : "edition not confirmed as Studio: FCPXML/EDL import works in both; the scripting bridge needs Studio";
         string running = _running("Resolve") is { } id ? $"running (PID {id})" : "not running";
-        return new AppStatus("resolve", "DaVinci Resolve", true, $"{running}; {edition}; {Label(install)}");
+        return new AppStatus("resolve", "DaVinci Resolve", true, $"{running}; {edition}; {Label(install)}", install.Executable);
     }
 
     public AppStatus Blender()
@@ -147,7 +151,29 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
         var install = _apps.Find(DesktopApp.Blender);
         return install is null
             ? new AppStatus("blender", "Blender", false, $"not found (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.Blender))})")
-            : new AppStatus("blender", "Blender", true, Label(install));
+            : new AppStatus("blender", "Blender", true, Label(install), install.Executable);
+    }
+
+    /// <summary>V15: Word, Excel and PowerPoint are optional (the Office tools write the files themselves; the app only
+    /// opens them). Outlook is usable only as classic desktop Outlook with a mail profile.</summary>
+    public AppStatus Office(string id)
+    {
+        string name = Mediator.Core.Office.OfficeApps.DisplayName(id);
+        if (!_windowsApps) return new AppStatus(id, name, false, "Windows only");
+        string? exe = executables is not null && executables.TryGetValue(id, out var forced) ? forced : Mediator.Core.Office.OfficeApps.Locate(id);
+        if (id != "outlook")
+            return exe is null
+                ? new AppStatus(id, name, false, "not installed. The Mediator still reads and writes these files; install Microsoft 365 to open them.")
+                : new AppStatus(id, name, true, $"installed — {exe}. The Mediator reads and writes the files itself and opens them here.", exe);
+        if (exe is null)
+            return Mediator.Core.Office.OfficeApps.LocateNewOutlook() is { } olk
+                ? new AppStatus(id, name, false, "only the new Outlook is installed, and it cannot be automated. Install classic Outlook (Microsoft 365 apps) for mail and calendar.", olk)
+                : new AppStatus(id, name, false, "classic Outlook is not installed.");
+        if (executables is not null) return new AppStatus(id, name, true, exe, exe);
+        string? why = new Mediator.Core.Office.OutlookClient().Unavailable();
+        return why is null
+            ? new AppStatus(id, name, true, $"classic Outlook with a mail profile — {exe}. Search, read, draft (never sends) and calendar.", exe)
+            : new AppStatus(id, name, false, why, exe);
     }
 
     /// <summary>"Blender 4.2 — C:\…\blender.exe (Program Files\Blender Foundation\Blender 4.2)".</summary>

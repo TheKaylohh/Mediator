@@ -18,6 +18,19 @@ static class BrowserTests
             && JobSpecFactory.InferToolsAndCategory("chromatic aberration explained", null).Category != TaskCategory.Browser, "other prompts do not (whole words only)");
         Check.True(ProviderRouter.ParsePrefix("/chrome find the weather") is { Category: TaskCategory.Browser }, "/chrome prefix");
 
+        // V14.1: a site or "go to ... quiz" is a browser request without the word chrome; code talk is not.
+        foreach (string web in new[] { "go to w3 schools and take an mcq for me", "open w3schools.com", "visit https://example.org", "go to the website and sign in" })
+            Check.True(JobSpecFactory.IsBrowserRequest(web), $"'{web}' → Browser");
+        foreach (string notWeb in new[] { "go to the test file and fix the bug", "go to the login form component and add a sign in button","update the asp.net project", "visit each node of the tree", "what is index.js for" })
+            Check.True(!JobSpecFactory.IsBrowserRequest(notWeb), $"'{notWeb}' is not a browser request");
+
+        // V14.1: "using the chrome extension, ..." after a plain answer turns the follow-up into a Browser job.
+        var chat = JobSpecFactory.Assistant(null, "go to my school's quiz", LaunchMode.Headless, [], TaskCategory.Chat);
+        var answered = new ContinuableSession("gem-1", AiProvider.GeminiCli, chat.WorkingDirectory, "assistant-1", chat, DateTimeOffset.Now) { LastResponseText = "I cannot browse." };
+        var follow = JobSpecFactory.Continue(answered, "Using the chrome extension, go to w3 schools and take an mcq for me", LaunchMode.Headless, targetProvider: AiProvider.GeminiCli);
+        Check.True(follow.Category == TaskCategory.Browser && follow.Roots.Count == 0 && follow.Prompt.Contains(ClaudeInChrome.Guidance, StringComparison.Ordinal)
+            && follow.UserText == "Using the chrome extension, go to w3 schools and take an mcq for me", "the follow-up is a Browser job with the browser rules; the user's words kept as typed");
+
         var spec = JobSpecFactory.Assistant(null, khan, LaunchMode.Headless, [], TaskCategory.Browser);
         Check.True(JobSpecFactory.UsesChrome(spec) && spec.Roots.Count == 0 && spec.MaxTurns == JobSpecFactory.CadMaxTurns
             && spec.Prompt.StartsWith(ClaudeInChrome.Guidance, StringComparison.Ordinal) && spec.Prompt.Contains(khan, StringComparison.Ordinal),

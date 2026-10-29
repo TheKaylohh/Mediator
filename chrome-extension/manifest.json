@@ -1,17 +1,39 @@
 {
   "manifest_version": 3,
   "name": "Mediator for Chrome",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Lets the Mediator desktop app on this PC read and operate your tabs when you ask it to. Talks only to Mediator on 127.0.0.1.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwYvjHrIjtyttwWl8YVMRtifKzLNrW/X7cqdrNPkfupCpYrUCpJoTVaXOHq8UYIards8kvgERNu40Me/yQafQo6ww2/7ykN3ytndQmNOnNkgXqDU4LkwPIm7liLgocaa2SFWHXyn1mMs2c6YOBXBhnH5jc32fs8NrCRfJU7DSOvbSwBg3ryUiWaHNw4cdOcdN3GCriC2eufbdIXpuG9kxZUMW7SWg5DtN1UbtPOw5CBWDXKS48z7FXxIrn9Dyll4uWxBU2xg8LecGgQnb4K0tlov6Pi1o2XGWr+HHMEA9qJgmtdlXYChNDsKAlItFpCTr6v3uJ8n+xnG8XmARGAUWmwIDAQAB",
   "minimum_chrome_version": "116",
-  "permissions": ["debugger", "tabs", "activeTab", "scripting", "alarms"],
-  "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js" },
-  "action": {
-    "default_title": "Mediator",
-    "default_popup": "popup.html",
-    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  "permissions": [
+    "debugger",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
   },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  "action": {
+    "default_title": "Mediator: open the chat panel",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
 }

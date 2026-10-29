@@ -42,6 +42,8 @@ public sealed class BrowserToolProvider(ChromeBridgeServer? bridge) : IToolProvi
     /// <summary>The rules every extension Browser job gets: work in one tab, read compactly, never commit anything unasked.</summary>
     public const string Guidance =
         "You operate the user's own Chrome (signed in as them) with the browser_* tools of the mediator MCP server. " +
+        "You CAN browse: these tools open sites, read pages, click and type in the user's real browser, so never answer that you cannot " +
+        "browse or use websites (even if an earlier answer in this chat said so); use the tools. " +
         "Start with browser_navigate (newTab true) to the site, or browser_tabs if the user means a tab that is already open; then work in that tab. " +
         "Read pages with browser_read: it lists text and every control as [ref_N] role \"name\" @(x,y). Act with refs: browser_click {ref}, " +
         "browser_type {ref, text} (also picks an option in a select). Pass query to browser_read to see only matching lines, and offset to read on. " +

@@ -234,6 +234,7 @@ namespace System.Windows
         public static bool ClientAreaAnimation => true;
         public static double PrimaryScreenWidth => 1920;
         public static double PrimaryScreenHeight => 1080;
+        public static Thickness WindowResizeBorderThickness => new(8);
     }
 
     public enum MessageBoxButton { OK = 0, OKCancel = 1, YesNoCancel = 3, YesNo = 4 }
@@ -320,6 +321,20 @@ namespace System.Windows
         public event DragEventHandler DragOver;
         public event DragEventHandler DragLeave;
         public event DragEventHandler Drop;
+        public bool IsMouseOver { get; }
+        public event System.Windows.Input.MouseEventHandler PreviewMouseMove;
+        public event System.Windows.Input.MouseEventHandler MouseLeave;
+        public event System.Windows.Input.MouseButtonEventHandler MouseLeftButtonDown;
+    }
+
+    public readonly struct Thickness
+    {
+        public Thickness(double uniform) { Left = Top = Right = Bottom = uniform; }
+        public Thickness(double left, double top, double right, double bottom) { Left = left; Top = top; Right = right; Bottom = bottom; }
+        public double Left { get; }
+        public double Top { get; }
+        public double Right { get; }
+        public double Bottom { get; }
     }
 
     public class FrameworkElement : UIElement
@@ -336,6 +351,7 @@ namespace System.Windows
         public string Name { get; set; } = "";
         public object Tag { get; set; }
         public object ToolTip { get; set; }
+        public Thickness Margin { get; set; }
         public ResourceDictionary Resources { get; set; } = new();
         public bool IsLoaded { get; }
         public event RoutedEventHandler Loaded;
@@ -409,6 +425,8 @@ namespace System.Windows
         public event CancelEventHandler Closing;
         public event EventHandler Closed;
         public event DpiChangedEventHandler DpiChanged;
+        public event EventHandler StateChanged;
+        public void DragMove() { }
         public void Show() => IsVisible = true;
         public void Hide() => IsVisible = false;
         public bool Activate() => true;

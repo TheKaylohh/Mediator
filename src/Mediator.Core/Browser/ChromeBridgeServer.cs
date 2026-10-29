@@ -89,6 +89,17 @@ public sealed class ChromeBridgeServer : IAsyncDisposable
         throw new InvalidOperationException($"No free port for the Chrome extension bridge ({_firstPort}-{_firstPort + _portAttempts - 1}): {last?.Message}");
     }
 
+    /// <summary>V14.1: a message the paired extension sent on its own ({type, ...}, not an answer to a request), e.g. a side panel chat.</summary>
+    public event Action<JsonObject>? ExtensionMessage;
+
+    /// <summary>V14.1: sends a one-way message ({type, ...}) to the paired extension. False when none is connected or the send failed.</summary>
+    public async Task<bool> NotifyAsync(JsonObject message, CancellationToken ct = default)
+    {
+        if (Volatile.Read(ref _active) is not { } conn) return false;
+        try { await conn.SendAsync(message, ct).ConfigureAwait(false); return true; }
+        catch (Exception ex) when (ex is WebSocketException or IOException or ObjectDisposedException or OperationCanceledException) { return false; }
+    }
+
     /// <summary>Waits until an extension is paired (true) or the time is up (false).</summary>
     public async Task<bool> WaitForConnectionAsync(TimeSpan timeout, CancellationToken ct = default)
     {
@@ -216,6 +227,12 @@ public sealed class ChromeBridgeServer : IAsyncDisposable
                 {
                     if (msg["error"] is JsonObject err) tcs.TrySetException(new BrowserBridgeException((string?)err["message"] ?? "The extension reported an error."));
                     else tcs.TrySetResult(msg["result"]?.DeepClone());
+                }
+                else if (type is not null && msg is JsonObject note)
+                {
+                    // V14.1: messages the extension starts itself (the side panel chat).
+                    try { ExtensionMessage?.Invoke(note); }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException) { _log?.Warn("Chrome extension message failed: " + ex.Message); }
                 }
             }
         }
