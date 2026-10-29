@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 
 namespace Mediator.Core.Bus;
@@ -158,21 +157,6 @@ public sealed class OperationStore : IAsyncDisposable
                 sb.Append(e.GetRawText());
                 break;
         }
-    }
-
-    /// <summary>The latest attempt for this request, or null.</summary>
-    public async Task<OperationRecord?> FindLatestAsync(string jobId, string requestKey)
-    {
-        await _gate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            using var cmd = _conn.CreateCommand();
-            cmd.CommandText = Select + " WHERE job_id = $j AND request_key = $k ORDER BY attempt DESC LIMIT 1;";
-            cmd.Parameters.AddWithValue("$j", jobId);
-            cmd.Parameters.AddWithValue("$k", requestKey);
-            return (await ReadAsync(cmd).ConfigureAwait(false)).FirstOrDefault();
-        }
-        finally { _gate.Release(); }
     }
 
     /// <summary>

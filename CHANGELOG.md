@@ -2,6 +2,16 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V16: code review and SolidWorks by chat (2026-10-29)
+
+Full notes, review findings and the Windows checklist: [docs/v16/RELEASE_NOTES.md](docs/v16/RELEASE_NOTES.md).
+
+- **SolidWorks by chat**: `swx_inspect_model` (feature tree, dimensions, equations, properties, mass and material, configurations, selection, BOM, mates, interference), `swx_edit_model` (dimensions, globals, suppression, renames, properties, material, configurations, components; unsaved for review by default, each operation untickable), `swx_create_drawing` (standard views, isometric, dimensions, PDF), `swx_capture_views` (pictures for the AI). `swx_document_ops` gains `save_as`; `swx_export_neutral` gains 3MF, DXF/DWG and PNG.
+- **CAD-neutral layer** (`Mediator.Core.Cad`): `ICadApp` + `CadAppToolProvider`, so Inventor, Fusion, Revit or AutoCAD get the same tools under their own prefix ([docs/v16/CAD_CONNECTORS.md](docs/v16/CAD_CONNECTORS.md)). Tool names used so far are unchanged.
+- **Fixes**: every SolidWorks tool now holds the `solidworks` lease; changes to the active document check its folder first; the "Input dimension value" preference is restored after each call; exports never overwrite; the mesh size limit applies to streams; faster Word reading; the 2 tests failing on V15 fixed.
+- **Removed**: unused members and 17 unnecessary `using` lines.
+- 4 new tests (162 in total; 151 run here, all pass).
+
 ## V14: Usage tab (2026-10-29)
 
 - **Usage tab** in the overlay: one card per subscription. **Claude Pro** shows the 5-hour and weekly bars with their reset times, the same figures as Claude Code's `/usage` (claude.ai plus every Claude Code session). They come from Anthropic's account usage endpoint, using the OAuth token Claude Code saved at sign-in. **Google AI Pro** has no published meter, so its card shows a rate-limit cooldown if one is active and what Mediator's own Antigravity runs reported. Both cards list Mediator's own runs and tokens for the last 5 hours and 7 days, from the usage ledger.

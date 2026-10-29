@@ -26,7 +26,7 @@ Start with [CHANGELOG.md](CHANGELOG.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/R
 | Project | What it is |
 | --- | --- |
 | `src/Mediator.Protocol` | Framing, handshake, JSON-RPC helpers, SolidWorks DTOs (shared, AOT-safe) |
-| `src/Mediator.Core` | Bus, grants, gate, leases, audit, journal; Claude/Gemini launch, stream parsers, usage ledger, provider router; tool providers (`Swx`, `Files`, `Resolve`, `Blender`, `CadCode`, `Tutor`); `MediatorRuntime` |
+| `src/Mediator.Core` | Bus, grants, gate, leases, audit, journal; Claude/Gemini launch, stream parsers, usage ledger, provider router; tool providers (`Swx`, `Files`, `Resolve`, `Blender`, `CadCode`, `Tutor`, `Office`, `CadFiles`, `Browser`); `Cad` (V16: CAD-neutral tools any CAD program plugs into, see [docs/v16/CAD_CONNECTORS.md](docs/v16/CAD_CONNECTORS.md)); `MediatorRuntime` |
 | `src/Mediator.Bridge` | `mediator-mcp-bridge`: the stdio MCP server each CLI session spawns |
 | `src/Mediator.SwxWorker` | `mediator-swx-worker`: the STA COM host that talks to SolidWorks |
 | `src/Mediator.CliHost` | `mediator-cli`: doctor, assemble, cad, organize, resolve, blender, tutor, matrix, rollback |

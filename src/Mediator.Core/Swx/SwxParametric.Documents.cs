@@ -1,23 +1,27 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
+using Mediator.Core.Cad;
 
 namespace Mediator.Core.Swx;
 
 /// <summary>
-/// Document handling in SolidWorks: what is open (<see cref="Session"/>), open/save/close (<see cref="Document"/>) and
-/// neutral exports (<see cref="Export"/>). Paths are checked by the tool provider before they reach these.
+/// Document handling in SolidWorks: what is open (<see cref="Session"/>), open/save/save as/close (<see cref="Document"/>) and
+/// exports (<see cref="Export"/>). Paths are checked by the tool provider (<see cref="CadAppToolProvider"/>) before they reach these.
 /// </summary>
 public sealed partial class SwxParametric
 {
     private const int SwDocAssembly = 2, SwDocDrawing = 3;
     private const int SwOpenSilent = 1; // swOpenDocOptions_Silent
 
-    /// <summary>Export formats: name → file extension. PDF is for drawings.</summary>
-    public static readonly IReadOnlyDictionary<string, string> ExportFormats = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["step"] = ".step", ["stl"] = ".stl", ["iges"] = ".igs", ["parasolid"] = ".x_t", ["pdf"] = ".pdf",
-    };
+    /// <summary>What SaveAs3 writes, by file extension: models to neutral CAD and mesh files, drawings to PDF/DXF/DWG, both to a picture.</summary>
+    public static readonly IReadOnlyList<CadExportFormat> ExportFormats =
+    [
+        new("step", ".step", true, false), new("iges", ".igs", true, false), new("parasolid", ".x_t", true, false),
+        new("stl", ".stl", true, false), new("3mf", ".3mf", true, false),
+        new("pdf", ".pdf", false, true), new("dxf", ".dxf", false, true), new("dwg", ".dwg", false, true),
+        new("png", ".png", true, true),
+    ];
 
     public static int DocType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {
@@ -28,8 +32,14 @@ public sealed partial class SwxParametric
     private static string TypeName(object? t) => t switch { SwDocPart => "part", SwDocAssembly => "assembly", SwDocDrawing => "drawing", _ => "other" };
 
     public static JsonObject Session(TimeSpan timeout) => Run(p => p.DoSession(), timeout);
-    public static JsonObject Document(string action, string? path, bool save, bool discard, TimeSpan timeout) =>
-        Run(p => p.DoDocument(action, path, save, discard), timeout);
+    public static JsonObject Document(CadDocumentRequest request, TimeSpan timeout) => Run(p => p.DoDocument(request), timeout);
+
+    /// <summary>The active document's file, or null (nothing open, or never saved).</summary>
+    public static string? ActivePath(TimeSpan timeout) => (string?)Run(p =>
+    {
+        p.Connect();
+        return new JsonObject { ["path"] = C(p._sw, "ActiveDoc") is { } d && C(d, "GetPathName") is string { Length: > 0 } path ? path : null };
+    }, timeout)["path"];
     public static JsonObject Export(IReadOnlyList<string> paths, IReadOnlyList<string> formats, string outputFolder, TimeSpan timeout) =>
         Run(p => p.DoExport(paths, formats, outputFolder), timeout);
 
@@ -76,10 +86,32 @@ public sealed partial class SwxParametric
         return doc ?? throw new InvalidOperationException($"SolidWorks could not open {Path.GetFileName(path)} (error {args[4]})");
     }
 
-    private JsonObject DoDocument(string action, string? path, bool save, bool discard)
+    /// <summary>Brings <paramref name="doc"/> to the front (pictures and the user's review need it active).</summary>
+    private void Activate(object doc)
     {
+        var act = new object?[] { (string)C(doc, "GetTitle")!, false, 0, 0 };
+        var actMods = new ParameterModifier(4);
+        actMods[3] = true; // ref int Errors
+        try { _sw.GetType().InvokeMember("ActivateDoc3", BindingFlags.InvokeMethod, null, _sw, act, [actMods], null, null); }
+        catch (Exception ex) when (ex is TargetInvocationException or COMException) { _log.Add("could not bring it to the front: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// The document a call works on: <paramref name="path"/> (opened silently if needed) or the active one.
+    /// OpenedHere tells the caller to close it again when it only read it.
+    /// </summary>
+    private (object Doc, bool OpenedHere) Target(string? path)
+    {
+        if (path is null) return (C(_sw, "ActiveDoc") ?? throw new ArgumentException("no document is open in SolidWorks; give a path"), false);
+        bool openedHere = OpenDoc(path) is null;
+        return (OpenOrGet(path), openedHere);
+    }
+
+    private JsonObject DoDocument(CadDocumentRequest request)
+    {
+        var (action, path, save, discard, target) = request;
         Connect();
-        object? doc = path is null ? C(_sw, "ActiveDoc") : action == "open" ? OpenOrGet(path) : OpenDoc(path);
+        object? doc = path is null ? C(_sw, "ActiveDoc") : action is "open" or "save_as" ? OpenOrGet(path) : OpenDoc(path);
         if (doc is null)
             return action == "close" && path is not null
                 ? new JsonObject { ["closed"] = false, ["note"] = $"{Path.GetFileName(path)} is not open" }
@@ -90,12 +122,14 @@ public sealed partial class SwxParametric
         switch (action)
         {
             case "open":
-                var act = new object?[] { title, false, 0, 0 };
-                var actMods = new ParameterModifier(4);
-                actMods[3] = true; // ref int Errors
-                try { _sw.GetType().InvokeMember("ActivateDoc3", BindingFlags.InvokeMethod, null, _sw, act, [actMods], null, null); }
-                catch (Exception ex) when (ex is TargetInvocationException or COMException) { _log.Add("could not bring it to the front: " + ex.Message); }
-                return new JsonObject { ["opened"] = docPath, ["title"] = title, ["type"] = TypeName(C(doc, "GetType")), ["unsaved"] = dirty };
+                Activate(doc);
+                return new JsonObject { ["opened"] = docPath, ["title"] = title, ["type"] = TypeName(C(doc, "GetType")), ["unsaved"] = dirty, ["log"] = Log() };
+            case "save_as":
+                if (target is null) throw new ArgumentException("save_as needs targetPath");
+                if (DocType(target) != (int)C(doc, "GetType")!) throw new ArgumentException($"{Path.GetFileName(target)} must have the same type as {title}");
+                int err = (int)C(doc, "SaveAs3", target, 0, SwSaveAsSilent)!;
+                if (err != 0 || !File.Exists(target)) throw new InvalidOperationException($"saving {title} as {Path.GetFileName(target)} failed (error {err})");
+                return new JsonObject { ["savedAs"] = target, ["from"] = docPath, ["note"] = $"The open document is now {Path.GetFileName(target)}." };
             case "save":
                 if (docPath is null) throw new ArgumentException($"{title} was never saved: build or export it to a folder instead");
                 SaveDoc(doc, title);
@@ -111,7 +145,7 @@ public sealed partial class SwxParametric
                 C(_sw, "CloseDoc", title);
                 return new JsonObject { ["closed"] = true, ["title"] = title, ["saved"] = dirty && save, ["discarded"] = dirty && discard && !save };
             default:
-                throw new ArgumentException("action must be open, save or close");
+                throw new ArgumentException("action must be open, save, save_as or close");
         }
     }
 
@@ -154,14 +188,20 @@ public sealed partial class SwxParametric
             string title = (string)C(doc, "GetTitle")!;
             string stem = Path.GetFileNameWithoutExtension(path.Length > 0 ? path : title);
             bool drawing = C(doc, "GetType") is SwDocDrawing;
-            foreach (var format in formats)
+            if (formats.Contains("png")) Activate(doc); // a picture is taken of the document's window
+            foreach (var name in formats)
             {
-                if (!ExportFormats.TryGetValue(format, out var ext)) { problems.Add($"unknown format {format} ({string.Join(", ", ExportFormats.Keys)})"); continue; }
-                if (drawing != (ext == ".pdf")) { problems.Add($"{title}: {(drawing ? "drawings export to pdf" : "pdf is for drawings")}"); continue; }
-                string target = Path.Combine(folder, stem + ext);
+                if (ExportFormats.FirstOrDefault(f => f.Name == name) is not { } format) { problems.Add($"unknown format {name} ({string.Join(", ", ExportFormats.Select(f => f.Name))})"); continue; }
+                if (drawing ? !format.ForDrawings : !format.ForModels)
+                {
+                    problems.Add($"{title}: {name} is for {(drawing ? "parts and assemblies" : "drawings")}; drawings export to {string.Join("/", ExportFormats.Where(f => f.ForDrawings).Select(f => f.Name))}");
+                    continue;
+                }
+                string target = Path.Combine(folder, stem + format.Extension);
+                if (File.Exists(target)) { problems.Add($"{Path.GetFileName(target)} already exists in {folder}: not replaced"); continue; }
                 int err = (int)C(doc, "SaveAs3", target, 0, SwSaveAsCopy)!;
                 if (err == 0 && File.Exists(target)) files.Add(target);
-                else problems.Add($"{title} → {format} failed (error {err})");
+                else problems.Add($"{title} → {name} failed (error {err})");
             }
             if (openedHere) C(_sw, "CloseDoc", title);
         }

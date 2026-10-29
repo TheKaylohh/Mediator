@@ -75,13 +75,19 @@ static class CadToolsetTests
 
     public static void ToolsetAndReadRoots()
     {
-        foreach (var t in new[] { SwxPartToolProvider.SessionTool, SwxPartToolProvider.DocumentTool, SwxPartToolProvider.ExportTool })
-            Check.True(JobSpecFactory.CadTools.Contains(t) && SwxPartToolProvider.ToolNames.Contains(t), t + " is in every CAD job and warms SolidWorks up");
-        var tools = new SwxPartToolProvider().Tools.ToDictionary(t => t.Name);
-        Check.True(tools[SwxPartToolProvider.SessionTool].Risk == Mediator.Core.Bus.ToolRisk.ReadOnly && tools[SwxPartToolProvider.ExportTool].Risk == Mediator.Core.Bus.ToolRisk.Write, "session reads; export writes");
-        Check.True(tools[SwxPartToolProvider.BuildTool].InputSchema.ToJsonString().Contains("\"curve3d\"", StringComparison.Ordinal)
-            && tools[SwxPartToolProvider.BuildTool].Description.Contains("import:", StringComparison.Ordinal), "the build schema offers curve3d and import");
-        Check.True(SwxParametric.ExportFormats.Keys.Order().SequenceEqual(["iges", "parasolid", "pdf", "step", "stl"]), "export formats");
+        foreach (var t in SolidWorksCadApp.ToolNames)
+            Check.True(JobSpecFactory.CadTools.Contains(t), t + " is in every CAD job");
+        var cad = new Mediator.Core.Cad.CadAppToolProvider(new SolidWorksCadApp());
+        Check.True(cad.ToolNames.SetEquals(SolidWorksCadApp.ToolNames), "the SolidWorks app offers all seven CAD tools: " + string.Join(", ", cad.ToolNames));
+        var all = cad.Tools.Concat(new SwxPartToolProvider().Tools).ToDictionary(t => t.Name);
+        Check.True(all[SolidWorksCadApp.SessionTool].Risk == Mediator.Core.Bus.ToolRisk.ReadOnly && all[SolidWorksCadApp.ExportTool].Risk == Mediator.Core.Bus.ToolRisk.Write
+            && all[SolidWorksCadApp.InspectTool].Risk == Mediator.Core.Bus.ToolRisk.ReadOnly && all[SolidWorksCadApp.EditTool].Risk == Mediator.Core.Bus.ToolRisk.Write, "session and inspect read; export and edit write");
+        Check.True(all.Values.All(t => t.LeaseResource == SwxToolProvider.Lease),
+            "every SolidWorks tool holds the solidworks lease, so two jobs never drive SolidWorks at once");
+        Check.True(all[SwxPartToolProvider.BuildTool].InputSchema.ToJsonString().Contains("\"curve3d\"", StringComparison.Ordinal)
+            && all[SwxPartToolProvider.BuildTool].Description.Contains("import:", StringComparison.Ordinal), "the build schema offers curve3d and import");
+        Check.True(SwxParametric.ExportFormats.Select(f => f.Name).Order().SequenceEqual(["3mf", "dwg", "dxf", "iges", "parasolid", "pdf", "png", "step", "stl"]), "export formats");
+        Check.True(SwxParametric.ExportFormats.Where(f => f.ForDrawings && !f.ForModels).Select(f => f.Name).Order().SequenceEqual(["dwg", "dxf", "pdf"]), "pdf, dxf and dwg are for drawings");
         Check.True(SwxParametric.DocType(@"C:\a\b.SLDASM") == 2, "doc type by extension");
 
         string parts = TempDir("cad-named");

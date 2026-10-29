@@ -258,7 +258,7 @@ public static partial class JobSpecFactory
         string t = (prompt ?? "").ToLowerInvariant(), app = (activeApp ?? "").ToLowerInvariant();
         var groups = new (string[] Keys, string? App, string[] Tools, TaskCategory Category)[]
         {
-            (["solidworks", "sldprt", "sldasm"], "sldworks", CadTools, TaskCategory.Cad),
+            (["solidworks", "sldprt", "sldasm", "slddrw"], "sldworks", CadTools, TaskCategory.Cad),
             (["parametric", "build123d", "3d print", "generate part", "make part"], null, CadTools, TaskCategory.Cad),
             ([], null, CadFileTools, TaskCategory.Cad),       // V15: CAD files (matched by CadFileWord below)
             (OfficeIntent, null, OfficeTools, TaskCategory.Office), // V15: Word, Excel, PowerPoint, Outlook (and OfficeFileWord)
@@ -311,6 +311,7 @@ public static partial class JobSpecFactory
             Prompt = category == TaskCategory.Browser ? Browser.ClaudeInChrome.Guidance + "\n\nUser: " + prompt
                 : "Answer the user's request directly and clearly." + (tools.Count > 0
                 ? " If it needs their files or desktop apps, use the Mediator tools you were granted (only those); otherwise just answer."
+                  + (category == TaskCategory.Cad ? " For \"this part\", \"the open model\" or what is on screen in SolidWorks, start with swx_session and swx_inspect_model (sections selection for what they selected); look at it with swx_capture_views before judging a shape." : "")
                 : category == TaskCategory.Search
                     ? " Use web search to find current, specific information, then answer concisely and name your sources. Do not read, list or search local files: none are shared with you."
                     : " No tools are needed or granted; answer from your knowledge. Do not read, list or search local files or run commands.")

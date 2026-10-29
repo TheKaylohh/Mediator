@@ -71,8 +71,8 @@ static class ReleaseScriptTests
         foreach (var theme in Enum.GetNames<Mediator.UI.MediatorTheme>())
             Check.True(required.Contains($"'Themes\\{theme}.xaml'", StringComparison.Ordinal), $"package check requires Themes\\{theme}.xaml");
 
-        Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$PSScriptRoot 'launch-mediator\.bat'\) \(Join-Path \$OutDir 'launch\.bat'\)"), "launch-mediator.bat is published as launch.bat");
-        Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$PSScriptRoot 'install-shortcut\.vbs'\)"), "install-shortcut.vbs is published");
+        Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$(?:PSScriptRoot|scriptDir) 'launch-mediator\.bat'\) \(Join-Path \$OutDir 'launch\.bat'\)"), "launch-mediator.bat is published as launch.bat");
+        Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$(?:PSScriptRoot|scriptDir) 'install-shortcut\.vbs'\)"), "install-shortcut.vbs is published");
         Check.True(ps.Contains("-p:TreatWarningsAsErrors=true", StringComparison.Ordinal) && ps.Contains("-p:MediatorRequireSolidWorks=true", StringComparison.Ordinal), "warnings as errors; -RequireSolidWorks maps to MediatorRequireSolidWorks");
         Check.True(ps.Contains("*.pdb", StringComparison.Ordinal), "symbols left out of the clean package");
         return Task.CompletedTask;

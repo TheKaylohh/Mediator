@@ -48,7 +48,6 @@ internal static class NativeMethods
 /// <summary>Running Object Table lookup, replacing Marshal.GetActiveObject which does not exist in .NET 5+.</summary>
 public static class PInvokeRot
 {
-    public const int MK_E_UNAVAILABLE = unchecked((int)0x800401E3);
     public const int CO_E_CLASSSTRING = unchecked((int)0x800401F3);
 
     public static bool TryGetActiveObject(string progId, out object? instance, out int hresult)

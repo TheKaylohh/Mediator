@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Mediator.Core.Attachments;
-using Mediator.Core.Bus;
 using Mediator.Core.Files;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;

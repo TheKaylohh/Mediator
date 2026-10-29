@@ -31,14 +31,14 @@ public sealed class Mesh
 
     public static Mesh Load(string path)
     {
-        var info = new FileInfo(path);
-        if (info.Length > MaxBytes) throw new CadFileException($"{info.Name} is over {MaxBytes / (1024 * 1024)} MB.");
         using var fs = File.OpenRead(path);
-        return Load(fs, Path.GetExtension(path), info.Name);
+        return Load(fs, Path.GetExtension(path), Path.GetFileName(path));
     }
 
+    /// <summary>Reads a mesh; files over 500 MB are refused (whether opened by path or handed over as a stream).</summary>
     public static Mesh Load(Stream stream, string extension, string name)
     {
+        if (stream.CanSeek && stream.Length > MaxBytes) throw new CadFileException($"{name} is over {MaxBytes / (1024 * 1024)} MB.");
         var mesh = extension.ToLowerInvariant() switch
         {
             ".stl" => ReadStl(stream),
@@ -253,7 +253,12 @@ public sealed class Mesh
     private static byte[] ReadAll(Stream s)
     {
         using var ms = new MemoryStream();
-        s.CopyTo(ms);
+        var buffer = new byte[81920];
+        for (int n; (n = s.Read(buffer, 0, buffer.Length)) > 0;)
+        {
+            if (ms.Length + n > MaxBytes) throw new CadFileException($"The mesh is over {MaxBytes / (1024 * 1024)} MB.");
+            ms.Write(buffer, 0, n);
+        }
         return ms.ToArray();
     }
 

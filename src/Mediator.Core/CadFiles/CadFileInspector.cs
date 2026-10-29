@@ -30,7 +30,7 @@ public static partial class CadFileInspector
         if (Mesh.Extensions.Contains(ext)) return DescribeMesh(Mesh.Load(path));
         if (NativeExtensions.Contains(ext))
             return $"{name} is a native SolidWorks file ({new FileInfo(path).Length / 1024:N0} KiB). Its features and dimensions are read by opening it in SolidWorks " +
-                "(swx_session / swx_document_ops) or exporting it to STEP/STL (swx_export_neutral); Mediator does not parse the binary format itself.";
+                "(swx_inspect_model: features, dimensions, mass, properties) or exporting it to STEP/STL (swx_export_neutral); Mediator does not parse the binary format itself.";
         if (new FileInfo(path).Length > MaxTextBytes) throw new CadFileException($"{name} is over {MaxTextBytes / (1024 * 1024)} MB.");
         if (StepExtensions.Contains(ext)) return DescribeStep(File.ReadAllText(path, Encoding.Latin1), name);
         if (IgesExtensions.Contains(ext)) return DescribeIges(File.ReadAllLines(path, Encoding.Latin1), name);

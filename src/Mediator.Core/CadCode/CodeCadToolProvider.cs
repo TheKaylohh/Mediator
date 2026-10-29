@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using Mediator.Core.Bus;
 using Mediator.Core.Isolation;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
 using Mediator.Core.Tools;
 
 namespace Mediator.Core.CadCode;

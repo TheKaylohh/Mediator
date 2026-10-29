@@ -44,8 +44,6 @@ public sealed class DedicatedStaQueue : IDisposable
     }
 
     public bool IsOnQueueThread => Environment.CurrentManagedThreadId == _thread.ManagedThreadId;
-    public bool IsWedged => Volatile.Read(ref _state) == 1;
-
     private void Run(Action? init, Action? cleanup)
     {
         try

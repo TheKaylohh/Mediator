@@ -3,7 +3,6 @@ using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
 using Mediator.Core.Swx;
-using Mediator.Protocol;
 using Mediator.UI;
 
 namespace Mediator.Tests;

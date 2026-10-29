@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
@@ -6,7 +5,6 @@ using Mediator.Core.CadCode;
 using Mediator.Core.Runtime;
 using Mediator.Core.Swx;
 using Mediator.Core.Tools;
-using Mediator.Tests;
 
 namespace Mediator.Tests;
 

@@ -41,8 +41,6 @@ public sealed class StdioJsonLines : IAsyncDisposable
         return new StdioJsonLines(input, output);
     }
 
-    public static StdioJsonLines Over(Stream input, Stream output) => new(input, output);
-
     /// <summary>Next non-empty line with any BOM and trailing CR removed; null at end of input.</summary>
     public async ValueTask<string?> ReadLineAsync(CancellationToken ct)
     {

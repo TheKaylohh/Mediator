@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Mediator.Core.Browser;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.UI;
 
 namespace Mediator.Tests;
 

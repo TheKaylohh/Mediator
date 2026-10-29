@@ -1,5 +1,4 @@
 using Mediator.Core.Bus;
-using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
 using Mediator.Core.Swx;
@@ -26,11 +25,11 @@ static class FollowUpContextTests
         string train = Path.Combine(TempDir("out-root"), "CAD", "Train");
         Directory.CreateDirectory(Path.Combine(train, "Bogies"));
         var paths = new PathAuthorizer([train]);
-        Check.True(SwxPartToolProvider.OutputFolder(paths, train) is { Allowed: true } v && v.FullPath == train, "the allowed folder itself is an output folder (no root_itself)");
-        Check.True(SwxPartToolProvider.OutputFolder(paths, Path.Combine(train, "Bogies")).Allowed, "an existing folder below it is used as it is (no 'exists')");
-        Check.True(SwxPartToolProvider.OutputFolder(paths, Path.Combine(train, "Wagons", "v2")).Allowed, "a new folder below it may be created");
+        Check.True(Mediator.Core.Cad.CadAppToolProvider.OutputFolder(paths, train) is { Allowed: true } v && v.FullPath == train, "the allowed folder itself is an output folder (no root_itself)");
+        Check.True(Mediator.Core.Cad.CadAppToolProvider.OutputFolder(paths, Path.Combine(train, "Bogies")).Allowed, "an existing folder below it is used as it is (no 'exists')");
+        Check.True(Mediator.Core.Cad.CadAppToolProvider.OutputFolder(paths, Path.Combine(train, "Wagons", "v2")).Allowed, "a new folder below it may be created");
         Check.True(paths.Check(Path.Combine(train, "part.SLDPRT"), PathAccess.CreateFile).Allowed, "a part file inside the allowed folder may be created");
-        Check.True(SwxPartToolProvider.OutputFolder(paths, TempDir("out-else")) is { Allowed: false, Code: "outside_roots" }, "folders outside stay refused");
+        Check.True(Mediator.Core.Cad.CadAppToolProvider.OutputFolder(paths, TempDir("out-else")) is { Allowed: false, Code: "outside_roots" }, "folders outside stay refused");
         Check.True(paths.Check(train, PathAccess.Modify) is { Allowed: false, Code: "root_itself" }, "the allowed folder itself still cannot be replaced or deleted");
     }
 

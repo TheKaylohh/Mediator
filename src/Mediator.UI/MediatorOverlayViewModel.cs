@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Text.RegularExpressions;
 using Mediator.Core.Attachments;
 using Mediator.Core.Bus;
 using Mediator.Core.Context;

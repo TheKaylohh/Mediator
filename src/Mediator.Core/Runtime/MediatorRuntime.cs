@@ -15,7 +15,6 @@ using Mediator.Core.Resolve;
 using Mediator.Core.Swx;
 using Mediator.Core.Tools;
 using Mediator.Core.Tutor;
-using Mediator.Protocol;
 
 namespace Mediator.Core.Runtime;
 
@@ -388,6 +387,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             : NoDesktopAppSession.Instance);
         Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
         Tools.Register(new SwxPartToolProvider(SolidWorks));
+        Tools.Register(new Cad.CadAppToolProvider(new SolidWorksCadApp(SolidWorks))); // V16: inspect, edit, drawings, pictures, documents, export
         Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
         Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
         var cadPython = options.CadPython ?? options.Python;
@@ -982,7 +982,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     /// whose own words ask for CAD. Having the CAD tools is not enough: a follow-up in a chat that once used CAD keeps them.
     /// </summary>
     public static bool WarmsSolidWorks(JobSpec spec) =>
-        spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t))
+        spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t) || SolidWorksCadApp.ToolNames.Contains(t))
         && (spec.Kind is "assemble" or "codecad" || JobSpecFactory.AsksForSolidWorks(spec.UserText ?? spec.Prompt));
 
     /// <summary>V13: when an extension job ends, the extension detaches from its tabs (Chrome's "is debugging" bar goes away).</summary>
@@ -1051,7 +1051,9 @@ public static partial class JobSpecFactory
     public static readonly string[] CadTools =
     [
         SwxPartToolProvider.BuildTool, SwxPartToolProvider.SetTool,                // native parametric parts
-        SwxPartToolProvider.SessionTool, SwxPartToolProvider.DocumentTool, SwxPartToolProvider.ExportTool, // open/save/close, STEP/STL/PDF
+        SolidWorksCadApp.SessionTool, SolidWorksCadApp.DocumentTool, SolidWorksCadApp.ExportTool, // open/save/close, STEP/STL/PDF/DXF
+        SolidWorksCadApp.InspectTool, SolidWorksCadApp.EditTool,                   // V16: read and change any part or assembly
+        SolidWorksCadApp.DrawingTool, SolidWorksCadApp.ViewsTool,                  // V16: drawings, pictures of the model
         CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, // code → STEP → part
         SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool,                  // part cards → assembly
         CadFiles.CadFileToolProvider.InspectTool, CadFiles.CadFileToolProvider.ConvertTool, // V15: read and convert CAD files
@@ -1118,8 +1120,12 @@ public static partial class JobSpecFactory
                    centre parts without matching faces), largest part fixed, saved under the assembly name the user asked for.
                    A DXF/SVG drawing the user gives (logo, plate outline, gasket) becomes a profile shape "import" (path, width?) and
                    is extruded or cut; lock: true keeps its exact shape. A 3D path (pipe, handlebar, wire) is op curve3d, then sweep.
-                   Existing SolidWorks files: swx_session shows what is open; swx_document_ops opens, saves or closes (never discard
-                   the user's unsaved work unless they say so); swx_export_neutral writes STEP/STL/IGES/Parasolid (PDF for drawings).
+                   Existing SolidWorks files: swx_session shows what is open; swx_document_ops opens, saves, saves as or closes (never
+                   discard the user's unsaved work unless they say so); swx_export_neutral writes STEP/IGES/Parasolid/STL/3MF (PDF/DXF/DWG
+                   for drawings). swx_inspect_model reads any part or assembly (feature tree, dimensions, equations, properties, mass and
+                   material, configurations, the user's selection, BOM, mates, interference); swx_edit_model changes dimensions, globals,
+                   suppression, properties, material and configurations (left unsaved for review unless save: true); swx_create_drawing
+                   makes a drawing with views and dimensions; swx_capture_views shows you pictures of the model.
                 B. Otherwise (templated mechanical parts, assemblies):
                 1. Choose built-in templates in cad_generate_parametric_step (wheel_hub, brake_disc, coil_spring, strut_tube, control_arm,
                    shaft, flange_bracket) with realistic millimetre parameters and an envelopeMm for each part. State any dimension you assume.
@@ -1214,6 +1220,8 @@ public static partial class JobSpecFactory
         if (!m.Success) return null;
         string name = m.Groups["name"].Value;
         string? dir = m.Groups["dir"].Success && m.Groups["dir"].Value.Length > 0 ? m.Groups["dir"].Value : null;
+        // A typed drive path ("D:\Out\") is already absolute: on Windows it is normalised, elsewhere kept as typed.
+        if (dir is not null && !OperatingSystem.IsWindows()) return dir + name;
         try { return Path.GetFullPath(Path.Combine(dir ?? folder, name)); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return Path.Combine(Path.GetFullPath(folder), name); }
     }

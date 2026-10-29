@@ -136,7 +136,7 @@ public static class OfficeDocuments
         var props = p.Element(W + "pPr");
         string style = (string?)props?.Element(W + "pStyle")?.Attribute(W + "val") ?? "";
         bool list = props?.Element(W + "numPr") is not null || style.StartsWith("List", StringComparison.OrdinalIgnoreCase);
-        if (text.Trim().Length == 0) { if (sb.Length > 0 && !sb.ToString().EndsWith("\n\n", StringComparison.Ordinal)) sb.Append('\n'); return; }
+        if (text.Trim().Length == 0) { if (sb.Length > 0 && !(sb.Length >= 2 && sb[^1] == '\n' && sb[^2] == '\n')) sb.Append('\n'); return; }
         if (style.Equals("Title", StringComparison.OrdinalIgnoreCase)) sb.Append("# ");
         else if (style.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) && int.TryParse(style.AsSpan(7), out int level)) sb.Append(new string('#', Math.Clamp(level + 1, 2, 6))).Append(' ');
         else if (list)

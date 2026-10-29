@@ -165,8 +165,6 @@ public sealed class PathAuthorizer
         return v.Allowed ? v.FullPath : throw new PathDeniedException(v);
     }
 
-    public bool IsAllowed(string? raw, PathAccess access) => Check(raw, access).Allowed;
-
     private PathVerdict Evaluate(string? raw, PathAccess access)
     {
         if (_syntax.Check(raw) is string syntax) return PathVerdict.Deny(raw ?? "", "syntax", syntax);
@@ -296,12 +294,6 @@ public sealed class PathAuthorizer
         using var fs = CreateNew(raw);
         using var w = new StreamWriter(fs, new System.Text.UTF8Encoding(false));
         w.Write(content);
-    }
-
-    public void WriteNewBytes(string raw, ReadOnlySpan<byte> content)
-    {
-        using var fs = CreateNew(raw);
-        fs.Write(content);
     }
 
     /// <summary>

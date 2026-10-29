@@ -1,4 +1,4 @@
-# Mediator features (V15)
+# Mediator features (V16)
 
 Everything Mediator can do, what each feature is for, and prompts it handles. Type a prompt in the overlay
 (Ctrl+Shift+Space) or Full view. Mediator picks the tools from the prompt, or you can force them with a prefix
@@ -29,17 +29,24 @@ Antigravity CLI) and never on pay-per-token API keys.
   - Follow-ups continue the same session. A Claude session resumes in full; switching CLI carries the recent turns over.
   - Chats are saved and can be resumed from Full view → Chats.
 
-## 2. SolidWorks (parametric parts and assemblies)
+## 2. SolidWorks (parts, assemblies, drawings, any open model)
 - **For:** native SolidWorks parts with design intent. Every size is a global variable linked to the sketches.
 - **Assemblies:** built from the parts in a folder. Mediator proposes the mates and you approve them.
-- **STEP:** import and export.
-- **Tools:** `swx_session`, `swx_build_parametric_part`, `swx_set_part_globals`, `swx_part_cards`, `swx_document_ops`, `swx_build_assembly`, `swx_import_step`, `swx_export_neutral`.
+- **Any model, by chat (V16):** read the open part or assembly (feature tree, dimensions, equations, custom properties, mass and material, configurations, what you selected, BOM, mates, interference), change it (dimensions, globals, suppress/unsuppress, rename, properties, material, configurations, components), make a drawing (3 views + iso + dimensions, PDF), and let the AI look at it (pictures). Changes stay unsaved for your review unless you say save; each one is listed in the approval card and can be unticked.
+- **Files:** open, save, save as, close; export STEP/IGES/Parasolid/STL/3MF (PDF/DXF/DWG for drawings, PNG for both). Nothing is ever replaced.
+- **Tools:** `swx_session`, `swx_inspect_model`, `swx_edit_model`, `swx_create_drawing`, `swx_capture_views`, `swx_document_ops`, `swx_export_neutral`, `swx_build_parametric_part`, `swx_set_part_globals`, `swx_part_cards`, `swx_build_assembly`, `swx_import_step`.
 - **Prompts:**
   - "make a 120 × 60 × 8 mm plate with four M6 holes 10 mm from the edges"
   - "change the base to 150 × 80"
+  - "what does the open part weigh, and what material is it?"
+  - "make the selected hole 8 mm and set the material to 6061 Alloy"
+  - "suppress the fillets and show me the part"
+  - "set PartNo to BR-100 and Description to Mounting bracket"
+  - "make an A3 drawing of bracket.SLDPRT with dimensions and a PDF"
+  - "check this assembly for interferences and list the BOM"
   - "assemble the parts in C:\work\bracket and mate the bolts to the holes"
   - "import housing.step into SolidWorks and export it as STL"
-- **Note:** SolidWorks starts only for SolidWorks work. Inspecting an STL or asking a CAD question doesn't start it.
+- **Note:** SolidWorks starts only for SolidWorks work. Inspecting an STL or asking a CAD question doesn't start it. One job drives SolidWorks at a time.
 
 ## 3. Parametric parts from code (build123d → STEP)
 - **For:** standard parts (flanges, bushings, springs, bolt circles…) or custom geometry generated as STEP, checked against size limits, then opened in SolidWorks.

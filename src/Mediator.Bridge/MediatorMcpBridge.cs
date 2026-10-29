@@ -26,7 +26,7 @@ public sealed record BridgeOptions(
 
     public static BridgeOptions Parse(string[] args, string? tokenFromEnvironment)
     {
-        string? jobId = null, token = null;
+        string? jobId = null, token;
         var endpoint = BusEndpoint.Default;
         double timeout = 1200, connect = 10;
         for (int i = 0; i < args.Length; i++)

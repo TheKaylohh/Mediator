@@ -148,9 +148,6 @@ internal static partial class MonitorPlacement
         return SetWindowPos(hwnd, IntPtr.Zero, placed.Window.Left, placed.Window.Top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) ? placed : null;
     }
 
-    /// <summary>V7 name, kept for callers: same as <see cref="PlaceAboveTray"/>.</summary>
-    public static bool PlaceBottomRight(IntPtr hwnd, POINT anchor) => PlaceAboveTray(hwnd, anchor) is not null;
-
     /// <summary>
     /// WM_WINDOWPOSCHANGING handler: when the window is being resized or moved, rewrites the proposed position so the
     /// window stays anchored to <paramref name="anchor"/>'s corner and inside its usable area. Returns true if the

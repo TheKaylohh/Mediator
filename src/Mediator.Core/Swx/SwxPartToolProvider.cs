@@ -1,28 +1,24 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
+using Mediator.Core.Cad;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Tools;
 
 namespace Mediator.Core.Swx;
 
 /// <summary>
 /// Native parametric SolidWorks parts (<see cref="SwxParametric"/>): a feature tree driven by global variables and
 /// equations, so design changes rebuild with their intent. Both tools write a .SLDPRT and show an approval card first.
+/// Opening, saving, exporting, reading and editing any SolidWorks document are the CAD-neutral tools of <see cref="SolidWorksCadApp"/>.
 /// </summary>
 public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) : IToolProvider
 {
     public const string BuildTool = "swx_build_parametric_part";
     public const string SetTool = "swx_set_part_globals";
-    public const string SessionTool = "swx_session";
-    public const string DocumentTool = "swx_document_ops";
-    public const string ExportTool = "swx_export_neutral";
-    public static IReadOnlySet<string> ToolNames { get; } = new HashSet<string>(StringComparer.Ordinal) { BuildTool, SetTool, SessionTool, DocumentTool, ExportTool };
+    public static IReadOnlySet<string> ToolNames { get; } = new HashSet<string>(StringComparer.Ordinal) { BuildTool, SetTool };
 
     private readonly IDesktopAppSession _solidWorks = solidWorks ?? NoDesktopAppSession.Instance;
-
-    private static string Json(JsonObject o) => o.ToJsonString();
 
     private static JsonObject Schema(string json) => (JsonObject)JsonNode.Parse(json)!;
 
@@ -83,12 +79,13 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
               },
               "additionalProperties": false
             }
-            """.Replace("OPS", string.Join(", ", SwxParametric.Ops.Select(o => $"\"{o}\"")), StringComparison.Ordinal)), ToolRisk.Write, null, TimeSpan.FromMinutes(8)),
+            """.Replace("OPS", string.Join(", ", SwxParametric.Ops.Select(o => $"\"{o}\"")), StringComparison.Ordinal)), ToolRisk.Write, SwxToolProvider.Lease, TimeSpan.FromMinutes(8)),
 
         new(SetTool,
             "Change global variables of a parametric part (built by swx_build_parametric_part) and rebuild it in SolidWorks, e.g. " +
             "{\"values\": {\"W\": 150, \"D\": 80}}. Uses the part open in SolidWorks unless partPath is given. Returns rebuild errors " +
-            "and the measured geometry (bounding box, holes with distance to edges) so you can verify the design intent held.",
+            "and the measured geometry (bounding box, holes with distance to edges) so you can verify the design intent held. Other " +
+            "dimensions, features, properties and materials of any part: swx_inspect_model and swx_edit_model.",
             Schema("""
             {
               "type": "object",
@@ -99,47 +96,7 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
               },
               "additionalProperties": false
             }
-            """), ToolRisk.Write, null, TimeSpan.FromMinutes(5)),
-
-        new(SessionTool,
-            "SolidWorks status: starts it if needed, then lists its version, the active document and every open document " +
-            "(title, path, part/assembly/drawing, unsaved changes). Call it before opening, saving or closing documents.",
-            Schema("""{ "type": "object", "properties": {}, "additionalProperties": false }"""), ToolRisk.ReadOnly, null, TimeSpan.FromMinutes(4)),
-
-        new(DocumentTool,
-            "Open, save or close a SolidWorks document (.SLDPRT/.SLDASM/.SLDDRW). open: opens it silently (or brings it to the front). " +
-            "save: saves it in place. close: a document with unsaved changes needs save: true (keep them) or discard: true (lose " +
-            "them). No path = the active document.",
-            Schema("""
-            {
-              "type": "object",
-              "required": ["action"],
-              "properties": {
-                "action": { "type": "string", "enum": ["open", "save", "close"] },
-                "path": { "type": "string" },
-                "save": { "type": "boolean" },
-                "discard": { "type": "boolean" }
-              },
-              "additionalProperties": false
-            }
-            """), ToolRisk.Write, null, TimeSpan.FromMinutes(4)),
-
-        new(ExportTool,
-            "Export SolidWorks documents to neutral files in outputFolder: step, stl, iges, parasolid (x_t) for parts and assemblies, " +
-            "pdf for drawings. paths: the documents (opened and closed again if they were not open); none = the active document. " +
-            "Files keep the document's name.",
-            Schema("""
-            {
-              "type": "object",
-              "required": ["formats", "outputFolder"],
-              "properties": {
-                "paths": { "type": "array", "items": { "type": "string" } },
-                "formats": { "type": "array", "items": { "type": "string", "enum": ["step", "stl", "iges", "parasolid", "pdf"] }, "minItems": 1 },
-                "outputFolder": { "type": "string" }
-              },
-              "additionalProperties": false
-            }
-            """), ToolRisk.Write, null, TimeSpan.FromMinutes(8)),
+            """), ToolRisk.Write, SwxToolProvider.Lease, TimeSpan.FromMinutes(5)),
     ];
 
     public Task<JsonNode?> BuildPreviewAsync(ToolCallContext call, CancellationToken ct)
@@ -154,13 +111,6 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
                               $"{(a.TryGetProperty("features", out var f) ? f.GetArrayLength() : 0)} features → {(a.TryGetProperty("outputFolder", out var o) ? o.GetString() : "?")}",
                 ["globals"] = a.TryGetProperty("globals", out var g) ? JsonNode.Parse(g.GetRawText()) : null,
             }
-            : call.Tool.Name is DocumentTool or ExportTool or SessionTool
-            ? new JsonObject
-            {
-                ["kind"] = call.Tool.Name,
-                ["title"] = call.Tool.Name == ExportTool ? "Export SolidWorks documents" : call.Tool.Name == SessionTool ? "Check SolidWorks" : "SolidWorks document",
-                ["summary"] = a.GetRawText(),
-            }
             : new JsonObject
             {
                 ["kind"] = "swx_set_globals",
@@ -168,18 +118,6 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
                 ["summary"] = a.TryGetProperty("values", out var v) ? v.GetRawText() : "",
             };
         return Task.FromResult<JsonNode?>(preview);
-    }
-
-    /// <summary>
-    /// The folder parts and exports are written INTO. An existing folder (an allowed folder itself, or one below it) is used as
-    /// it is, never recreated or replaced; a missing one below an allowed folder may be created. Checking the folder as a
-    /// file to create refused the allowed folder itself (root_itself) and every folder that already existed.
-    /// </summary>
-    public static PathVerdict OutputFolder(PathAuthorizer paths, string? folder)
-    {
-        var listed = paths.Check(folder, PathAccess.List);
-        if (listed.Allowed || listed.Code != "not_found") return listed;
-        return paths.Check(folder, PathAccess.CreateDirectory);
     }
 
     /// <summary>
@@ -230,7 +168,7 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
             JsonObject result;
             if (call.Tool.Name == BuildTool)
             {
-                var verdict = OutputFolder(call.Job.Paths, (string?)args["outputFolder"]);
+                var verdict = CadAppToolProvider.OutputFolder(call.Job.Paths, (string?)args["outputFolder"]);
                 if (!verdict.Allowed) return ToolResult.Fail(verdict.Message);
                 args["outputFolder"] = verdict.FullPath;
                 if (AuthorizeImports(args, call.Job.Paths) is { } refused) return ToolResult.Fail(refused);
@@ -239,45 +177,16 @@ public sealed class SwxPartToolProvider(IDesktopAppSession? solidWorks = null) :
             else if (call.Tool.Name == SetTool)
             {
                 string? part = (string?)args["partPath"];
-                if (part is not null)
+                // No partPath = the part open in SolidWorks, which is saved in place: it must be in a folder this job may change.
+                string? target = part ?? await Task.Run(() => SwxParametric.ActivePath(TimeSpan.FromMinutes(1)), ct).ConfigureAwait(false);
+                if (target is not null)
                 {
-                    var verdict = call.Job.Paths.Check(part, PathAccess.Modify);
-                    if (!verdict.Allowed) return ToolResult.Fail(verdict.Message);
-                    part = verdict.FullPath;
+                    var verdict = call.Job.Paths.Check(target, PathAccess.Modify);
+                    if (!verdict.Allowed) return ToolResult.Fail(part is null ? $"The open part {Path.GetFileName(target)} is outside the folders this job may change: {verdict.Message}" : verdict.Message);
+                    if (part is not null) part = verdict.FullPath;
                 }
                 var values = args["values"]?.AsObject() ?? throw new ArgumentException("values is required");
                 result = await Task.Run(() => SwxParametric.SetGlobals(part, values, TimeSpan.FromMinutes(4)), ct).ConfigureAwait(false);
-            }
-            else if (call.Tool.Name == SessionTool)
-                return ToolResult.Ok(Json(await Task.Run(() => SwxParametric.Session(TimeSpan.FromMinutes(3)), ct).ConfigureAwait(false)));
-            else if (call.Tool.Name == DocumentTool)
-            {
-                string action = (string?)args["action"] ?? "";
-                string? path = (string?)args["path"];
-                if (path is not null)
-                {
-                    var verdict = call.Job.Paths.Check(path, action == "open" ? PathAccess.Read : PathAccess.Modify);
-                    if (!verdict.Allowed) return ToolResult.Fail(verdict.Message);
-                    path = verdict.FullPath;
-                    SwxParametric.DocType(path);
-                }
-                bool save = (bool?)args["save"] ?? false, discard = (bool?)args["discard"] ?? false;
-                return ToolResult.Ok(Json(await Task.Run(() => SwxParametric.Document(action, path, save, discard, TimeSpan.FromMinutes(3)), ct).ConfigureAwait(false)));
-            }
-            else if (call.Tool.Name == ExportTool)
-            {
-                var folder = OutputFolder(call.Job.Paths, (string?)args["outputFolder"]);
-                if (!folder.Allowed) return ToolResult.Fail(folder.Message);
-                var paths = new List<string>();
-                foreach (var p in args["paths"] as JsonArray ?? [])
-                {
-                    var verdict = call.Job.Paths.Check((string?)p, PathAccess.Read);
-                    if (!verdict.Allowed) return ToolResult.Fail(verdict.Message);
-                    paths.Add(verdict.FullPath!);
-                }
-                var formats = (args["formats"] as JsonArray ?? []).Select(f => (string?)f ?? "").ToList();
-                var exported = await Task.Run(() => SwxParametric.Export(paths, formats, folder.FullPath!, TimeSpan.FromMinutes(7)), ct).ConfigureAwait(false);
-                return new ToolResult(exported["files"] is not JsonArray { Count: > 0 }, Json(exported), exported);
             }
             else return ToolResult.Fail($"Unknown tool {call.Tool.Name}.");
             bool ok = result["rebuildErrors"] is JsonArray { Count: 0 } && (int?)result["bodies"] == 1;

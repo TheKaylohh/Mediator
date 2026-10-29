@@ -31,7 +31,6 @@ public sealed record PanelPlacementResult(PixelRect Window, PixelRect Usable, Sc
 {
     /// <summary>The tallest the window may be, in device-independent units at this monitor's scale (WPF MaxHeight).</summary>
     public double MaxHeightDip => Usable.Height / Scale;
-    public double MaxWidthDip => Usable.Width / Scale;
 }
 
 /// <summary>
