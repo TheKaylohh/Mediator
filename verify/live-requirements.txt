@@ -1,6 +1,7 @@
 # Optional: lets `COCKPIT_LIVE_PYTHON=<this venv's python> bash verify/run-tests.sh` run the generated scripts for real.
-# Verified on 22 Oct 2026 with Python 3.13: build123d 0.13.0, bpy 5.2.3 (Blender 5.2 LTS as a module), PyMuPDF, sympy 1.14.
-build123d
-bpy
-pymupdf
-sympy
+# Verified on 23 Oct 2026 with Python 3.13.17 (V6 live run: 87 passed, 2 Windows-only skipped). Versions are constrained
+# to the tested minor releases; widen them only after the live suite passes on the new versions.
+build123d>=0.13,<0.14
+bpy>=5.2,<5.3
+pymupdf>=1.26,<3
+sympy>=1.14,<1.15

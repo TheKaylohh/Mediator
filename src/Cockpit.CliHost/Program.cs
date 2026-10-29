@@ -12,6 +12,8 @@ try
         "matrix" => Commands.Matrix(cli),
         "organize" => await Commands.OrganizeAsync(cli),
         "rollback" => await Commands.RollbackAsync(cli),
+        "operations" => await Commands.OperationsAsync(cli),
+        "support-bundle" => await Commands.SupportBundleAsync(cli),
         "help" or "--help" or "-h" or "" => Commands.Help(),
         _ => Commands.Usage($"Unknown command '{cli.Command}'."),
     };

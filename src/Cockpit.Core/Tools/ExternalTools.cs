@@ -123,6 +123,7 @@ public sealed class LocalPythonRunner(string? executable, IReadOnlyList<string> 
     }
 
     public bool IsAvailable => executable is not null;
+    public string? Executable => executable;
     public string Describe => executable is null ? "no Python found (install Python 3 or set COCKPIT_PYTHON)" : $"{executable} {string.Join(' ', prefix)}".Trim();
     public string? MapPath(string hostPath) => Path.GetFullPath(hostPath);
 

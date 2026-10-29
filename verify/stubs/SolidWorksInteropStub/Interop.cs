@@ -20,6 +20,8 @@ namespace SolidWorks.Interop.sldworks
         object GetImportFileData(string FileName);
         /// <summary>Opens/imports a non-native file (e.g. STEP) as a new document.</summary>
         ModelDoc2 LoadFile4(string FileName, string ArgString, object ImportData, ref int Errors);
+        /// <summary>The documents open in this session (object[] of ModelDoc2). VERIFY on the target version.</summary>
+        object GetDocuments();
     }
 
     public interface ModelDoc2

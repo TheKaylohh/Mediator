@@ -11,6 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Tests force the non-openat2 fallback to prove it also fails closed. -->
+    <InternalsVisibleTo Include="Cockpit.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Cockpit.Protocol/Cockpit.Protocol.csproj" />
   </ItemGroup>
 </Project>

@@ -77,7 +77,7 @@ static class RuntimeTests
         await using (var client = await runtime.ConnectClientAsync(job))
         {
             var tools = await client.ListToolsAsync();
-            Check.True(tools.OrderBy(t => t).SequenceEqual(new[] { "swx_build_assembly", "swx_part_cards" }), "only the SolidWorks tools are visible: " + string.Join(",", tools));
+            Check.True(tools.OrderBy(t => t, StringComparer.Ordinal).SequenceEqual(new[] { "cockpit_operation_status", "swx_build_assembly", "swx_part_cards" }), "only the SolidWorks tools (+ operation status) are visible: " + string.Join(",", tools));
 
             var cards = await client.CallToolAsync("swx_part_cards", new JsonObject { ["folder"] = parts }, TimeSpan.FromSeconds(30));
             Check.True(!cards.IsError, "part cards: " + cards.Text);

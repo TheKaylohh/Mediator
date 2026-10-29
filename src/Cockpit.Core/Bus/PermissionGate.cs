@@ -51,7 +51,8 @@ public sealed class SwappableApprovalPrompt : IApprovalPrompt
         _target?.AskAsync(request, ct) ?? Task.FromResult(ApprovalResponse.Deny); // no UI attached: deny, never auto-approve
 }
 
-public sealed record GateOutcome(GateDecision Decision, IReadOnlySet<string>? ApprovedRows = null, bool KillRequested = false);
+/// <param name="Preview">The preview the user approved (null for auto-approval). Providers that bind an approval to exact content compare against it.</param>
+public sealed record GateOutcome(GateDecision Decision, IReadOnlySet<string>? ApprovedRows = null, bool KillRequested = false, JsonNode? Preview = null);
 
 /// <summary>
 /// The one place approval policy is decided. Enforcement happens here in the Core, never in the bridge
@@ -97,7 +98,7 @@ public sealed class PermissionGate
                 return new GateOutcome(GateDecision.Denied, null, KillRequested: true);
             }
             return response.Approved
-                ? new GateOutcome(GateDecision.Approved, response.ApprovedRows)
+                ? new GateOutcome(GateDecision.Approved, response.ApprovedRows, Preview: preview)
                 : new GateOutcome(GateDecision.Denied);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

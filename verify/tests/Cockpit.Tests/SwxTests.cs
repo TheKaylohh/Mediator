@@ -197,6 +197,52 @@ static class SwxTests
         Check.True(cards.Cards.Single().Faces.Any(f => f.Kind == FaceKind.Cylinder && f.RadiusM == 0.02), "the imported part feeds swx_part_cards");
     }
 
+    /// <summary>
+    /// V6 ownership: the worker never saves, changes or closes a document it did not create; surface-only imports
+    /// and duplicate targets are refused. (Fake COM: proves the worker's rules, not SolidWorks' behaviour — see
+    /// docs/v6/INTEGRATION_MATRIX.md for the real-SolidWorks procedure.)
+    /// </summary>
+    public static async Task StepImportOwnership()
+    {
+        var (app, shaftPath, _, dir) = Scene();
+        string outDir = Path.Combine(dir, "imported");
+        Directory.CreateDirectory(outDir);
+        string Step(string name, string? sub = null)
+        {
+            string folder = sub is null ? dir : Path.Combine(dir, sub);
+            Directory.CreateDirectory(folder);
+            string p = Path.Combine(folder, name);
+            File.WriteAllText(p, "ISO-10303-21;");
+            app.StepFiles[p] = d => d.Cylinder("c", [0, 0, 0], [0, 0, 1], 0.01, 0.001);
+            return p;
+        }
+        // The user has a part open; LoadFile4 for this STEP hands that document back.
+        app.Open.Add(shaftPath);
+        string collides = Step("collides.step");
+        app.ReturnsExisting[collides] = app.Parts[shaftPath];
+        string surface = Step("surface.step");
+        app.StepFiles[surface] = d => { d.Cylinder("c", [0, 0, 0], [0, 0, 1], 0.01, 0.001); d.SurfaceOnly = true; };
+        string dupA = Step("bracket.step", "a"), dupB = Step("bracket.step", "b");
+        string openStep = Step("open.step");
+        app.Parts[openStep] = new FakePart(app, openStep);
+        app.Open.Add(openStep);
+        string good = Step("good.step");
+        using var host = Host(app);
+
+        var batch = await host.ImportStepAsync([collides, surface, dupA, dupB, openStep, good], outDir, TimeSpan.FromSeconds(30), CancellationToken.None);
+        string E(string src) => batch.Results.Single(r => r.Source == src).Error ?? "";
+        Check.True(E(collides).StartsWith("returned_existing_document", StringComparison.Ordinal), "LoadFile4 returned the user's document → reported: " + E(collides));
+        Check.True(app.Open.Contains(shaftPath) && !app.Closed.Contains(app.Parts[shaftPath].GetTitle()) && app.Parts[shaftPath].SaveAttempts == 0,
+            "the user's document stays open, unsaved and unclosed");
+        Check.True(E(surface).StartsWith("no_solid_body", StringComparison.Ordinal) && E(surface).Contains("surface", StringComparison.Ordinal)
+            && !File.Exists(Path.Combine(outDir, "surface.SLDPRT")), "surface-only import refused and not saved");
+        Check.True(E(dupA).StartsWith("duplicate_target", StringComparison.Ordinal) && E(dupB).StartsWith("duplicate_target", StringComparison.Ordinal)
+            && !File.Exists(Path.Combine(outDir, "bracket.SLDPRT")), "two sources with one target name are both refused, nothing written");
+        Check.True(E(openStep).StartsWith("already_open", StringComparison.Ordinal) && app.Open.Contains(openStep), "a STEP already open in SolidWorks is not touched");
+        Check.True(E(good).Length == 0 && new FileInfo(Path.Combine(outDir, "good.SLDPRT")).Length > 0, "an ordinary import still works");
+        Check.True(app.Imported.Count == 0, "every document the worker created was closed; nothing it did not create was");
+    }
+
     public static async Task FaceFallbackAfterReopen()
     {
         var (app, shaftPath, housingPath, dir) = Scene();

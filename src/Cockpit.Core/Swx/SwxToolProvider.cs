@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 using Cockpit.Protocol.Swx;
 
 namespace Cockpit.Core.Swx;
@@ -176,25 +177,32 @@ public sealed class SwxToolProvider : IToolProvider
     private static (List<string>? Paths, string? Output, string? Error) ImportArgs(ToolCallContext call)
     {
         var args = call.Arguments;
-        string output = Path.GetFullPath(args.GetProperty("outputFolder").GetString()!);
-        if (!call.Job.IsInsideRoots(output)) return (null, null, $"{output} is outside this job's allowed folders.");
-        if (!Directory.Exists(output)) return (null, null, $"{output} does not exist.");
+        var outputVerdict = call.Job.Paths.Check(args.GetProperty("outputFolder").GetString(), PathAccess.List);
+        if (!outputVerdict.Allowed) return (null, null, outputVerdict.Message);
+        string output = outputVerdict.FullPath;
         List<string> paths;
         if (args.TryGetProperty("folder", out var f) && f.ValueKind == JsonValueKind.String)
         {
-            string folder = Path.GetFullPath(f.GetString()!);
-            if (!call.Job.IsInsideRoots(folder) || !Directory.Exists(folder)) return (null, null, $"{folder} is not an allowed, existing folder.");
-            paths = Directory.EnumerateFiles(folder).Where(IsStep).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+            var folderVerdict = call.Job.Paths.Check(f.GetString(), PathAccess.List);
+            if (!folderVerdict.Allowed) return (null, null, folderVerdict.Message);
+            paths = Directory.EnumerateFiles(folderVerdict.FullPath).Where(IsStep).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
         }
         else if (args.TryGetProperty("paths", out var ps) && ps.ValueKind == JsonValueKind.Array)
         {
-            paths = ps.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => Path.GetFullPath(e.GetString()!)).ToList();
+            paths = ps.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
         }
         else return (null, null, "Pass either 'paths' or 'folder'.");
         if (paths.Count == 0) return (null, null, "No STEP files found.");
         if (paths.Count > MaxParts) return (null, null, $"More than {MaxParts} files; narrow the selection.");
-        if (paths.FirstOrDefault(p => !call.Job.IsInsideRoots(p) || !IsStep(p)) is string bad) return (null, null, $"{bad} is not a STEP file inside this job's folders.");
-        return (paths, output, null);
+        var authorized = new List<string>();
+        foreach (var p in paths)
+        {
+            var v = call.Job.Paths.Check(p, PathAccess.Read);
+            if (!v.Allowed) return (null, null, v.Message);
+            if (!IsStep(v.FullPath)) return (null, null, $"{v.FullPath} is not a STEP file.");
+            authorized.Add(v.FullPath);
+        }
+        return (authorized, output, null);
     }
 
     private static bool IsStep(string p) => Path.GetExtension(p).ToLowerInvariant() is ".step" or ".stp";
@@ -222,6 +230,9 @@ public sealed class SwxToolProvider : IToolProvider
         var (paths, output, error) = ImportArgs(call);
         if (error is not null) return ToolResult.Fail(error);
         var chosen = call.ApprovedRows is { } keep ? paths!.Where(keep.Contains).ToList() : paths!;
+        // SolidWorks opens these by path, so each is verified again right before the hand-off.
+        foreach (var p in chosen.Append(output!))
+            if (call.Job.Paths.VerifyExisting(p, p == output ? PathAccess.List : PathAccess.Read) is { Allowed: false } changed) return ToolResult.Fail(changed.Message);
         var parameters = new JsonObject { ["paths"] = new JsonArray(chosen.Select(p => (JsonNode)p).ToArray()), ["outputFolder"] = output };
         var node = await _worker.CallAsync("import_step", parameters, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
         var batch = node.Deserialize(SwxJsonContext.Default.StepImportBatch) ?? throw new SwxWorkerException("bad_reply", "Empty import_step reply.");
@@ -245,16 +256,16 @@ public sealed class SwxToolProvider : IToolProvider
         List<string> paths;
         if (args.TryGetProperty("folder", out var folderEl) && folderEl.ValueKind == JsonValueKind.String)
         {
-            string folder = Path.GetFullPath(folderEl.GetString()!);
-            if (!call.Job.IsInsideRoots(folder)) return ToolResult.Fail($"{folder} is outside this job's allowed folders.");
-            if (!Directory.Exists(folder)) return ToolResult.Fail($"{folder} does not exist.");
+            var folderVerdict = call.Job.Paths.Check(folderEl.GetString(), PathAccess.List);
+            if (!folderVerdict.Allowed) return ToolResult.Fail(folderVerdict.Message);
+            string folder = folderVerdict.FullPath;
             paths = Directory.EnumerateFiles(folder, "*.sldprt", new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive, RecurseSubdirectories = false })
                 .Where(p => !Path.GetFileName(p).StartsWith("~$", StringComparison.Ordinal)) // SolidWorks lock files
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(MaxParts + 1).ToList();
         }
         else if (args.TryGetProperty("paths", out var pathsEl) && pathsEl.ValueKind == JsonValueKind.Array)
         {
-            paths = pathsEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => Path.GetFullPath(e.GetString()!)).ToList();
+            paths = pathsEl.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
         }
         else
         {
@@ -263,8 +274,12 @@ public sealed class SwxToolProvider : IToolProvider
 
         if (paths.Count == 0) return ToolResult.Fail("No .SLDPRT files found.");
         if (paths.Count > MaxParts) return ToolResult.Fail($"More than {MaxParts} parts; narrow the selection.");
-        if (paths.FirstOrDefault(p => !call.Job.IsInsideRoots(p)) is string outside)
-            return ToolResult.Fail($"{outside} is outside this job's allowed folders.");
+        for (int i = 0; i < paths.Count; i++)
+        {
+            var v = call.Job.Paths.VerifyExisting(paths[i], PathAccess.Read);
+            if (!v.Allowed) return ToolResult.Fail(v.Message);
+            paths[i] = v.FullPath;
+        }
 
         var parameters = new JsonObject { ["paths"] = new JsonArray(paths.Select(p => (JsonNode)p).ToArray()) };
         var node = await _worker.CallAsync("part_cards", parameters, call.Tool.ExecutionTimeout, ct).ConfigureAwait(false);
@@ -346,12 +361,16 @@ public sealed class SwxToolProvider : IToolProvider
         catch (JsonException ex) { return (null, null, $"Plan is not valid: {ex.Message}"); }
         if (plan is null) return (null, null, "Plan is empty.");
 
-        string output = Path.GetFullPath(plan.OutputPath);
+        var outputVerdict = call.Job.Paths.Check(plan.OutputPath, PathAccess.CreateFile);
+        if (!outputVerdict.Allowed) return (plan, null, outputVerdict.Code == "exists" ? $"{outputVerdict.FullPath} already exists; choose a new file name." : outputVerdict.Message);
+        string output = outputVerdict.FullPath;
         if (!output.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase)) return (plan, null, "outputPath must end in .SLDASM.");
-        if (!call.Job.IsInsideRoots(output)) return (plan, null, $"{output} is outside this job's allowed folders.");
-        if (File.Exists(output)) return (plan, null, $"{output} already exists; choose a new file name.");
         if (plan.TemplatePath is string t && !t.EndsWith(".asmdot", StringComparison.OrdinalIgnoreCase))
             return (plan, null, "templatePath must be an .ASMDOT file.");
+        // Templates live outside the job's folders (SolidWorks' own data), but a network or device path is never
+        // accepted: opening \\server\share\x.asmdot would send the user's credentials to that server.
+        if (plan.TemplatePath is string tp && call.Job.Paths.Syntax.Check(tp) is string badTemplate)
+            return (plan, null, $"templatePath is not acceptable: {badTemplate}");
         if (plan.Components.Count == 0) return (plan, null, "The plan has no components.");
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -359,8 +378,9 @@ public sealed class SwxToolProvider : IToolProvider
         foreach (var c in plan.Components)
         {
             if (!keys.Add(c.Key)) return (plan, null, $"Duplicate component key '{c.Key}'.");
-            string part = Path.GetFullPath(c.PartPath);
-            if (!call.Job.IsInsideRoots(part)) return (plan, null, $"{part} is outside this job's allowed folders.");
+            var partVerdict = call.Job.Paths.Check(c.PartPath, PathAccess.Read);
+            if (!partVerdict.Allowed) return (plan, null, partVerdict.Message);
+            string part = partVerdict.FullPath;
             if (!_cards.TryGetValue((call.Job.JobId, Norm(part)), out var card))
                 return (plan, null, $"No card for {Path.GetFileName(part)}; call {PartCardsTool} on it first.");
             if (c.PositionM is { Length: not 3 }) return (plan, null, $"positionM for '{c.Key}' must have 3 numbers.");

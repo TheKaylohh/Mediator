@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
 using Cockpit.Core.Diagnostics;
 using Cockpit.Core.Files;
@@ -23,6 +24,7 @@ public sealed record CockpitPaths(string DataDirectory)
     public string AuditDatabase => Path.Combine(DataDirectory, "audit.db");
     public string JournalDatabase => Path.Combine(DataDirectory, "journal.db");
     public string UsageDatabase => Path.Combine(DataDirectory, "usage.db");
+    public string OperationsDatabase => Path.Combine(DataDirectory, "operations.db");
     public string WorkspacesDirectory => Path.Combine(DataDirectory, "jobs");
 
     /// <summary>%LOCALAPPDATA%\AiCockpit on Windows; $XDG_DATA_HOME/ai-cockpit or ~/.local/share/ai-cockpit elsewhere.</summary>
@@ -102,6 +104,14 @@ public sealed class RunningJob
     public AiProvider? Provider { get; internal set; }
     /// <summary>Why the job is not on its default subscription, when it was switched.</summary>
     public string? RoutingNotice { get; internal set; }
+    /// <summary>The subscription the job was routed to first (differs from <see cref="Provider"/> after a switch).</summary>
+    public AiProvider? OriginalProvider { get; internal set; }
+    /// <summary>How the last headless run ended (null while running, or for interactive jobs).</summary>
+    public RunOutcome? Outcome { get; internal set; }
+    /// <summary>Every routing decision for this job, oldest first (also in the audit as cockpit/route).</summary>
+    public IReadOnlyList<string> RoutingHistory => _routing;
+    internal readonly List<string> _routing = new();
+    internal bool SwitchedMidJob { get; set; }
     internal Process? Process { get; set; }
     internal ChildProcessJob ProcessGroup { get; } = new();
     internal InteractiveSession? Interactive { get; set; }
@@ -162,6 +172,15 @@ public sealed record RuntimeOptions
     public IPythonRunner Python { get; init; } = LocalPythonRunner.Detect();
     /// <summary>Python for build123d. Null = <see cref="Python"/>. Set a <see cref="WslPythonRunner"/> to keep generated code inside WSL.</summary>
     public IPythonRunner? CadPython { get; init; }
+    /// <summary>
+    /// The sandbox for model-written code. Null = detected: bubblewrap on Linux; on Windows none unless configured
+    /// (a <see cref="Isolation.WslBubblewrapSandbox"/>). Without one, custom code is refused, never run on the host.
+    /// </summary>
+    public Isolation.ISandboxRunner? CadSandbox { get; init; }
+    /// <summary>The interpreter inside the sandbox. Null = probed from the host Python on Linux.</summary>
+    public CadCode.SandboxPython? CadSandboxPython { get; init; }
+    /// <summary>Where sandbox runs are staged. Null = the workspaces folder. Must be inside the WSL exchange folder for the WSL sandbox.</summary>
+    public string? SandboxStagingDirectory { get; init; }
     public IBlenderRunner Blender { get; init; } = BlenderRunner.Detect();
     public string? Ffmpeg { get; init; } = ToolLocator.Ffmpeg();
 }
@@ -243,8 +262,18 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     public IReadOnlyList<RunningJob> Jobs => _jobs.Values.OrderBy(j => j.StartedAt).ToList();
 
-    private CockpitRuntime(RuntimeOptions options, AuditLog audit, FileJournalService journal, UsageLedger usage)
+    /// <summary>Durable record of side-effecting tool calls (dedupe, outcome-unknown, restart reconciliation).</summary>
+    public OperationStore Operations { get; }
+
+    /// <summary>Interactive jobs' tasks, served over the bus instead of a command line.</summary>
+    internal JobBriefToolProvider Briefs { get; } = new();
+
+    /// <summary>What restart reconciliation found when this runtime started.</summary>
+    public (int NotRun, int Settled, int NeedsUser) Recovery { get; private set; }
+
+    private CockpitRuntime(RuntimeOptions options, AuditLog audit, FileJournalService journal, UsageLedger usage, OperationStore operations)
     {
+        Operations = operations;
         _options = options;
         Audit = audit;
         Journal = journal;
@@ -270,9 +299,17 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         Tools.Register(new SwxToolProvider(Swx, Registry));
         Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
         Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
-        Tools.Register(new CodeCadToolProvider(options.CadPython ?? options.Python));
+        var cadPython = options.CadPython ?? options.Python;
+        var sandbox = options.CadSandbox ?? (OperatingSystem.IsLinux()
+            ? new Isolation.BubblewrapSandbox(options.ProcessRunner)
+            : new Isolation.UnavailableSandbox("no sandbox is configured on Windows: set up the restricted WSL distro with bubblewrap (see docs/v6/ISOLATION.md)"));
+        var sandboxPython = options.CadSandboxPython ?? (sandbox is Isolation.BubblewrapSandbox && cadPython is LocalPythonRunner local
+            ? CadCode.SandboxPython.Probe(local.Executable) : null);
+        Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
         Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
-        Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log);
+        Tools.Register(new OperationsToolProvider(operations));
+        Tools.Register(Briefs);
+        Bus = new McpBusServer(options.Bus, Registry, Tools, Gate, Leases, audit, options.Log, operations);
         Bus.ToolCallActivity += e =>
         {
             if (_jobs.TryGetValue(e.JobId, out var active)) active.Touch();
@@ -285,10 +322,18 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         Directory.CreateDirectory(options.Paths.DataDirectory);
         Directory.CreateDirectory(options.Paths.WorkspacesDirectory);
+        Cockpit.Core.Security.Redactor.RegisterEnvironmentSecrets(GeminiLaunchBuilder.VariablesToScrub(false));
         var audit = await AuditLog.OpenAsync(options.Paths.AuditDatabase, ct).ConfigureAwait(false);
         var journal = await FileJournalService.OpenAsync(options.Paths.JournalDatabase, options.PathPolicy ?? ProtectedPathPolicy.CreateDefault(), ct).ConfigureAwait(false);
         var usage = await UsageLedger.OpenAsync(options.Paths.UsageDatabase, ct: ct).ConfigureAwait(false);
-        var runtime = new CockpitRuntime(options, audit, journal, usage);
+        var operations = await OperationStore.OpenAsync(options.Paths.OperationsDatabase, ct).ConfigureAwait(false);
+        var runtime = new CockpitRuntime(options, audit, journal, usage, operations);
+        // Before any bridge can connect: settle what was mid-flight when the previous Core stopped.
+        runtime.Recovery = await operations.ReconcileAfterRestartAsync(op =>
+            runtime.Tools.TryGet(op.Tool, out var provider, out _) && provider is IOperationReconciler r
+                ? r.ReconcileAsync(op) : Task.FromResult<(OperationState, string)?>(null)).ConfigureAwait(false);
+        if (runtime.Recovery.NeedsUser > 0)
+            options.Log.Warn($"{runtime.Recovery.NeedsUser} operation(s) from before the restart need a check: cockpit operations");
         runtime.Bus.Start();
         return runtime;
     }
@@ -300,15 +345,34 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         var bridge = Bridge ?? throw new InvalidOperationException(
             "cockpit-mcp-bridge was not found next to the Cockpit or in the repository build output. Build src/Cockpit.Bridge first.");
-        RouteDecision? route = spec.Launch == LaunchMode.None ? null
-            : await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
         string jobId = spec.JobId ?? NewJobId(spec.Kind);
-        var grant = Registry.Issue(jobId, spec.Tools, spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        RouteDecision? route = null;
+        if (spec.Launch != LaunchMode.None)
+        {
+            try
+            {
+                route = await RouteAsync(spec.Category, spec.Provider, spec.NeverDowngrade).ConfigureAwait(false); // throws before anything is issued
+            }
+            catch (ProviderUnavailableException ex)
+            {
+                await AuditRouteAsync(jobId, spec.NeverDowngrade ? FailoverDecision.RefusedNeverDowngrade : FailoverDecision.RefusedBothUnavailable,
+                    spec.Provider ?? ProviderRouter.Defaults(spec.Category).Primary, null, ex.Message).ConfigureAwait(false);
+                throw;
+            }
+            await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
+                route.Original, route.Provider, route.Reason).ConfigureAwait(false);
+        }
+        bool brief = spec.Launch == LaunchMode.Interactive && spec.Prompt.Length > 0;
+        var builtIns = brief ? new[] { OperationsToolProvider.StatusTool, JobBriefToolProvider.BriefTool } : [OperationsToolProvider.StatusTool];
+        var grant = Registry.Issue(jobId, spec.Tools.Concat(builtIns).Distinct(StringComparer.Ordinal), spec.Roots, spec.Lifetime, spec.Transport, spec.ToolModes, allowMeteredBilling: spec.AllowMeteredBilling);
+        if (brief) Briefs.Set(jobId, spec.Prompt);
         RunningJob job;
         try
         {
             var ws = JobWorkspaceFactory.Create(Paths.WorkspacesDirectory, grant, bridge, Bus.EndpointFor(grant), _options.BridgeTimeout);
-            job = new RunningJob(spec, grant, ws) { Provider = route?.Provider, RoutingNotice = route?.Notice };
+            job = new RunningJob(spec, grant, ws) { Provider = route?.Provider, RoutingNotice = route?.Notice, OriginalProvider = route?.Original };
+            if (route is not null)
+                job._routing.Add(route.Downgraded ? $"before launch: {route.Notice}" : $"before launch: {ProviderRouter.DisplayName(route.Provider)}");
             _jobs[jobId] = job;
         }
         catch
@@ -344,6 +408,49 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         return ProviderRouter.Route(category, provider, neverDowngrade, p => cooldowns[p], p => ExecutableFor(p) is not null);
     }
 
+    /// <summary>
+    /// Every routing decision is audited as tool "cockpit/route": the original provider, the provider attempted
+    /// (if any), the decision and the reason. Grants, tools and approval policy never change with a switch.
+    /// </summary>
+    private Task AuditRouteAsync(string jobId, FailoverDecision decision, AiProvider original, AiProvider? attempted, string? reason) =>
+        Audit.RecordAsync(new AuditEntry(jobId, "cockpit/route", "route", ToolRisk.ReadOnly,
+            new JsonObject
+            {
+                ["original"] = ProviderRouter.Id(original),
+                ["attempted"] = attempted is { } a ? ProviderRouter.Id(a) : null,
+                ["decision"] = decision.ToString(),
+            }.ToJsonString(),
+            decision is FailoverDecision.NotNeeded or FailoverDecision.SwitchedBeforeLaunch or FailoverDecision.SwitchedAfterRateLimit ? "routed" : "refused",
+            decision is FailoverDecision.NotNeeded or FailoverDecision.SwitchedBeforeLaunch or FailoverDecision.SwitchedAfterRateLimit ? "ok" : "not_run",
+            reason, 0));
+
+    private static readonly System.Text.RegularExpressions.Regex AuthText = new(
+        @"invalid api key|please run /login|not logged in|log ?in required|authenticat|unauthori[sz]ed|\b401\b|auth method|credentials? (are|were|is) (missing|invalid|expired)|oauth",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Classifies how a headless run ended. Pure; unit-tested.</summary>
+    public static RunOutcome Classify(int exitCode, RunResultEvent? result, string stderrTail)
+    {
+        if (result is null)
+            return exitCode == GeminiLaunchBuilder.ExitNoAuth || AuthText.IsMatch(stderrTail) ? RunOutcome.AuthFailed : RunOutcome.NoResult;
+        if (result.RateLimit is not null) return RunOutcome.RateLimited;
+        if (result.IsError) return AuthText.IsMatch(result.ResultText ?? "") ? RunOutcome.AuthFailed : RunOutcome.ResultError;
+        return exitCode == 0 ? RunOutcome.Succeeded : RunOutcome.ResultThenAbnormalExit;
+    }
+
+    /// <summary>
+    /// True when no side-effecting call of this job can have taken effect: every recorded operation stopped before
+    /// Executing (rejected, denied, cancelled). Anything that reached Executing, including failed calls, may have
+    /// partly taken effect, so it blocks an automatic retry on another subscription.
+    /// </summary>
+    internal async Task<(bool None, int Count)> SideEffectsAsync(string jobId)
+    {
+        var ops = await Operations.ListAsync(jobId).ConfigureAwait(false);
+        int possible = ops.Count(o => o.State is not (OperationState.Rejected or OperationState.Denied or OperationState.Cancelled
+            or OperationState.Pending or OperationState.Validated or OperationState.Approved));
+        return (possible == 0, possible);
+    }
+
     private string? ExecutableFor(AiProvider provider) => provider == AiProvider.ClaudeCode
         ? _options.ClaudeExecutable ?? CliLaunchBuilder.ResolveOnPath("claude")
         : _options.GeminiExecutable ?? CliLaunchBuilder.ResolveOnPath("gemini");
@@ -360,7 +467,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     {
         var bridge = Bridge ?? throw new InvalidOperationException("cockpit-mcp-bridge not found.");
         return BridgeMcpClient.StartAsync(bridge, JobWorkspaceFactory.BridgeArguments(job.Grant, Bus.EndpointFor(job.Grant), _options.BridgeTimeout),
-            job.ProcessGroup, "cockpit-cli", ct);
+            job.ProcessGroup, "cockpit-cli", ct, JobWorkspaceFactory.BridgeEnvironment(job.Grant));
     }
 
     private string RequireExecutable(AiProvider provider) => ExecutableFor(provider) ?? throw new ProviderUnavailableException(provider == AiProvider.ClaudeCode
@@ -416,10 +523,22 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
                 await monitor.ObserveAsync(process.StandardOutput, CancellationToken.None).ConfigureAwait(false);
                 await process.WaitForExitAsync().ConfigureAwait(false);
                 job.LastResult = monitor.LastResult;
-                bool ok = process.ExitCode == 0 && monitor.LastResult is { IsError: false };
-                string detail = monitor.LastResult?.RateLimit?.Message ?? monitor.LastResult?.ResultText
-                    ?? $"{cli} exited with code {process.ExitCode}. {string.Join(" | ", stderrTail)}";
-                Finish(job, ok ? JobState.Succeeded : JobState.Failed, detail);
+                string tail = string.Join(" | ", stderrTail);
+                var outcome = Classify(process.ExitCode, monitor.LastResult, tail);
+                job.Outcome = outcome;
+                if (monitor.LastResult is null) await monitor.RecordMissingResultAsync($"{cli} exited with code {process.ExitCode} without a result").ConfigureAwait(false);
+                if (job.State is not (JobState.Starting or JobState.Running)) return; // killed meanwhile: the kill stands
+                if (outcome == RunOutcome.RateLimited && await TrySwitchAfterRateLimitAsync(job, provider).ConfigureAwait(false)) return;
+                string detail = outcome switch
+                {
+                    RunOutcome.Succeeded => monitor.LastResult!.ResultText ?? "done",
+                    RunOutcome.RateLimited => monitor.LastResult!.RateLimit!.Message,
+                    RunOutcome.AuthFailed => $"{cli} is not signed in or its login expired: {monitor.LastResult?.ResultText ?? tail}. Sign in by running `{cli}` once in a terminal.",
+                    RunOutcome.NoResult => $"{cli} exited with code {process.ExitCode} without a result. {tail}".TrimEnd(),
+                    RunOutcome.ResultThenAbnormalExit => $"{cli} reported a result but then exited with code {process.ExitCode}: {monitor.LastResult!.ResultText}",
+                    _ => monitor.LastResult?.ResultText ?? $"{cli} reported an error.",
+                };
+                Finish(job, outcome == RunOutcome.Succeeded ? JobState.Succeeded : JobState.Failed, detail);
             }
             catch (Exception ex)
             {
@@ -428,14 +547,57 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         }, CancellationToken.None);
     }
 
+    /// <summary>
+    /// A run hit a usage limit. Switch to the other subscription and run the same job again only if: the job allows
+    /// switching (not NeverDowngrade), it has not switched mid-job before, the other CLI is installed and not cooling
+    /// down, and no side-effecting call can have taken effect. The grant, tool allow-list, roots and approval policy
+    /// are unchanged. Every outcome is audited and shown.
+    /// </summary>
+    private async Task<bool> TrySwitchAfterRateLimitAsync(RunningJob job, AiProvider failed)
+    {
+        var other = failed == AiProvider.ClaudeCode ? AiProvider.GeminiCli : AiProvider.ClaudeCode;
+        string limit = job.LastResult?.RateLimit?.Message ?? "usage limit";
+        async Task<bool> Refuse(FailoverDecision d, string why)
+        {
+            job._routing.Add($"after start: stayed on {ProviderRouter.DisplayName(failed)}: {why}");
+            await AuditRouteAsync(job.JobId, d, failed, other, why).ConfigureAwait(false);
+            RaiseNotice(job.JobId, $"{ProviderRouter.DisplayName(failed)} hit its limit; not switching: {why}");
+            return false;
+        }
+        if (job.Spec.NeverDowngrade) return await Refuse(FailoverDecision.RefusedNeverDowngrade, "the job is set to never switch subscriptions").ConfigureAwait(false);
+        if (job.SwitchedMidJob) return await Refuse(FailoverDecision.RefusedAlreadySwitched, "the job already switched once").ConfigureAwait(false);
+        var (none, count) = await SideEffectsAsync(job.JobId).ConfigureAwait(false);
+        if (!none) return await Refuse(FailoverDecision.RefusedSideEffects,
+            $"{count} side-effecting call(s) may already have taken effect; re-running on another subscription could repeat or contradict them").ConfigureAwait(false);
+        RouteDecision next;
+        try { next = await RouteAsync(job.Spec.Category, other, neverDowngrade: true).ConfigureAwait(false); }
+        catch (ProviderUnavailableException ex) { return await Refuse(FailoverDecision.RefusedBothUnavailable, ex.Message).ConfigureAwait(false); }
+
+        string why = $"{ProviderRouter.DisplayName(failed)} hit a usage limit ({limit}) before any side effect";
+        job.SwitchedMidJob = true;
+        job.Provider = next.Provider;
+        job.RoutingNotice = $"{why}; continuing on {ProviderRouter.DisplayName(next.Provider)}.";
+        job._routing.Add("after start: " + job.RoutingNotice);
+        job.Outcome = null;
+        job.LastResult = null;
+        await AuditRouteAsync(job.JobId, FailoverDecision.SwitchedAfterRateLimit, failed, next.Provider, why).ConfigureAwait(false);
+        RaiseNotice(job.JobId, job.RoutingNotice);
+        Changed(job);
+        await LaunchHeadlessAsync(job, CancellationToken.None).ConfigureAwait(false);
+        return true;
+    }
+
     private void LaunchInteractive(RunningJob job)
     {
         var spec = job.Spec;
+        var session = new InteractiveSession(job.Workspace.Root);
+        session.ClearStale();
+        bool hasBrief = spec.Prompt.Length > 0;
         var psi = job.Provider == AiProvider.GeminiCli
-            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, spec.Prompt, spec.AllowMeteredBilling)
+            ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, spec.Prompt, spec.AllowMeteredBilling);
-        job.Interactive = new InteractiveSession(job.Workspace.Root);
+                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling);
+        job.Interactive = session;
         _options.Launcher.StartInteractive(psi, job.Workspace);
         // Never watch the launcher: wt.exe exits within milliseconds. The script's sentinel files tell us what happens.
         _ = Task.Run(() => WatchInteractiveAsync(job), CancellationToken.None);
@@ -527,6 +689,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     private void OnRevoked(string jobId)
     {
+        Briefs.Remove(jobId);
         // Expiry (bus sweep) or an external revoke ends the job too.
         if (_jobs.TryGetValue(jobId, out var job) && job.TryFinish(JobState.Ended, "grant revoked or expired"))
         {
@@ -551,6 +714,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         foreach (var job in _jobs.Values) job.ProcessGroup.Dispose();
         await Usage.DisposeAsync().ConfigureAwait(false);
         await Journal.DisposeAsync().ConfigureAwait(false);
+        await Operations.DisposeAsync().ConfigureAwait(false);
         await Audit.DisposeAsync().ConfigureAwait(false);
     }
 }
@@ -659,7 +823,8 @@ public static class JobSpecFactory
         string output = Path.GetFullPath(outputPath ?? DefaultAssemblyPath(full));
         var roots = new List<string> { full };
         string outDir = Path.GetDirectoryName(output)!;
-        if (!JobRegistry.NormalizeRoot(outDir).StartsWith(JobRegistry.NormalizeRoot(full), StringComparison.OrdinalIgnoreCase)) roots.Add(outDir);
+        // The user chose the output folder; it becomes a second root unless it already lies inside the first.
+        if (!Cockpit.Core.Security.PathSyntax.Current.IsSameOrInside(outDir, full)) roots.Add(outDir);
         return new JobSpec
         {
             Kind = "assemble",

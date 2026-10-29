@@ -71,6 +71,9 @@ public sealed class SqliteException : Exception
 
 public sealed class SqliteConnection : IDisposable, IAsyncDisposable
 {
+    /// <summary>Real API: closes pooled connections. The shim does not pool, so there is nothing to clear.</summary>
+    public static void ClearAllPools() { }
+
     private readonly string _path;
     internal IntPtr Handle;
     internal SqliteTransaction? ActiveTransaction;

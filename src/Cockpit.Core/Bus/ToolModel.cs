@@ -19,7 +19,9 @@ public sealed record ToolDescriptor(
     TimeSpan ExecutionTimeout);
 
 /// <param name="ApprovedRows">After approval: the preview rows the user kept (null = all). Providers that offer selectable previews must honour it.</param>
-public sealed record ToolCallContext(JobGrant Job, ToolDescriptor Tool, JsonElement Arguments, string CallId, IReadOnlySet<string>? ApprovedRows = null);
+/// <param name="ApprovedPreview">After a user approval: the exact preview they approved (null when auto-approved).</param>
+public sealed record ToolCallContext(JobGrant Job, ToolDescriptor Tool, JsonElement Arguments, string CallId, IReadOnlySet<string>? ApprovedRows = null,
+    JsonNode? ApprovedPreview = null);
 
 /// <summary>Result of a tool. IsError results are returned to the model as content, not as protocol errors.</summary>
 public sealed record ToolResult(bool IsError, string Text, JsonNode? Structured = null)

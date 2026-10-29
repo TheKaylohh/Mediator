@@ -93,7 +93,7 @@ static class ProviderTests
         return d;
     }
 
-    static Task<CockpitRuntime> Runtime(string bridgeDll, IApprovalPrompt prompt, IMediaProbe? probe = null, IPythonRunner? python = null,
+    internal static Task<CockpitRuntime> Runtime(string bridgeDll, IApprovalPrompt prompt, IMediaProbe? probe = null, IPythonRunner? python = null,
         IBlenderRunner? blender = null, SimulatedSwxBackend? swx = null) =>
         CockpitRuntime.CreateAsync(new RuntimeOptions
         {
@@ -309,18 +309,7 @@ static class ProviderTests
     public static async Task CodeCadPipeline(string bridgeDll)
     {
         string folder = TempDir();
-        var python = new FakePythonRunner((script, _) =>
-        {
-            var config = JsonNode.Parse(JsonSerializer.Deserialize<string>(Regex.Match(script, @"CONFIG = json\.loads\((""(?:[^""\\]|\\.)*"")\)").Groups[1].Value)!)!;
-            var results = new JsonArray();
-            foreach (var part in config["parts"]!.AsArray())
-            {
-                File.WriteAllText((string)part!["step"]!, "ISO-10303-21;\nHEADER;\nENDSEC;\nEND-ISO-10303-21;\n");
-                var env = part["envelope"]!.AsArray();
-                results.Add(new JsonObject { ["key"] = (string)part["key"]!, ["ok"] = true, ["bbox"] = new JsonArray((double)env[0]! - 1, (double)env[1]! - 1, (double)env[2]! - 1), ["volume"] = 1000.0 });
-            }
-            return new ProcessResult(0, new JsonObject { ["results"] = results }.ToJsonString(), "", false);
-        });
+        var python = new FakePythonRunner(FakeCad.Run);
         var prompt = new UntickPrompt("strut");
         var swx = new SimulatedSwxBackend();
         await using var runtime = await Runtime(bridgeDll, prompt, python: python, swx: swx);
@@ -339,12 +328,16 @@ static class ProviderTests
         var gen = await client.CallToolAsync(CodeCadToolProvider.GenerateTool, new JsonObject { ["outputFolder"] = folder, ["parts"] = parts }, TimeSpan.FromSeconds(30));
         Check.True(!gen.IsError, "generate: " + gen.Text);
         Check.True(gen.Text.Contains("1 part(s) were excluded by the user", StringComparison.Ordinal), "unticked strut reported");
+        Check.True(gen.Text.Contains("fit-check models in millimetres", StringComparison.Ordinal) && ((string)gen.Structured!["validation"]!).Contains("NOT engineering-validated", StringComparison.Ordinal),
+            "every result says fit-check, units mm, not engineering-validated");
         var made = gen.Structured!["parts"]!.AsArray().Select(p => (string)p!["step"]!).ToList();
         Check.True(made.Count == 3 && made.All(File.Exists) && !File.Exists(Path.Combine(folder, "strut.step")), "3 STEP files, no strut");
-        string script = File.ReadAllText(python.Scripts.Single());
+        Check.Equal(2, python.Scripts.Count, "generator + independent re-import validator");
+        string script = File.ReadAllText((string)gen.Structured!["script"]!); // the record of what ran, kept next to the parts
+        Check.True(!(bool)gen.Structured!["isolated"]! && FakeCad.ValidatorRuns > 0, "host path (no sandbox Python here) and the validator re-read the STEP files");
         Check.True(script.Contains("\\u0022bolt_circle_diameter\\u0022:112", StringComparison.Ordinal) && !script.Contains("strut_tube\\u0022,\\u0022params", StringComparison.Ordinal),
             "approved parameters embedded; the unticked part is not in the script");
-        PythonSyntax(python.Scripts.Single(), "generate_parts.py");
+        PythonSyntax((string)gen.Structured!["script"]!, "generate_parts.py");
 
         var bad = await client.CallToolAsync(CodeCadToolProvider.GenerateTool, new JsonObject
         {
@@ -376,7 +369,10 @@ static class ProviderTests
         var custom = await client.CallToolAsync(CodeCadToolProvider.CustomTool, new JsonObject { ["outputFolder"] = folder, ["key"] = "bracket2", ["script"] = "result = Box(10, 20, 30)", ["envelopeMm"] = new JsonArray(11, 21, 31) }, TimeSpan.FromSeconds(30));
         var customAsk = prompt.Seen.Single(r => r.Tool == CodeCadToolProvider.CustomTool);
         Check.True(customAsk.Risk == ToolRisk.Destructive && ((string)customAsk.Preview!["rows"]![0]!["primary"]!).Contains("result = Box", StringComparison.Ordinal), "custom code is Destructive and shown to the user");
-        Check.True(!custom.IsError, "custom script ran after approval: " + custom.Text);
+        // V6: no sandbox Python is configured for this runtime, so model-written code is refused, never run on the host.
+        Check.True(custom.IsError && custom.Text.Contains("custom code runs only inside the sandbox", StringComparison.Ordinal), "custom code refused without a sandbox: " + custom.Text);
+        Check.True(((string)customAsk.Preview!["summary"]!).Contains("CANNOT RUN", StringComparison.Ordinal), "the approval said it cannot run");
+        Check.Equal(2, python.Scripts.Count, "nothing ran for the custom script (only the generator and validator of the template call)");
     }
 
     // ── Tutor ────────────────────────────────────────────────────────────────────────────────────

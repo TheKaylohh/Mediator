@@ -1,0 +1,93 @@
+{
+  "environment": {
+    "os": "Ubuntu 24.04.5 LTS",
+    "dotnet": ".NET 8.0.32",
+    "cpus": 2,
+    "cpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "memTotal": "8220244 kB",
+    "build": "Debug, CockpitVerify=true (SQLite shim over the system libsqlite3; not the shipping Microsoft.Data.Sqlite)",
+    "when": "2026-10-23T05:25:10.3100260Z"
+  },
+  "coreStartup": {
+    "n": 5,
+    "p50Ms": 13.4,
+    "p95Ms": 182.93,
+    "p99Ms": 182.93,
+    "maxMs": 182.93,
+    "meanMs": 47.399
+  },
+  "coreWorkingSetMiB": 53.2,
+  "bridgeStartAndInitialize": {
+    "n": 5,
+    "p50Ms": 145.836,
+    "p95Ms": 196.136,
+    "p99Ms": 196.136,
+    "maxMs": 196.136,
+    "meanMs": 150.338
+  },
+  "mcpRoundTripReadOnly": {
+    "n": 500,
+    "p50Ms": 1.106,
+    "p95Ms": 9.538,
+    "p99Ms": 12.392,
+    "maxMs": 16.071,
+    "meanMs": 2.995
+  },
+  "mcpRoundTripWriteWithOperationRecord": {
+    "n": 300,
+    "p50Ms": 2.932,
+    "p95Ms": 8.738,
+    "p99Ms": 21.067,
+    "maxMs": 36.81,
+    "meanMs": 4.11
+  },
+  "writeDispatchOverhead": {
+    "writeMinusReadP50Ms": 1.826
+  },
+  "concurrent8x40": {
+    "totalMs": 203.9,
+    "callsPerSecond": 1569
+  },
+  "auditAppend": {
+    "rows": 2000,
+    "perRowMs": 0.277,
+    "verifyAllMs": 10.9,
+    "ok": true
+  },
+  "journal2000Files": {
+    "planMs": 487.5,
+    "executeMs": 3940.2,
+    "rollbackMs": 2767.9,
+    "executePerFileMs": 1.97,
+    "status": "committed",
+    "rollback": "rolled_back"
+  },
+  "pathCheck": {
+    "n": 2000,
+    "p50Ms": 0.056,
+    "p95Ms": 0.092,
+    "p99Ms": 0.134,
+    "maxMs": 2.21,
+    "meanMs": 0.066
+  },
+  "pathOpenReadVerified": {
+    "n": 2000,
+    "p50Ms": 0.062,
+    "p95Ms": 0.104,
+    "p99Ms": 0.14,
+    "maxMs": 1.328,
+    "meanMs": 0.072
+  },
+  "pdf400Pages": {
+    "bytes": 189907,
+    "textChars": 1239200,
+    "timing": {
+      "n": 3,
+      "p50Ms": 139.178,
+      "p95Ms": 154.976,
+      "p99Ms": 154.976,
+      "maxMs": 154.976,
+      "meanMs": 137.17
+    }
+  }
+}

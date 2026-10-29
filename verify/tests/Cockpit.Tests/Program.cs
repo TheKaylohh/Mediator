@@ -10,12 +10,15 @@ using Cockpit.Protocol;
 
 // Helper modes used by tests that need a stand-in child process (a "terminal" that stays up, or a CLI that prints a stream).
 if (args.Length == 2 && args[0] == "--sleep") { await Task.Delay(TimeSpan.FromSeconds(int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture))); return 0; }
-if (args.Length == 2 && args[0] == "--emit")
+if (args.Length >= 2 && args[0] == "--emit")
 {
+    // --emit <stdout file> [exit=<code>] [gate=<path: wait until it exists>] [stderr=<file>]
     await Console.In.ReadToEndAsync(); // consume the prompt like a real CLI
-    using var stdout = Console.OpenStandardOutput();
-    await stdout.WriteAsync(File.ReadAllBytes(args[1]));
-    return 0;
+    string? Opt(string k) => args.Skip(2).FirstOrDefault(x => x.StartsWith(k + "=", StringComparison.Ordinal))?[(k.Length + 1)..];
+    if (Opt("gate") is string gate) while (!File.Exists(gate)) await Task.Delay(20);
+    if (Opt("stderr") is string err) { using var e = Console.OpenStandardError(); await e.WriteAsync(File.ReadAllBytes(err)); }
+    using (var stdout = Console.OpenStandardOutput()) await stdout.WriteAsync(File.ReadAllBytes(args[1]));
+    return Opt("exit") is string code ? int.Parse(code, System.Globalization.CultureInfo.InvariantCulture) : 0;
 }
 
 if (args.Length == 2 && args[0] == "--write-fcpxml")
@@ -32,6 +35,11 @@ if (args.Length == 2 && args[0] == "--write-fcpxml")
     File.WriteAllText(args[1], Cockpit.Core.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
+if (args.Length == 3 && args[0] == "--bench") return await Cockpit.Tests.Benchmarks.RunAsync(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+if (args.Length == 2 && args[0] == "--audit-child") return await Cockpit.Tests.AuditTests.ChildAppend(args[1]);
+if (args.Length == 4 && args[0] == "--pdf-child") return Cockpit.Tests.PdfHardeningTests.Child(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
+if (args.Length == 5 && args[0] == "--ops-core") return await Cockpit.Tests.OperationTests.CoreChildAsync(args[1], args[2], args[3], args[4]);
+if (args.Length == 6 && args[0] == "--journal-child") return await Cockpit.Tests.JournalFaultTests.ChildAsync(args);
 if (args.Length == 2 && args[0] == "--test-pdf") { File.WriteAllBytes(args[1], Cockpit.Tests.TestPdf.Build()); return 0; }
 if (args.Length == 4 && args[0] == "--pdf-text")
 {
@@ -49,6 +57,8 @@ if (args.Length == 3 && args[0] == "--write-blender-script")
 var bridgeDll = args.Length > 0 ? Path.GetFullPath(args[0]) : throw new ArgumentException("Pass the path to cockpit-mcp-bridge.dll");
 var cliDll = args.Length > 1 ? Path.GetFullPath(args[1]) : throw new ArgumentException("Pass the path to cockpit.dll (the console host)");
 var testsDll = typeof(Check).Assembly.Location;
+Cockpit.Tests.JournalFaultTests.TestsDll = testsDll;
+Cockpit.Tests.PdfHardeningTests.TestsDll = testsDll;
 var tests = new List<(string Name, Func<Task> Run)>
 {
     ("xxhash64 matches reference vectors", Tests.XxHashVectors),
@@ -66,6 +76,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("#13 swx: layouts, mapped entities with mark 1, undo group; strict mock rejects raw faces and mark 0", Cockpit.Tests.SwxTests.MateSelectionAndLayouts),
     ("swx: modal dialog 2 s into a stalled call returns MODAL_DIALOG_BLOCKING at the 3 s probe; queue survives", Cockpit.Tests.SwxTests.ModalDialogWatchdog),
     ("swx: STEP import via LoadFile4 + SaveAs3 into new parts, never overwriting; result feeds part_cards", Cockpit.Tests.SwxTests.StepImport),
+    ("swx: STEP import ownership (fake COM): user's document returned by LoadFile4 left untouched; surface-only, duplicate target, already-open refused", Cockpit.Tests.SwxTests.StepImportOwnership),
     ("swx: geometric fallback when persist references no longer resolve", Cockpit.Tests.SwxTests.FaceFallbackAfterReopen),
     ("tcp: listener runs only while WSL jobs exist, on an ephemeral loopback port", Cockpit.Tests.TransportTests.ListenerOnlyWhileWslJobsExist),
     ("tcp: a valid pipe-bound token over TCP is rejected and audited", Cockpit.Tests.TransportTests.PipeTokenOverTcpRejectedAndAudited),
@@ -91,25 +102,87 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("tutor: exact det, inverse, RREF, charpoly, eigenpairs and graded claims on 3×3 matrices", () => Cockpit.Tests.ProviderTests.MatrixVerifier(bridgeDll)),
     ("tutor: built-in PDF reader (ObjStm, Flate, Type0 + ToUnicode) → study pack for pages 2–3", () => Cockpit.Tests.ProviderTests.PdfChapter(bridgeDll)),
     ("cli host process: doctor self-test, organize --rules --yes, rollback, usage errors", () => Cockpit.Tests.RuntimeTests.CliHostProcess(bridgeDll, cliDll)),
+    // V6 Phase 2a: filesystem authorization
+    ("fs-auth: Windows and POSIX lexical rules (device, UNC, ADS, dots/spaces, reserved, 8.3, ..) and component containment", Cockpit.Tests.SecurityTests.PathSyntaxRules),
+    ("fs-auth: real symlinks (final, intermediate, relative, dangling), root protection, alias roots, no overwrite; openat2 and fallback", Cockpit.Tests.SecurityTests.SymlinkEscapes),
+    ("fs-auth: a bind mount inside a root is refused", Cockpit.Tests.SecurityTests.BindMountInsideRoot),
+    ("fs-auth: TOCTOU swap race (folder ↔ symlink) never writes or reads outside; openat2 and fallback", Cockpit.Tests.SecurityTests.SwapRace),
+    ("fs-auth: providers refuse a PDF behind a link and timeline media outside the roots; audited with the rule", () => Cockpit.Tests.SecurityTests.ProvidersRefuseLinks(bridgeDll)),
+    ("fs-auth (Windows): junctions, junction swap race, real ADS", Cockpit.Tests.SecurityTests.WindowsJunctions),
+    // V6 Phase 2c: journal state machine under real faults
+    ("journal faults: real crash (FailFast in a child) at every boundary, first and middle hit → recover, resume, roll back exactly", Cockpit.Tests.JournalFaultTests.CrashAtEveryBoundary),
+    ("journal faults: file changed after approval is skipped; changed between fingerprint and rename is not rolled back over", Cockpit.Tests.JournalFaultTests.ConcurrentModification),
+    ("journal faults: stale rollback conflicts, newest-first works; a second process cannot open the journal", Cockpit.Tests.JournalFaultTests.StaleRollbackAndSecondProcess),
+    ("journal faults: permission failure as uid 65534 (real): one op fails, rest commit, rollback restores", Cockpit.Tests.JournalFaultTests.PermissionFailure),
+    ("journal faults: disk full under the journal (real 1 MiB tmpfs): stops consistently, reconciles, finishes", Cockpit.Tests.JournalFaultTests.DiskFullJournal),
+    ("journal faults (Windows): locked file (sharing violation)", Cockpit.Tests.JournalFaultTests.LockedFileWindows),
+    // V6 Phase 3: providers, failover, usage
+    ("providers: pre-launch routing matrix (each unavailable, both unavailable, both cooling, NeverDowngrade) with original + reason", Cockpit.Tests.FailoverTests.RouterMatrix),
+    ("providers: REAL captures (Claude Code 2.1.309 invalid key, Gemini 0.65.0 no-auth/untrusted/no-result) classified; result-then-abnormal-exit", Cockpit.Tests.FailoverTests.RealCapturesClassified),
+    ("usage: unknown stays unknown (never 0), duplicate results counted once, no-result runs recorded, V5 ledger migrated", Cockpit.Tests.FailoverTests.UsageUnknownNotZero),
+    ("failover: mid-job switch only before side effects, same grant; side effect / NeverDowngrade / second limit refuse; all audited", () => Cockpit.Tests.FailoverTests.MidJobFailover(bridgeDll, testsDll)),
+    ("failover: real invalid-key capture killed by billing guard, AuthFailed when metered allowed; Gemini exit 41; trust env; abnormal exit", () => Cockpit.Tests.FailoverTests.RealAuthFailures(bridgeDll, testsDll)),
+    ("overlay: an uncertain call is amber 'outcome unknown', kill says it may still finish, a late result clears it", () => Cockpit.Tests.OverlayStateTests.UncertainCallsAreNotShownAsStopped(bridgeDll)),
+    ("bus: hostile frames (oversized/negative/partial hello, invalid UTF-8, non-object, duplicate id by value, >16 MiB) handled; bus keeps serving", Cockpit.Tests.BusHardeningTests.HostileFrames),
+    ("bus: per-connection in-flight cap refuses excess requests with an error", Cockpit.Tests.BusHardeningTests.InFlightCap),
+    ("bus: a grant revoked while a Write waits for approval never executes, even if approval arrives after", Cockpit.Tests.BusHardeningTests.RevokedWhileAwaitingApproval),
+    ("bus: 4 jobs x 40 concurrent calls with a mid-run revocation; every response to the right id and job; no deadlock", Cockpit.Tests.BusHardeningTests.ConcurrencyStress),
+    // V6 Phases 4-5: hostile inputs
+    ("pdf: 200 000 nested arrays → FormatException in a child process (was a stack overflow that killed the process)", Cockpit.Tests.PdfHardeningTests.DeepNestingIsAFormatError),
+    ("pdf: limits: 300 MiB decompression bomb, total budget, operand flood, time budget, huge ObjStm /N, encrypted, DCT, page ranges", Cockpit.Tests.PdfHardeningTests.ResourceLimits),
+    ("pdf: 3000 seeded mutations (flips, truncation, junk, splices) → parse or FormatException only, none over 5 s, no crash", Cockpit.Tests.PdfHardeningTests.MutationFuzz),
+    ("tutor: exact near-singular/singular/rational/defective/complex/huge cases; pathological numbers and malformed claims refused", () => Cockpit.Tests.TutorExactnessTests.ExactnessAndPathologicalInput(bridgeDll)),
+    ("audit: hash chain detects edit, delete, insert and unhashed rows; append-only triggers still refuse UPDATE", Cockpit.Tests.AuditTests.HashChainDetectsTampering),
+    ("audit: V5 log migrates; rotation archives (never deletes) and the new log continues the chain; forged link detected", Cockpit.Tests.AuditTests.V5LogMigratesAndRotationContinuesChain),
+    ("audit: secrets redacted before storage (registered values, key formats, secret fields, bearer, VAR=value)", Cockpit.Tests.AuditTests.RedactionBeforeStorage),
+    ("audit: appender SIGKILLed mid-stream 3 times; chain verifies and continues each time", () => Cockpit.Tests.AuditTests.CrashMidAppendStaysConsistent(testsDll)),
+    ("support bundle: only documented files; no secrets, tokens, file names, contents or real paths; chain head included", () => Cockpit.Tests.AuditTests.SupportBundleIsClean(bridgeDll)),
+    ("step: validator on STEP files written by real build123d/OpenCascade: solid ok; surface-only, truncated, empty refused", Cockpit.Tests.StepFixtureTests.ValidatorOnRealStepFiles),
+    // V6 Phase 2d: durable operation store
+    ("operations: state machine refuses illegal transitions; canonical request keys; full history", Cockpit.Tests.OperationTests.StateMachineRules),
+    ("operations: replay after commit returns the stored result; concurrent duplicate refused; one side effect", () => Cockpit.Tests.OperationTests.ReplayAndDuplicates(bridgeDll)),
+    ("operations: timeout during a call that ignores cancellation → outcome_unknown, retry refused, late commit recorded, then replay", () => Cockpit.Tests.OperationTests.TimeoutDuringExecution(bridgeDll)),
+    ("operations: bridge killed mid-call → cancellation_requested (not cancelled), real outcome recorded, reconnect replays", () => Cockpit.Tests.OperationTests.KillBridgeMidCall(bridgeDll)),
+    ("operations: Core killed mid-call (real SIGKILL) → restart marks recovery_required, no blind replay, user verdict; journal reconciler settles files ops", () => Cockpit.Tests.OperationTests.KillCoreAndRestart(bridgeDll, testsDll)),
+    // V6 Phase 2b: custom-code isolation
+    ("isolation: approval bound to script/args/folder/policy; tampered binding refused; link/surface/truncated/extra outputs refused; staging cleanup never follows links", () => Cockpit.Tests.IsolationTests.ApprovalBindingAndOutputChecks(bridgeDll)),
+    ("isolation (real bwrap): no host files, read-only system, no secrets in env, uid 65534, own PID ns, no nested userns, no mount", Cockpit.Tests.IsolationTests.RealSandboxConfinement),
+    ("isolation (real bwrap): no network (host loopback, external, DNS)", Cockpit.Tests.IsolationTests.RealSandboxNoNetwork),
+    ("isolation (real bwrap): memory, CPU, process and file-size limits; wall-clock kill; no surviving grandchildren", Cockpit.Tests.IsolationTests.RealSandboxLimitsAndCleanup),
+    ("fs-auth: journal rejects link moves at plan time and stops a move whose destination was swapped after approval", Cockpit.Tests.SecurityTests.JournalRefusesLinks),
 };
 
-if (Cockpit.Tests.LiveTests.Python is not null)
-{
-    tests.Add(("live: build123d builds all 7 templates to STEP within their envelopes", () => Cockpit.Tests.LiveTests.Build123dTemplates(bridgeDll)));
-    tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", () => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll)));
-    tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", () => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll)));
-    tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Cockpit.Tests.LiveTests.MediaProbes));
-}
-else Console.WriteLine("(live tests skipped: set COCKPIT_LIVE_PYTHON to a Python with build123d, bpy, pymupdf and sympy)");
+// Live tests are always listed; without COCKPIT_LIVE_PYTHON each one reports SKIP (never PASS).
+Func<Task> Live(Func<Task> body) => () => Cockpit.Tests.LiveTests.Python is null
+    ? throw new SkipException("COCKPIT_LIVE_PYTHON is not set (a Python with build123d, bpy, pymupdf and sympy)")
+    : body();
+tests.Add(("live: build123d builds all 7 templates to STEP within their envelopes", Live(() => Cockpit.Tests.LiveTests.Build123dTemplates(bridgeDll))));
+tests.Add(("live: the car scene script runs on the real Blender API (bpy) and saves a .blend", Live(() => Cockpit.Tests.LiveTests.BlenderScene(bridgeDll))));
+tests.Add(("live: PyMuPDF chapter extraction and the SymPy cross-check script", Live(() => Cockpit.Tests.LiveTests.PdfAndSympy(bridgeDll))));
+tests.Add(("live: build123d custom code inside real bubblewrap through the bus; hostile script contained", Live(() => Cockpit.Tests.IsolationTests.LiveCustomCodeInSandbox(bridgeDll))));
+tests.Add(("live: every CAD template at min/max and seeded random valid parameters → STEP, validated and re-imported in the sandbox", Live(() => Cockpit.Tests.LiveCadBoundaryTests.BoundaryAndRandomParameters(bridgeDll))));
+tests.Add(("live: built-in MP4/MOV/WAV reader agrees with ffprobe on clips made by ffmpeg", Live(Cockpit.Tests.LiveTests.MediaProbes)));
 
-int failed = 0;
+// A skip is never a pass: it is printed as SKIP, counted separately, and with COCKPIT_REQUIRE_ALL=1 it fails the run.
+bool requireAll = Environment.GetEnvironmentVariable("COCKPIT_REQUIRE_ALL") == "1";
+string? only = Environment.GetEnvironmentVariable("COCKPIT_ONLY");
+int failed = 0, skipped = 0, passed = 0;
+var skips = new List<string>();
 foreach (var (name, run) in tests)
 {
+    if (only is not null && !only.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(o => name.Contains(o, StringComparison.OrdinalIgnoreCase))) continue; // COCKPIT_ONLY=a,b,c
     var sw = Stopwatch.StartNew();
     try
     {
-        await run().WaitAsync(TimeSpan.FromSeconds(name.StartsWith("live:", StringComparison.Ordinal) ? 900 : 60));
+        await run().WaitAsync(TimeSpan.FromSeconds(name.StartsWith("live:", StringComparison.Ordinal) ? 900 : 120));
+        passed++;
         Console.WriteLine($"PASS  {name} ({sw.ElapsedMilliseconds} ms)");
+    }
+    catch (SkipException skip)
+    {
+        skipped++;
+        skips.Add($"{name}: {skip.Message}");
+        Console.WriteLine($"SKIP  {name}: {skip.Message}");
     }
     catch (Exception ex)
     {
@@ -117,8 +190,16 @@ foreach (var (name, run) in tests)
         Console.WriteLine($"FAIL  {name}: {ex}");
     }
 }
-Console.WriteLine(failed == 0 ? $"\nAll {tests.Count} tests passed." : $"\n{failed} of {tests.Count} tests FAILED.");
-return failed == 0 ? 0 : 1;
+int total = passed + failed + skipped;
+Console.WriteLine($"\n{passed} passed, {failed} failed, {skipped} skipped ({total} total).");
+foreach (var s in skips) Console.WriteLine($"  skipped: {s}");
+if (failed > 0) { Console.WriteLine($"{failed} of {total} tests FAILED."); return 1; }
+if (skipped > 0 && requireAll) { Console.WriteLine("COCKPIT_REQUIRE_ALL=1: skipped tests count as failures."); return 2; }
+Console.WriteLine(skipped == 0 ? $"All {total} tests passed." : $"All {passed} tests that ran passed; {skipped} did not run.");
+return 0;
+
+/// <summary>Thrown by a test that cannot run here (missing tool or privilege). Reported as SKIP, never as PASS.</summary>
+sealed class SkipException(string reason) : Exception(reason);
 
 static class Check
 {
@@ -200,7 +281,7 @@ static class Tests
         File.WriteAllText(Path.Combine(outside, "o.pdf"), "o");
 
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var roots = new[] { JobRegistry.NormalizeRoot(root) };
+        var roots = new Cockpit.Core.Security.PathAuthorizer([root]);
         var moves = Enumerable.Range(0, 5).Select(i => new MoveRequest(Path.Combine(src, $"doc{i}.pdf"), Path.Combine(root, "sorted", "pdf", "2026", $"doc{i}.pdf"))).ToList();
         moves.Add(new MoveRequest(Path.Combine(repo, "code.cs"), Path.Combine(root, "sorted", "code.cs")));        // protected
         moves.Add(new MoveRequest(Path.Combine(outside, "o.pdf"), Path.Combine(root, "sorted", "o.pdf")));         // outside roots
@@ -233,7 +314,7 @@ static class Tests
         File.WriteAllText(Path.Combine(root, "a.txt"), "original");
         File.WriteAllText(Path.Combine(root, "b.txt"), "original b");
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var roots = new[] { JobRegistry.NormalizeRoot(root) };
+        var roots = new Cockpit.Core.Security.PathAuthorizer([root]);
         var plan = await journal.PlanAsync("job1",
             [new(Path.Combine(root, "a.txt"), Path.Combine(root, "out", "a.txt")), new(Path.Combine(root, "b.txt"), Path.Combine(root, "out", "b.txt"))],
             roots, null, CancellationToken.None);
@@ -260,7 +341,7 @@ static class Tests
         {
             var plan = await journal.PlanAsync("job1",
                 [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt")), new(Path.Combine(root, "b.txt"), Path.Combine(root, "b2.txt"))],
-                [JobRegistry.NormalizeRoot(root)], null, CancellationToken.None);
+                new Cockpit.Core.Security.PathAuthorizer([root]), null, CancellationToken.None);
             batch = plan.BatchId;
         }
 
@@ -300,7 +381,7 @@ static class Tests
         string root = TempDir();
         File.WriteAllText(Path.Combine(root, "a.txt"), "a");
         await using var journal = await FileJournalService.OpenAsync(Path.Combine(root, "journal.db"), Policy());
-        var plan = await journal.PlanAsync("job1", [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt"))], [JobRegistry.NormalizeRoot(root)], null, CancellationToken.None);
+        var plan = await journal.PlanAsync("job1", [new(Path.Combine(root, "a.txt"), Path.Combine(root, "a2.txt"))], new Cockpit.Core.Security.PathAuthorizer([root]), null, CancellationToken.None);
         bool refused = false;
         try { await journal.ExecuteAsync(plan.BatchId, "job2", null, CancellationToken.None); }
         catch (JournalException ex) { refused = ex.Message.Contains("No batch"); }
@@ -340,7 +421,7 @@ static class Tests
     {
         var grant = new JobGrant
         {
-            JobId = "j", Token = "t", AllowedTools = new HashSet<string>(), FileRoots = [], ExpiresAt = DateTimeOffset.MaxValue,
+            JobId = "j", Token = "t", AllowedTools = new HashSet<string>(), FileRoots = [], Paths = new Cockpit.Core.Security.PathAuthorizer([]), ExpiresAt = DateTimeOffset.MaxValue,
             ToolModes = new Dictionary<string, ApprovalMode> { ["wipe"] = ApprovalMode.Auto, ["read"] = ApprovalMode.Deny },
         };
         var schema = new JsonObject();
@@ -372,9 +453,14 @@ static class Tests
         Check.True(raw[0] == (byte)'{', "MCP config has no BOM");
         var claude = JsonNode.Parse(raw)!;
         var argv = claude["mcpServers"]!["cockpit"]!["args"]!.AsArray().Select(n => (string)n!).ToList();
-        Check.True(argv.SequenceEqual(new[] { "--job-id", "job-gen", "--scope", grant.Token, "--endpoint", "pipe:ai-cockpit-bus", "--timeout-seconds", "1200" }), "bridge args");
+        Check.True(argv.SequenceEqual(new[] { "--job-id", "job-gen", "--endpoint", "pipe:ai-cockpit-bus", "--timeout-seconds", "1200" }), "bridge args carry no token");
+        Check.True(!argv.Any(a => a.Contains(grant.Token, StringComparison.Ordinal)), "the token is not in argv");
         var gemini = JsonNode.Parse(File.ReadAllText(ws.GeminiSettingsPath))!;
         Check.True((long)gemini["mcpServers"]!["cockpit"]!["timeout"]! > 1_200_000, "Gemini timeout exceeds bridge timeout");
+        Check.Equal(grant.Token, (string?)claude["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Claude config passes the token in env");
+        Check.Equal(grant.Token, (string?)gemini["mcpServers"]!["cockpit"]!["env"]!["COCKPIT_JOB_TOKEN"], "Gemini config passes the token in env");
+        if (!OperatingSystem.IsWindows())
+            Check.True(File.GetUnixFileMode(ws.ClaudeMcpConfigPath) == (UnixFileMode.UserRead | UnixFileMode.UserWrite), "config files are owner-only");
         return Task.CompletedTask;
     }
 
@@ -446,9 +532,10 @@ static class Tests
         private readonly StreamReader _stdout;
         public StringBuilder Stderr { get; } = new();
 
-        public BridgeProcess(string bridgeDll, params string[] args)
+        public BridgeProcess(string bridgeDll, string? token, params string[] args)
         {
             var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            if (token is not null) psi.Environment["COCKPIT_JOB_TOKEN"] = token;
             psi.ArgumentList.Add(bridgeDll);
             foreach (var a in args) psi.ArgumentList.Add(a);
             _p = Process.Start(psi)!;
@@ -491,7 +578,7 @@ static class Tests
     public static async Task BridgeEndToEnd(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", h.Grant.Token, "--endpoint", "pipe:" + h.PipeName);
+        await using var b = new BridgeProcess(bridgeDll, h.Grant.Token, "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName);
 
         // A BOM before the first message must be tolerated.
         await b.SendRawAsync([0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""" + "\n")]);
@@ -545,7 +632,7 @@ static class Tests
     public static async Task BridgeTimeout(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", h.Grant.Token, "--endpoint", "pipe:" + h.PipeName, "--timeout-seconds", "2");
+        await using var b = new BridgeProcess(bridgeDll, h.Grant.Token, "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName, "--timeout-seconds", "2");
         await b.SendAsync("""{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"slow","arguments":{"ms":5000}}}""");
         var timedOut = await b.ReceiveAsync(TimeSpan.FromSeconds(10));
         Check.Equal(10, (int)timedOut["id"]!, "timeout answers the right id");
@@ -563,7 +650,7 @@ static class Tests
     public static async Task BridgeRejected(string bridgeDll)
     {
         await using var h = await StartBus();
-        await using var b = new BridgeProcess(bridgeDll, "--job-id", h.Grant.JobId, "--scope", "wrong-token", "--endpoint", "pipe:" + h.PipeName);
+        await using var b = new BridgeProcess(bridgeDll, "wrong-token", "--job-id", h.Grant.JobId, "--endpoint", "pipe:" + h.PipeName);
         // The bridge connects eagerly, so it may already have exited when this write happens.
         try { await b.SendAsync("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}"""); } catch (IOException) { }
         string? line = await b.TryReceiveLineAsync(TimeSpan.FromSeconds(10));

@@ -27,6 +27,9 @@ public static class Commands
               cockpit organize <folder> --rules <rules.json> [--recursive]
               cockpit organize <folder> --criteria "<what you want>" [--headless|--interactive]
               cockpit rollback <jobId> [--batch <batchId>] [--yes]
+              cockpit operations [--unresolved] [--job-id <id>]              (side-effecting calls and their state)
+              cockpit operations resolve <operationId> --done|--not-done --note "<what you checked>"
+              cockpit support-bundle [--output <file.zip>]                   (redacted diagnostics to share)
               cockpit cad      <folder> --request "front suspension: hub, disc, spring"   (build123d → STEP → SolidWorks)
               cockpit resolve  <folder> --request "60 s teaser, music under"            (FCPXML + EDL for DaVinci Resolve)
               cockpit blender  <folder> --request "red car through a neon city"        (scene .blend + preview frames)
@@ -169,7 +172,7 @@ public static class Commands
                 string cost = r.TotalCostUsd is double c
                     ? string.Create(CultureInfo.InvariantCulture, $", API-equivalent ${c:0.000} (not charged on a subscription)") : "";
                 Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"Usage: {r.NumTurns} turns, {r.Usage.InputTokens} in / {r.Usage.OutputTokens} out / {r.Usage.CacheReadInputTokens} cache-read tokens{cost}"));
+                    $"Usage: {r.NumTurns?.ToString(CultureInfo.InvariantCulture) ?? "?"} turns, {r.Usage?.Describe() ?? "token usage not reported by the CLI (unknown)"}{cost}"));
             }
             Console.WriteLine($"Undo file changes with: cockpit rollback {job.JobId}");
             return state switch { JobState.Succeeded or JobState.Ended => 0, JobState.Killed => 130, _ => 1 };
@@ -351,6 +354,54 @@ public static class Commands
         return conflicts == 0 ? 0 : 1;
     }
 
+    // ── support bundle ────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Writes a shareable zip: secrets redacted, paths anonymized, no databases, configs, prompts or user files.</summary>
+    public static async Task<int> SupportBundleAsync(CliArgs cli)
+    {
+        await using var runtime = await CockpitRuntime.CreateAsync(Options(cli));
+        string output = cli.Get("output") ?? Path.Combine(Environment.CurrentDirectory,
+            "cockpit-support-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".zip");
+        string written = await Cockpit.Core.Diagnostics.SupportBundle.CreateAsync(runtime, output);
+        Console.WriteLine($"Support bundle: {written}");
+        Console.WriteLine("It contains no secrets, prompts, file names or file contents; paths are replaced by <path#hash>. Open it to check before sharing.");
+        return 0;
+    }
+
+    // ── operations ────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Lists side-effecting calls, or records the user's verdict on one whose outcome was unknown.</summary>
+    public static async Task<int> OperationsAsync(CliArgs cli)
+    {
+        await using var runtime = await CockpitRuntime.CreateAsync(Options(cli));
+        if (cli.Positional.Count > 0 && cli.Positional[0] == "resolve")
+        {
+            string id = cli.RequirePositional(1, "operation id");
+            if (cli.Has("done") == cli.Has("not-done")) throw new UsageException("Say what you found: --done (it took effect) or --not-done.");
+            string note = cli.Get("note") ?? throw new UsageException("--note is required: say what you checked.");
+            var op = await runtime.Operations.GetAsync(id) ?? throw new UsageException($"No operation {id}.");
+            if (op.State is not (OperationState.RecoveryRequired or OperationState.OutcomeUnknown))
+                throw new UsageException($"{id} is {OperationStore.Snake(op.State)}; only outcome_unknown or recovery_required operations need a verdict.");
+            if (op.State == OperationState.OutcomeUnknown) op = await runtime.Operations.TransitionAsync(id, OperationState.RecoveryRequired, "user is reviewing it");
+            var resolved = await runtime.Operations.ResolveAsync(id, cli.Has("done"), note);
+            await runtime.Audit.RecordAsync(new AuditEntry(op.JobId, "cockpit/operations-resolve", id, ToolRisk.Write,
+                new JsonObject { ["operationId"] = id, ["tookEffect"] = cli.Has("done") }.ToJsonString(), "approved", "ok", note, 0));
+            Console.WriteLine($"{id}: {OperationStore.Snake(resolved.State)}");
+            return 0;
+        }
+        var list = await runtime.Operations.ListAsync(cli.Get("job-id"), cli.Has("unresolved"));
+        if (cli.Has("json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(list.Select(o => new { o.OperationId, o.JobId, o.Tool, State = OperationStore.Snake(o.State), o.Attempt, o.CreatedUtc, o.UpdatedUtc, o.Note }),
+                new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+        if (list.Count == 0) { Console.WriteLine(cli.Has("unresolved") ? "No operations need a check." : "No operations recorded."); return 0; }
+        foreach (var o in list)
+            Console.WriteLine($"{o.OperationId}  {OperationStore.Snake(o.State),-22} {o.Tool,-30} {o.JobId}  {o.UpdatedUtc}  {o.Note}");
+        return 0;
+    }
+
     // ── doctor ────────────────────────────────────────────────────────────────────────────────────────
 
     public sealed record Check(string Name, string Status, string Detail);
@@ -369,6 +420,11 @@ public static class Commands
             runtime = await CockpitRuntime.CreateAsync(Options(cli));
             Add("state folder", "ok", runtime.Paths.DataDirectory);
             Add("bus", "ok", runtime.Bus.PipeEndpoint.ToString());
+            var chain = await runtime.Audit.VerifyAsync();
+            Add("audit chain", chain.Ok ? "ok" : "fail", chain.Ok
+                ? $"{chain.RowsChecked} rows verified; head {chain.Head?[..Math.Min(16, chain.Head.Length)]}… (note it down to detect a truncated log later)"
+                : $"row {chain.FirstBadId}: {chain.Problem}");
+            if (runtime.Recovery.NeedsUser > 0) Add("operations", "warn", $"{runtime.Recovery.NeedsUser} operation(s) need your check: cockpit operations --unresolved");
         }
         catch (Exception ex)
         {
@@ -494,7 +550,7 @@ public static class Commands
             var tools = await client.ListToolsAsync();
             var call = await client.CallToolAsync(FilesToolProvider.Status, new JsonObject { ["batchId"] = "doctor-probe" }, TimeSpan.FromSeconds(20));
             long audited = await runtime.Audit.CountAsync(job.JobId);
-            bool ok = tools.SequenceEqual([FilesToolProvider.Status]) && call.IsError && audited >= 1;
+            bool ok = tools.Order(StringComparer.Ordinal).SequenceEqual([OperationsToolProvider.StatusTool, FilesToolProvider.Status]) && call.IsError && audited >= 1;
             add("bridge self-test", ok ? "ok" : "fail", ok
                 ? $"initialize, tools/list, tools/call and audit through the bridge in {sw.ElapsedMilliseconds} ms"
                 : $"unexpected: tools [{string.Join(",", tools)}], call error {call.IsError}, audit rows {audited}");

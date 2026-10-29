@@ -34,17 +34,29 @@ public sealed record SystemNoticeEvent(string? SessionId, string Subtype, string
 /// <summary>A subscription usage limit or API rate limit, with the reset time when the CLI reports one.</summary>
 public sealed record RateLimitInfo(string Message, DateTimeOffset? ResetsAt);
 
-public sealed record UsageTotals(long InputTokens, long OutputTokens, long CacheReadInputTokens, long CacheCreationInputTokens)
+/// <summary>
+/// Token counts a run reported. V6: a field the CLI did not report is null (unknown), never 0, and a run whose
+/// result carried no usage at all has <c>RunResultEvent.Usage == null</c>. Quota estimates count unknown runs
+/// separately instead of treating them as free.
+/// </summary>
+public sealed record UsageTotals(long? InputTokens, long? OutputTokens, long? CacheReadInputTokens, long? CacheCreationInputTokens)
 {
-    public static readonly UsageTotals Zero = new(0, 0, 0, 0);
+    public bool Complete => InputTokens is not null && OutputTokens is not null;
+
+    public string Describe() => Complete
+        ? string.Create(CultureInfo.InvariantCulture, $"{InputTokens} in / {OutputTokens} out / {Fmt(CacheReadInputTokens)} cache-read tokens")
+        : $"token usage partly unknown ({Fmt(InputTokens)} in / {Fmt(OutputTokens)} out)";
+
+    private static string Fmt(long? v) => v is long x ? x.ToString(CultureInfo.InvariantCulture) : "?";
 }
 
 /// <summary>
 /// Last event of a run. <see cref="TotalCostUsd"/> is Claude Code's API-equivalent estimate; on a subscription
 /// it is a gauge for comparing runs, not money charged.
 /// </summary>
+/// <param name="Usage">Null when the CLI reported no usage for the run (unknown, not zero).</param>
 public sealed record RunResultEvent(string? SessionId, string Subtype, bool IsError, string? ResultText, int? NumTurns, long? DurationMs,
-    double? TotalCostUsd, UsageTotals Usage, RateLimitInfo? RateLimit) : CockpitStreamEvent(SessionId);
+    double? TotalCostUsd, UsageTotals? Usage, RateLimitInfo? RateLimit) : CockpitStreamEvent(SessionId);
 
 public sealed record UnknownEvent(string? SessionId, string Type, string Raw) : CockpitStreamEvent(SessionId);
 
@@ -181,10 +193,10 @@ public sealed partial class ClaudeStreamParser : ICliStreamParser
         bool isError = root.TryGetProperty("is_error", out var e) && e.ValueKind == JsonValueKind.True;
         string subtype = Str(root, "subtype") ?? "";
         string? text = Str(root, "result");
-        var usage = UsageTotals.Zero;
+        UsageTotals? usage = null;
         if (root.TryGetProperty("usage", out var u) && u.ValueKind == JsonValueKind.Object)
-            usage = new UsageTotals(Long(u, "input_tokens") ?? 0, Long(u, "output_tokens") ?? 0,
-                Long(u, "cache_read_input_tokens") ?? 0, Long(u, "cache_creation_input_tokens") ?? 0);
+            usage = new UsageTotals(Long(u, "input_tokens"), Long(u, "output_tokens"),
+                Long(u, "cache_read_input_tokens"), Long(u, "cache_creation_input_tokens"));
 
         RateLimitInfo? limit = null;
         if ((isError || subtype.StartsWith("error", StringComparison.Ordinal)) && text is not null && LimitText().IsMatch(text))

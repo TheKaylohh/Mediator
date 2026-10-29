@@ -1,0 +1,19 @@
+Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.
+Attempt 1 failed. Retrying with backoff... Error: exception TypeError: fetch failed sending request
+    at file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:267745:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Models.generateContent (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:268717:16)
+    at async file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:312641:26
+    at async file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:288953:23
+    at async retryWithBackoff (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:309072:23)
+    at async BaseLlmClient._generateWithRetry (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:309368:14)
+    at async BaseLlmClient.generateJson (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:309261:21)
+    at async NumericalClassifierStrategy.route (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:362456:28)
+    at async CompositeStrategy.route (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:362528:26)
+Attempt 2 failed. Retrying with backoff... Error: exception TypeError: fetch failed sending request
+    at file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:267745:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Models.generateContent (file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:268717:16)
+    at async file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:312641:26
+    at async file:///opt/clis/node_modules/@google/gemini-cli/bundle/chunk-DKZARV6U.js:288953:23
+    at async retryWithBackoff (file:///opt/clis/node_

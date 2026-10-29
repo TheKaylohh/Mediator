@@ -99,13 +99,15 @@ public sealed class CliLaunchBuilder
     /// Cockpit's environment. The script is UTF-8 WITH a BOM: Windows PowerShell 5.1 reads BOM-less scripts
     /// as ANSI and would mangle a non-ASCII prompt.
     /// </summary>
-    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, string initialPrompt, bool allowMeteredBilling = false)
+    /// <param name="hasBrief">V6: the user's task is never put on a command line (visible to other processes). When the job has
+    /// one, the first message is a fixed instruction to fetch it from cockpit_job_brief over the authenticated bus.</param>
+    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false)
     {
         string command = $"& {Ps(_claudeExecutable)} --mcp-config {Ps(ws.ClaudeMcpConfigPath)} --strict-mcp-config --allowedTools {Ps("mcp__" + JobWorkspaceFactory.ServerName)}"
-            + (initialPrompt.Length == 0 ? "" : " " + Ps(initialPrompt));
+            + (hasBrief ? " " + Ps(JobBriefToolProvider.Instruction) : "");
         string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-claude.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling), allowMeteredBilling,
             new Dictionary<string, string> { ["MCP_TOOL_TIMEOUT"] = ((long)_toolTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture) },
-            workingDirectory, command);
+            workingDirectory, command, session.Nonce);
         return TerminalStartInfo(script, $"Cockpit {ws.JobId}", workingDirectory);
     }
 

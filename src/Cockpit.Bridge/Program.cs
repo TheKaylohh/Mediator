@@ -5,6 +5,8 @@ BridgeOptions options;
 try
 {
     options = BridgeOptions.Parse(args);
+    // Do not leave the token in the environment of anything this process might start.
+    Environment.SetEnvironmentVariable(BridgeOptions.TokenVariable, null);
 }
 catch (Exception ex) when (ex is ArgumentException or FormatException)
 {

@@ -18,7 +18,7 @@ public sealed class JobGrant
     public required string JobId { get; init; }
     public required string Token { get; init; }
     public required IReadOnlySet<string> AllowedTools { get; init; }
-    /// <summary>Absolute folder roots this job may read or change, each ending with a separator.</summary>
+    /// <summary>Real (link-resolved) folder roots this job may read or change, each ending with a separator. Display only: authorize with <see cref="Paths"/>.</summary>
     public required IReadOnlyList<string> FileRoots { get; init; }
     /// <summary>Per-tool override of the risk-based default. Destructive tools can never be set to Auto.</summary>
     public IReadOnlyDictionary<string, ApprovalMode> ToolModes { get; init; } = new Dictionary<string, ApprovalMode>();
@@ -29,15 +29,11 @@ public sealed class JobGrant
     public TimeSpan ApprovalTimeout { get; init; } = TimeSpan.FromMinutes(5);
     public required DateTimeOffset ExpiresAt { get; init; }
 
-    /// <summary>True if the full path lies inside one of this job's roots (case-insensitive on Windows).</summary>
-    public bool IsInsideRoots(string fullPath)
-    {
-        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        string withSep = Path.EndsInDirectorySeparator(fullPath) ? fullPath : fullPath + Path.DirectorySeparatorChar;
-        foreach (var root in FileRoots)
-            if (withSep.StartsWith(root, cmp)) return true;
-        return false;
-    }
+    /// <summary>
+    /// The only way a provider may decide whether a path is inside this job's roots. Lexical prefix checks are
+    /// not allowed anywhere else (they miss links, junctions and mount points; see docs/v6/FILESYSTEM_SECURITY.md).
+    /// </summary>
+    public required Cockpit.Core.Security.PathAuthorizer Paths { get; init; }
 }
 
 /// <summary>Issues, authenticates and revokes job grants. Thread-safe.</summary>
@@ -61,13 +57,16 @@ public sealed class JobRegistry
         if (string.IsNullOrWhiteSpace(jobId) || jobId.Length > 64 || !jobId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
             throw new ArgumentException("Job IDs are 1-64 characters of letters, digits, '-' or '_'.", nameof(jobId));
 
-        var roots = fileRoots.Select(NormalizeRoot).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
+        // Roots are resolved to their real paths now; a root that does not exist fails the grant (fail-closed).
+        var paths = new Cockpit.Core.Security.PathAuthorizer(fileRoots);
+        var roots = paths.Roots.Select(r => Path.EndsInDirectorySeparator(r) ? r : r + Path.DirectorySeparatorChar).ToArray();
         var grant = new JobGrant
         {
             JobId = jobId,
             Token = Base64Url(RandomNumberGenerator.GetBytes(32)),
             AllowedTools = new HashSet<string>(allowedTools, StringComparer.Ordinal),
             FileRoots = roots,
+            Paths = paths,
             ToolModes = toolModes ?? new Dictionary<string, ApprovalMode>(),
             Transport = transport,
             AllowMeteredBilling = allowMeteredBilling,
@@ -76,6 +75,7 @@ public sealed class JobRegistry
         };
         if (!_jobs.TryAdd(jobId, grant))
             throw new InvalidOperationException($"Job '{jobId}' already has a grant.");
+        Cockpit.Core.Security.Redactor.Register(grant.Token); // never written anywhere, even by accident
         JobIssued?.Invoke(grant);
         return grant;
     }
@@ -99,6 +99,10 @@ public sealed class JobRegistry
 
     public bool TryGet(string jobId, out JobGrant? grant) => _jobs.TryGetValue(jobId, out grant);
 
+    /// <summary>True while this exact grant is still issued and unexpired (a re-issued job id with a new grant does not count).</summary>
+    public bool IsCurrent(JobGrant grant) =>
+        _jobs.TryGetValue(grant.JobId, out var g) && ReferenceEquals(g, grant) && _time.GetUtcNow() < grant.ExpiresAt;
+
     public IReadOnlyList<JobGrant> Active => _jobs.Values.ToList();
 
     public bool HasActive(BusTransport transport) => _jobs.Values.Any(g => g.Transport == transport && _time.GetUtcNow() < g.ExpiresAt);
@@ -116,12 +120,6 @@ public sealed class JobRegistry
     {
         if (_jobs.TryRemove(jobId, out _))
             JobRevoked?.Invoke(jobId);
-    }
-
-    public static string NormalizeRoot(string path)
-    {
-        string full = Path.GetFullPath(path);
-        return Path.EndsInDirectorySeparator(full) ? full : full + Path.DirectorySeparatorChar;
     }
 
     private static string Base64Url(byte[] bytes) =>

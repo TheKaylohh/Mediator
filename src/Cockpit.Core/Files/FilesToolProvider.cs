@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Bus;
+using Cockpit.Core.Security;
 
 namespace Cockpit.Core.Files;
 
@@ -9,7 +10,7 @@ namespace Cockpit.Core.Files;
 /// MCP tools for reversible file organization. Planning is read-only and automatic; executing and rolling
 /// back a batch always ask the user, with a preview built from the journal (not from the model's claims).
 /// </summary>
-public sealed class FilesToolProvider : IToolProvider
+public sealed class FilesToolProvider : IToolProvider, IOperationReconciler
 {
     public const string PlanRules = "files_plan_by_rules";
     public const string PlanMoves = "files_plan_moves";
@@ -124,6 +125,32 @@ public sealed class FilesToolProvider : IToolProvider
         }
     }
 
+    /// <summary>
+    /// After a restart: an interrupted execute or rollback is settled from the journal, which records every file.
+    /// Both are safe to run again (the journal resumes; it never repeats a completed move), so a partial batch
+    /// is reported as Failed with a note rather than left for the user.
+    /// </summary>
+    public async Task<(OperationState State, string Note)?> ReconcileAsync(OperationRecord operation)
+    {
+        if (operation.Tool is not (Execute or Rollback)) return null;
+        string? batch;
+        try { batch = JsonDocument.Parse(operation.ArgumentsJson).RootElement.GetProperty("batchId").GetString(); }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException) { return null; }
+        if (batch is null) return null;
+        try
+        {
+            var st = await _journal.GetStatusAsync(batch, operation.JobId, CancellationToken.None).ConfigureAwait(false);
+            return (operation.Tool, st.Status) switch
+            {
+                (Execute, "committed") => (OperationState.Committed, $"batch {batch} is committed"),
+                (Rollback, "rolled_back") => (OperationState.Committed, $"batch {batch} is rolled back"),
+                (Execute, "planned") => (OperationState.Failed, $"batch {batch} never started; nothing moved"),
+                _ => (OperationState.Failed, $"batch {batch} is {st.Status}; running the same call again resumes it safely"),
+            };
+        }
+        catch (JournalException) { return null; }
+    }
+
     public async Task<ToolResult> ExecuteAsync(ToolCallContext call, CancellationToken ct)
     {
         try
@@ -165,9 +192,9 @@ public sealed class FilesToolProvider : IToolProvider
     private async Task<ToolResult> PlanByRulesAsync(ToolCallContext call, CancellationToken ct)
     {
         var a = call.Arguments;
-        string source = Path.GetFullPath(a.GetProperty("sourceFolder").GetString()!);
-        if (!call.Job.IsInsideRoots(source)) return ToolResult.Fail($"{source} is outside this job's allowed folders.");
-        if (!Directory.Exists(source)) return ToolResult.Fail($"{source} does not exist.");
+        var sourceVerdict = call.Job.Paths.Check(a.GetProperty("sourceFolder").GetString(), PathAccess.List);
+        if (!sourceVerdict.Allowed) return ToolResult.Fail(sourceVerdict.Message);
+        string source = sourceVerdict.FullPath;
         bool recursive = a.TryGetProperty("recursive", out var rec) && rec.ValueKind == JsonValueKind.True;
         var rules = FileRules.Parse(a.GetProperty("rules"));
         if (rules.Count == 0) return ToolResult.Fail("Give at least one rule.");
@@ -175,7 +202,7 @@ public sealed class FilesToolProvider : IToolProvider
         var expansion = await Task.Run(() => FileRules.Expand(source, recursive, rules, FileJournalService.MaxOpsPerBatch,
             _time.GetUtcNow().UtcDateTime, ct), ct).ConfigureAwait(false);
         string? note = a.TryGetProperty("note", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
-        var plan = await _journal.PlanAsync(call.Job.JobId, expansion.Moves, call.Job.FileRoots, note, ct).ConfigureAwait(false);
+        var plan = await _journal.PlanAsync(call.Job.JobId, expansion.Moves, call.Job.Paths, note, ct).ConfigureAwait(false);
 
         var summary = Summarize(plan);
         summary["scanned"] = expansion.Scanned;
@@ -192,7 +219,7 @@ public sealed class FilesToolProvider : IToolProvider
             .Select(m => new MoveRequest(m.GetProperty("from").GetString() ?? "", m.GetProperty("to").GetString() ?? ""))
             .ToList();
         string? note = call.Arguments.TryGetProperty("note", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
-        var plan = await _journal.PlanAsync(call.Job.JobId, moves, call.Job.FileRoots, note, ct).ConfigureAwait(false);
+        var plan = await _journal.PlanAsync(call.Job.JobId, moves, call.Job.Paths, note, ct).ConfigureAwait(false);
         var summary = Summarize(plan);
         return ToolResult.Ok(summary.ToJsonString(), summary);
     }

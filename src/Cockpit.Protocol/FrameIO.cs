@@ -12,15 +12,21 @@ public static class FrameIO
     public const int MaxFrameBytes = 16 * 1024 * 1024;
 
     /// <summary>Reads one frame. Returns null on a clean end of stream at a frame boundary.</summary>
-    public static async ValueTask<byte[]?> ReadFrameAsync(Stream stream, CancellationToken ct)
+    public static ValueTask<byte[]?> ReadFrameAsync(Stream stream, CancellationToken ct) => ReadFrameAsync(stream, MaxFrameBytes, ct);
+
+    /// <summary>
+    /// Reads one frame of at most <paramref name="maxBytes"/>. The length is checked before anything is allocated,
+    /// so a hostile header costs nothing; an unauthenticated peer gets a much smaller limit than an authenticated one.
+    /// </summary>
+    public static async ValueTask<byte[]?> ReadFrameAsync(Stream stream, int maxBytes, CancellationToken ct)
     {
         var header = new byte[4];
         if (!await ReadExactAsync(stream, header, ct).ConfigureAwait(false))
             return null;
 
         int length = BinaryPrimitives.ReadInt32LittleEndian(header);
-        if (length < 0 || length > MaxFrameBytes)
-            throw new InvalidDataException($"Frame length {length} is outside 0..{MaxFrameBytes}.");
+        if (length < 0 || length > Math.Min(maxBytes, MaxFrameBytes))
+            throw new InvalidDataException($"Frame length {length} is outside 0..{Math.Min(maxBytes, MaxFrameBytes)}.");
 
         var payload = new byte[length];
         if (length > 0 && !await ReadExactAsync(stream, payload, ct).ConfigureAwait(false))

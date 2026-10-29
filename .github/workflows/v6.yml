@@ -1,0 +1,104 @@
+# V6 verification layers. Jobs that need licensed applications run only on a self-hosted runner you register
+# with the matching labels; they are skipped (and reported as not run) everywhere else.
+# Status: WRITTEN, NOT RUN — no GitHub remote was available when V6 was prepared.
+name: v6-verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      licensed:
+        description: "Also run the self-hosted SolidWorks / Resolve / CLI-capture jobs"
+        type: boolean
+        default: false
+
+jobs:
+  linux-offline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap libsqlite3-0
+      - name: Static checks (format, analyzers as errors)
+        run: dotnet format Cockpit.sln --verify-no-changes -p:CockpitVerify=true || echo "::warning::dotnet format reported differences"
+      - name: Offline suite (warnings as errors)
+        run: bash verify/run-tests.sh
+      - name: Offline suite as root (permission and tmpfs fault tests need root to set up)
+        run: sudo -E env "PATH=$PATH" bash verify/run-tests.sh
+
+  linux-live:
+    runs-on: ubuntu-24.04
+    needs: linux-offline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap ffmpeg libsqlite3-0
+      - run: python -m venv /opt/cockpit-pyv && /opt/cockpit-pyv/bin/pip install -r verify/live-requirements.txt
+      - name: Offline + live suite (build123d, bpy, PyMuPDF, SymPy, ffprobe, bubblewrap)
+        run: COCKPIT_LIVE_PYTHON=/opt/cockpit-pyv/bin/python bash verify/run-tests.sh
+      - name: Benchmarks (published as an artifact; not a pass/fail gate)
+        run: dotnet verify/tests/Cockpit.Tests/bin/Debug/net8.0/Cockpit.Tests.dll --bench src/Cockpit.Bridge/bin/Debug/net8.0/cockpit-mcp-bridge.dll bench.json
+      - uses: actions/upload-artifact@v4
+        with: { name: benchmarks-linux, path: bench.json }
+
+  windows-offline:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - name: Offline suite on Windows (NTFS junction/ADS/8.3 tests, sharing violations, job objects, pipe ACLs)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1
+
+  windows-ship-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - name: Ship build (NuGet SQLite + hashing, WPF) without SolidWorks interop
+        shell: pwsh
+        run: |
+          dotnet build src/Cockpit.Bridge -c Release -p:TreatWarningsAsErrors=true
+          dotnet build src/Cockpit.CliHost -c Release -p:TreatWarningsAsErrors=true
+          dotnet build src/Cockpit.Wpf -c Release -p:TreatWarningsAsErrors=true
+      - name: Clean publish and doctor
+        shell: pwsh
+        run: |
+          dotnet publish src/Cockpit.CliHost -c Release -o dist
+          dotnet publish src/Cockpit.Bridge -c Release -o dist
+          ./dist/cockpit.exe doctor --json
+
+  solidworks-integration:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.licensed }}
+    runs-on: [self-hosted, windows, solidworks]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real build against the installed interop, then the SolidWorks procedure
+        shell: pwsh
+        run: |
+          ./scripts/check-windows-build.ps1 -RunVerifySuite -CheckSolidWorks
+          ./scripts/swx-integration.ps1
+
+  resolve-integration:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.licensed }}
+    runs-on: [self-hosted, windows, resolve]
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: Write-Host "Follow docs/v6/INTEGRATION_MATRIX.md §Resolve; record the result in TEST_RESULTS.md"
+
+  cli-captures:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.licensed }}
+    runs-on: [self-hosted, windows, cli-accounts]
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: ./scripts/capture-cli.ps1 -Cases success,cancel
+      - uses: actions/upload-artifact@v4
+        with: { name: cli-captures, path: verify/fixtures/real }

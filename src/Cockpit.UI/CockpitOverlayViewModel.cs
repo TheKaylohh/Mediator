@@ -56,7 +56,15 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         DismissBannerCommand = new RelayCommand(() => BillingBanner = null);
 
         _runtime.JobChanged += job => _ui.Post(() => OnJobChanged(job));
-        _runtime.ToolCallActivity += e => _ui.Post(() => AddActivity(new ActivityItemViewModel(DateTimeOffset.UtcNow, e.JobId, e.Tool, ToolPhase.Describe(e), e.Detail ?? "", ToolPhase.IsProblem(e))));
+        _runtime.ToolCallActivity += e => _ui.Post(() =>
+        {
+            AddActivity(new ActivityItemViewModel(DateTimeOffset.UtcNow, e.JobId, e.Tool, ToolPhase.Describe(e), e.Detail ?? "", ToolPhase.IsProblem(e), ToolPhase.IsUncertain(e)));
+            if (Jobs.FirstOrDefault(j => j.JobId == e.JobId) is { } item)
+            {
+                if (ToolPhase.IsUncertain(e)) item.UncertainCalls++;
+                else if (ToolPhase.Resolves(e)) item.UncertainCalls--;
+            }
+        });
         _runtime.StreamEvent += (jobId, e) => _ui.Post(() => OnStreamEvent(jobId, e));
         _runtime.BillingAlarm += (jobId, source) => _ui.Post(() =>
             BillingBanner = $"Job {jobId} authenticated with {source} — that bills per token, not your subscription. It was stopped unless you opted in.");
