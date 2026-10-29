@@ -3,32 +3,17 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Cockpit.Wpf"
              ShutdownMode="OnExplicitShutdown">
-  <!-- A dark palette in the spirit of JetBrains Toolbox / the New UI: quiet greys, one blue accent, red only for danger. -->
+  <!--
+    Colours, brushes, fonts and radii come from the theme dictionary at MergedDictionaries[0] (Themes/HoloHud.xaml by
+    default). ThemeManager replaces that one dictionary to switch themes at run time, so everything here and in the
+    windows refers to theme keys with DynamicResource, never StaticResource (XamlChecker enforces this offline).
+  -->
   <Application.Resources>
     <ResourceDictionary>
-      <Color x:Key="BgColor">#FF1E1F22</Color>
-      <Color x:Key="PanelColor">#FF2B2D30</Color>
-      <Color x:Key="RaisedColor">#FF393B40</Color>
-      <Color x:Key="BorderColor">#FF43454A</Color>
-      <Color x:Key="TextColor">#FFDFE1E5</Color>
-      <Color x:Key="MutedColor">#FF868A91</Color>
-      <Color x:Key="AccentColor">#FF3574F0</Color>
-      <Color x:Key="DangerColor">#FFE55765</Color>
-      <Color x:Key="SuccessColor">#FF5FB865</Color>
-      <Color x:Key="WarningColor">#FFF2C55C</Color>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/HoloHud.xaml" />
+      </ResourceDictionary.MergedDictionaries>
 
-      <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}" />
-      <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}" />
-      <SolidColorBrush x:Key="RaisedBrush" Color="{StaticResource RaisedColor}" />
-      <SolidColorBrush x:Key="LineBrush" Color="{StaticResource BorderColor}" />
-      <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
-      <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
-      <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
-      <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
-      <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}" />
-      <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
-
-      <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
       <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
       <local:BoolToVisibilityConverter x:Key="BoolToVisibility" />
@@ -38,22 +23,26 @@
 
       <!-- Flat button: transparent until hovered. -->
       <Style x:Key="FlatButton" TargetType="Button">
-        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
         <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="10,5" />
         <Setter Property="Cursor" Value="Hand" />
-        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontFamily" Value="{DynamicResource UiFont}" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="Button">
               <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                      BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                      BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{DynamicResource CardCornerRadius}" Padding="{TemplateBinding Padding}">
                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Property="Background" Value="{StaticResource RaisedBrush}" />
+                  <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RaisedBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                  <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
                   <Setter Property="Opacity" Value="0.4" />
@@ -64,15 +53,15 @@
         </Setter>
       </Style>
 
-      <!-- Filled accent button (Toolbox's blue "Open"/"Install"). -->
+      <!-- Filled accent button (Toolbox's "Open"; in the HUD theme a cyan plate with dark text). -->
       <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
-        <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-        <Setter Property="Foreground" Value="White" />
+        <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="Button">
-              <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="{DynamicResource CardCornerRadius}" Padding="{TemplateBinding Padding}">
                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
               </Border>
               <ControlTemplate.Triggers>
@@ -89,31 +78,32 @@
       </Style>
 
       <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource AccentButton}">
-        <Setter Property="Background" Value="{StaticResource DangerBrush}" />
+        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}" />
       </Style>
 
-      <!-- Outlined button for secondary actions (Deny). -->
+      <!-- Outlined button for secondary actions (Deny, Sign In, + Attach). -->
       <Style x:Key="OutlineButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
-        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
         <Setter Property="BorderThickness" Value="1" />
       </Style>
 
       <!-- Context chip: a rounded toggle. Unchecked = excluded from the job. -->
       <Style x:Key="ChipToggle" TargetType="ToggleButton">
-        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
         <Setter Property="Margin" Value="0,0,6,6" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="ToggleButton">
               <Border x:Name="Bd" CornerRadius="11" Padding="8,3" BorderThickness="1"
-                      BorderBrush="{StaticResource LineBrush}" Background="Transparent">
+                      BorderBrush="{DynamicResource LineBrush}" Background="Transparent">
                 <ContentPresenter />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsChecked" Value="True">
-                  <Setter TargetName="Bd" Property="Background" Value="{StaticResource RaisedBrush}" />
-                  <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                  <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipBackgroundBrush}" />
+                  <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="False">
                   <Setter Property="Opacity" Value="0.55" />
@@ -124,23 +114,23 @@
         </Setter>
       </Style>
 
-      <!-- Toolbox-style tabs: text only, accent underline on the selected one. -->
+      <!-- Tabs: text only, accent underline on the selected one (uppercase technical type in the HUD theme comes from HeaderFont). -->
       <Style TargetType="TabItem">
-        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+        <Setter Property="FontFamily" Value="{DynamicResource HeaderFont}" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabItem">
-              <Border x:Name="Bd" Padding="12,6" BorderThickness="0,0,0,2" BorderBrush="Transparent" Background="Transparent">
+              <Border x:Name="Bd" Padding="11,6" BorderThickness="0,0,0,2" BorderBrush="Transparent" Background="Transparent">
                 <ContentPresenter ContentSource="Header" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsSelected" Value="True">
-                  <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-                  <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                  <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 </Trigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                  <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
@@ -155,15 +145,56 @@
       </Style>
 
       <Style TargetType="ToolTip">
-        <Setter Property="Background" Value="{StaticResource RaisedBrush}" />
-        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+        <Setter Property="Background" Value="{DynamicResource RaisedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+      </Style>
+
+      <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+      </Style>
+
+      <!-- Text fields in the Connectors form and the first-run card. -->
+      <Style x:Key="FieldBox" TargetType="TextBox">
+        <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="CaretBrush" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="6,4" />
+        <Setter Property="FontFamily" Value="{DynamicResource TechFont}" />
+        <Setter Property="FontSize" Value="12" />
       </Style>
 
       <Style x:Key="MutedText" TargetType="TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
         <Setter Property="FontSize" Value="11.5" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      </Style>
+
+      <!-- Small capitals-style labels: section titles, the orb caption, telemetry. -->
+      <Style x:Key="TechLabel" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+        <Setter Property="FontFamily" Value="{DynamicResource TechFont}" />
+        <Setter Property="FontSize" Value="10.5" />
+      </Style>
+
+      <Style x:Key="SectionTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="FontFamily" Value="{DynamicResource HeaderFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="2,10,0,4" />
+      </Style>
+
+      <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource CardCornerRadius}" />
+        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="Margin" Value="0,0,0,4" />
       </Style>
 
       <Style x:Key="Icon" TargetType="TextBlock">

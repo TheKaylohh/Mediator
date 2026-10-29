@@ -35,6 +35,7 @@ if (args.Length == 2 && args[0] == "--write-fcpxml")
     File.WriteAllText(args[1], Cockpit.Core.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
+if (args.Length >= 1 && args[0] == "--fake-mcp") return await Cockpit.Tests.ConnectorTests.FakeMcpServerAsync(args.Skip(1).ToArray());
 if (args.Length == 3 && args[0] == "--bench") return await Cockpit.Tests.Benchmarks.RunAsync(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
 if (args.Length == 2 && args[0] == "--audit-child") return await Cockpit.Tests.AuditTests.ChildAppend(args[1]);
 if (args.Length == 4 && args[0] == "--pdf-child") return Cockpit.Tests.PdfHardeningTests.Child(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
@@ -150,6 +151,19 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("isolation (real bwrap): no network (host loopback, external, DNS)", Cockpit.Tests.IsolationTests.RealSandboxNoNetwork),
     ("isolation (real bwrap): memory, CPU, process and file-size limits; wall-clock kill; no surviving grandchildren", Cockpit.Tests.IsolationTests.RealSandboxLimitsAndCleanup),
     ("fs-auth: journal rejects link moves at plan time and stops a move whose destination was swapped after approval", Cockpit.Tests.SecurityTests.JournalRefusesLinks),
+    // V7: attachments (drag-drop, paste, Attach button)
+    ("attachments: snapshot/folder/PNG staging; links, FIFO, /proc, /dev, credentials, home, data folder, drive root, oversize, fake PNG refused; discard; prune", Cockpit.Tests.AttachmentTests.StagingRules),
+    ("attachments: read-only roots allow read/list, deny create/move/mkdir (read_only); never remove write access; links still refused", Cockpit.Tests.AttachmentTests.ReadOnlyRoots),
+    ("attachments through the bus: listed, text + image content, other job refused, files tool cannot move them, live attach audited; V6 tool lists unchanged without attachments", () => Cockpit.Tests.AttachmentTests.ThroughTheBus(bridgeDll)),
+    // V7: connectors, custom MCP, overlay
+    ("custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported", () => Cockpit.Tests.ConnectorTests.CustomMcpRegistry(testsDll)),
+    ("custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited", () => Cockpit.Tests.ConnectorTests.CustomMcpThroughGate(bridgeDll, testsDll)),
+    ("connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys", Cockpit.Tests.ConnectorTests.ProbeOnLinux),
+    ("overlay V7: theme cycle, ThemeChanged, settings.json persisted and reloaded; malformed settings kept as .bad; hotkey parser", Cockpit.Tests.OverlayTests.ThemeSwitchingAndPersistence),
+    ("overlay V7: reactor Idle → Active → AwaitingApproval → Active → Error (failure, rate limit, billing) → acknowledged / cleared by a new job", () => Cockpit.Tests.OverlayTests.ReactorStateTransitions(bridgeDll)),
+    ("overlay V7: drop/paste/pick → chips; refusals reported; × deletes unshared snapshots; shared with the one running job; consumed by the next job; pin", () => Cockpit.Tests.OverlayTests.DragDropAndClipboardAttachments(bridgeDll)),
+    ("overlay V7: Connectors tab statuses (version, sign-in, cooldown, apps), Sign In terminal, + Add Custom MCP; first-run card", () => Cockpit.Tests.OverlayTests.ConnectorsAndOnboarding(testsDll)),
+    ("overlay XAML V7: checker catches a missing theme key, StaticResource to a theme key, a colour literal, a duplicate property and a bad binding", Cockpit.Tests.OverlayTests.XamlCheckerCatchesMistakes),
 };
 
 // Live tests are always listed; without COCKPIT_LIVE_PYTHON each one reports SKIP (never PASS).

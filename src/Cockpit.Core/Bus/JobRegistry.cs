@@ -52,13 +52,13 @@ public sealed class JobRegistry
 
     public JobGrant Issue(string jobId, IEnumerable<string> allowedTools, IEnumerable<string> fileRoots, TimeSpan lifetime,
         BusTransport transport = BusTransport.NamedPipe, IReadOnlyDictionary<string, ApprovalMode>? toolModes = null,
-        TimeSpan? approvalTimeout = null, bool allowMeteredBilling = false)
+        TimeSpan? approvalTimeout = null, bool allowMeteredBilling = false, IEnumerable<string>? readOnlyRoots = null)
     {
         if (string.IsNullOrWhiteSpace(jobId) || jobId.Length > 64 || !jobId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
             throw new ArgumentException("Job IDs are 1-64 characters of letters, digits, '-' or '_'.", nameof(jobId));
 
         // Roots are resolved to their real paths now; a root that does not exist fails the grant (fail-closed).
-        var paths = new Cockpit.Core.Security.PathAuthorizer(fileRoots);
+        var paths = new Cockpit.Core.Security.PathAuthorizer(fileRoots, readOnlyRoots);
         var roots = paths.Roots.Select(r => Path.EndsInDirectorySeparator(r) ? r : r + Path.DirectorySeparatorChar).ToArray();
         var grant = new JobGrant
         {

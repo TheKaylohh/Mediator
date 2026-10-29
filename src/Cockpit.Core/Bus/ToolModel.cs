@@ -28,7 +28,13 @@ public sealed record ToolResult(bool IsError, string Text, JsonNode? Structured 
 {
     public static ToolResult Ok(string text, JsonNode? structured = null) => new(false, text, structured);
     public static ToolResult Fail(string text) => new(true, text);
+
+    /// <summary>Images returned to the model as MCP image content (V7: attachments). Never stored in the operation log.</summary>
+    public IReadOnlyList<ToolImage> Images { get; init; } = [];
 }
+
+/// <summary>An image for MCP image content.</summary>
+public sealed record ToolImage(string MediaType, byte[] Data);
 
 public interface IToolProvider
 {
@@ -46,21 +52,41 @@ public interface IToolProvider
 
 public sealed partial class ToolRegistry
 {
-    private readonly Dictionary<string, (IToolProvider Provider, ToolDescriptor Tool)> _tools = new(StringComparer.Ordinal);
+    // Read by the bus on many threads; written at start-up and when the user adds or removes a custom MCP server (V7).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (IToolProvider Provider, ToolDescriptor Tool)> _tools = new(StringComparer.Ordinal);
+    private readonly object _writeLock = new();
 
     // Claude Code and other MCP clients require this shape for tool names.
     [GeneratedRegex("^[a-zA-Z0-9_-]{1,64}$")]
     private static partial Regex ToolNamePattern();
 
+    public static bool IsValidName(string name) => ToolNamePattern().IsMatch(name);
+
+    /// <summary>Registers every tool of a provider, or none of them (a bad or duplicate name rejects the whole provider).</summary>
     public void Register(IToolProvider provider)
     {
-        foreach (var tool in provider.Tools)
+        lock (_writeLock)
         {
-            if (!ToolNamePattern().IsMatch(tool.Name))
-                throw new ArgumentException($"Tool name '{tool.Name}' must match ^[a-zA-Z0-9_-]{{1,64}}$.");
-            if (!_tools.TryAdd(tool.Name, (provider, tool)))
-                throw new InvalidOperationException($"Tool '{tool.Name}' is registered twice.");
+            foreach (var tool in provider.Tools)
+            {
+                if (!ToolNamePattern().IsMatch(tool.Name))
+                    throw new ArgumentException($"Tool name '{tool.Name}' must match ^[a-zA-Z0-9_-]{{1,64}}$.");
+                if (_tools.ContainsKey(tool.Name))
+                    throw new InvalidOperationException($"Tool '{tool.Name}' is registered twice.");
+            }
+            if (provider.Tools.Select(t => t.Name).Distinct(StringComparer.Ordinal).Count() != provider.Tools.Count)
+                throw new InvalidOperationException("A provider lists the same tool twice.");
+            foreach (var tool in provider.Tools) _tools[tool.Name] = (provider, tool);
         }
+    }
+
+    /// <summary>Removes a provider's tools (V7: a custom MCP server was removed or disabled). Grants that list them simply stop resolving.</summary>
+    public void Unregister(IToolProvider provider)
+    {
+        lock (_writeLock)
+            foreach (var tool in provider.Tools)
+                if (_tools.TryGetValue(tool.Name, out var entry) && ReferenceEquals(entry.Provider, provider))
+                    _tools.TryRemove(tool.Name, out _);
     }
 
     public bool TryGet(string name, out IToolProvider provider, out ToolDescriptor tool)
