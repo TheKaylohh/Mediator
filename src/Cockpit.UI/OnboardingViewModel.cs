@@ -126,8 +126,15 @@ public sealed class OnboardingViewModel : ObservableObject
     public RelayCommand RecheckCommand { get; }
     public RelayCommand SkipCommand { get; }
 
-    /// <summary>The view re-registers the global hotkey when it changes.</summary>
+    /// <summary>Raised after a changed hotkey was saved (and, with a <see cref="Rebinder"/>, registered).</summary>
     public event Action<HotkeyGesture>? HotkeyChanged;
+
+    /// <summary>
+    /// V9: registers a changed hotkey before it is saved (the app passes HotkeyManager.Rebind). When it fails (another
+    /// program owns the combination), the card stays open with the reason, the old hotkey keeps working, and nothing is
+    /// saved. Null: the hotkey is only saved (tests, or no hotkey support).
+    /// </summary>
+    public Func<HotkeyGesture, HotkeyBindResult>? Rebinder { get; set; }
 
     public bool AnyCliFound => Prerequisites.Any(p => p.IsRequired && p.IsOk == true);
 
@@ -167,6 +174,12 @@ public sealed class OnboardingViewModel : ObservableObject
     public bool Finish()
     {
         if (!HotkeyGesture.TryParse(HotkeyText, out var gesture, out var error)) { HotkeyError = error ?? "invalid"; return false; }
+        bool hotkeyChanged = gesture.ToString() != _overlay.Settings.Hotkey;
+        if (hotkeyChanged && Rebinder is { } rebind && rebind(gesture) is { Success: false } failed)
+        {
+            HotkeyError = failed.Message; // nothing saved; the active hotkey is unchanged
+            return false;
+        }
         if (_startup.IsSupported && RunOnStartup != _startup.IsEnabled)
         {
             try { _startup.SetEnabled(RunOnStartup); }
@@ -176,7 +189,6 @@ public sealed class OnboardingViewModel : ObservableObject
                 return false;
             }
         }
-        bool hotkeyChanged = gesture.ToString() != _overlay.Settings.Hotkey;
         _overlay.UpdateSettings(_overlay.Settings with
         {
             Theme = Theme,

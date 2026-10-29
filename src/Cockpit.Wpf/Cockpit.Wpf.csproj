@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     The overlay: a thin WPF view over Cockpit.UI's ViewModels. Windows only.
-    Verify builds (Linux, no WindowsDesktop reference pack) compile only MonitorPlacement.cs here (see below); the XAML
-    is still checked by the test suite (well-formed, every {Binding} resolves on the ViewModel types, every
+    Verify builds (Linux, no WindowsDesktop reference pack) compile every .cs file here against a WPF stand-in (see
+    below); the XAML is checked by the test suite (well-formed, every {Binding} resolves on the ViewModel types, every
     StaticResource exists, every pack URI resolves).
   -->
   <PropertyGroup Condition="'$(CockpitVerify)' != 'true'">
@@ -40,19 +40,31 @@
   </Target>
 
   <!--
-    Verify builds (Linux, no WindowsDesktop reference pack) compile only the WPF-free Win32 code: the monitor/DPI
-    placement (V8), so its P/Invoke signatures are compiled on every run and its WINDOWPOS handling is unit-tested.
+    Verify builds (V9): EVERY .cs file of the overlay is compiled by csc, against Cockpit.UI, Cockpit.Core and
+    verify/stubs/WpfCompileStub (a compile-only stand-in for WPF / Windows Forms, since the WindowsDesktop reference
+    pack does not exist on Linux). XamlPartials.targets generates the InitializeComponent()/named-field partials the
+    markup compiler would. The output is AiCockpit.dll (a library: there is no window to show), with warnings as errors
+    like every verify build. Implicit usings mirror a WPF project: no System.IO or System.Net.Http (WPF removes them,
+    because System.IO.Path would clash with System.Windows.Shapes.Path), so a file that forgets `using System.IO;`
+    fails here too.
   -->
   <PropertyGroup Condition="'$(CockpitVerify)' == 'true'">
     <TargetFramework>net8.0</TargetFramework>
-    <EnableDefaultItems>false</EnableDefaultItems>
+    <AssemblyName>AiCockpit</AssemblyName>
+    <RootNamespace>Cockpit.Wpf</RootNamespace>
     <IsPackable>false</IsPackable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
   </PropertyGroup>
   <ItemGroup Condition="'$(CockpitVerify)' == 'true'">
-    <Compile Include="MonitorPlacement.cs" />
+    <Using Remove="System.IO" />
+    <Using Remove="System.Net.Http" />
     <ProjectReference Include="../Cockpit.UI/Cockpit.UI.csproj" />
+    <ProjectReference Include="../Cockpit.Core/Cockpit.Core.csproj" />
+    <ProjectReference Include="$(CockpitRoot)verify/stubs/WpfCompileStub/WpfCompileStub.csproj" />
+    <CockpitXamlPage Include="**/*.xaml" Exclude="bin/**;obj/**" />
   </ItemGroup>
+  <Import Project="$(CockpitRoot)verify/stubs/WpfCompileStub/XamlPartials.targets" Condition="'$(CockpitVerify)' == 'true'" />
   <ItemGroup>
     <InternalsVisibleTo Include="Cockpit.Tests" />
   </ItemGroup>

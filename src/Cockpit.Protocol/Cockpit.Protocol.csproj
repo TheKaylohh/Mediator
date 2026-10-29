@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <!-- AOT/trim analyzers need the ILLink package, so they run in ship builds only. -->
-    <IsAotCompatible Condition="'$(CockpitVerify)' != 'true'">true</IsAotCompatible>
+    <!-- AOT/trim analyzers need the ILLink package (a NuGet download), so they run only in NuGet builds (CockpitUseShims=false). -->
+    <IsAotCompatible Condition="'$(CockpitUseShims)' != 'true'">true</IsAotCompatible>
     <RootNamespace>Cockpit.Protocol</RootNamespace>
   </PropertyGroup>
 </Project>

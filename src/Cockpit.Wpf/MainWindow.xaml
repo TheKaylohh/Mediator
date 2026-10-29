@@ -236,6 +236,22 @@
                      Visibility="{Binding RouteText, Converter={StaticResource EmptyToCollapsed}}" />
         </StackPanel>
 
+        <!-- ── V9: continue the last Claude session (claude -p resume). Selected = the next prompt is a follow-up;
+             click to start fresh this time; × removes it. Switching folders removes it too. ── -->
+        <ToggleButton DockPanel.Dock="Top" Margin="12,4,12,0" HorizontalAlignment="Left" Style="{StaticResource ChipToggle}"
+                      DataContext="{Binding Continuation}" IsChecked="{Binding IsSelected}" ToolTip="{Binding ToolTipText}"
+                      Visibility="{Binding DataContext.HasContinuation, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"
+                      AutomationProperties.Name="Continue session">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Text}" FontSize="11.5" />
+            <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="6,0,-4,0" ToolTip="Start fresh (remove the follow-up)"
+                    Command="{Binding DataContext.ClearContinuationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                    AutomationProperties.Name="Remove continue session">
+              <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
+            </Button>
+          </StackPanel>
+        </ToggleButton>
+
         <!-- ── Context chips: Explorer context (toggle) and attachments (× removes) ── -->
         <ItemsControl DockPanel.Dock="Top" Margin="12,4,12,2" ItemsSource="{Binding ContextChips}" Focusable="False">
           <ItemsControl.ItemsPanel>

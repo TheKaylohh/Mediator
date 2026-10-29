@@ -1,19 +1,20 @@
 <Project>
-  <!-- The central dependency switch (see Directory.Build.props). Evaluated after each project's own properties. -->
+  <!-- The central dependency switches (see Directory.Build.props). Evaluated after each project's own properties.
+       SQLite and xxHash64 follow CockpitUseShims (V9); the SolidWorks interop follows CockpitVerify. -->
 
   <!-- SQLite -->
-  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitVerify)' != 'true'">
+  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitUseShims)' != 'true'">
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
-  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitVerify)' == 'true'">
+  <ItemGroup Condition="'$(CockpitUsesSqlite)' == 'true' and '$(CockpitUseShims)' == 'true'">
     <ProjectReference Include="$(CockpitRoot)verify/stubs/SqliteShim/SqliteShim.csproj" />
   </ItemGroup>
 
   <!-- xxHash64 -->
-  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitVerify)' != 'true'">
+  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitUseShims)' != 'true'">
     <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
   </ItemGroup>
-  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitVerify)' == 'true'">
+  <ItemGroup Condition="'$(CockpitUsesHashing)' == 'true' and '$(CockpitUseShims)' == 'true'">
     <ProjectReference Include="$(CockpitRoot)verify/stubs/HashingShim/HashingShim.csproj" />
   </ItemGroup>
 

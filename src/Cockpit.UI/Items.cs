@@ -265,3 +265,21 @@ internal static class ToolPhase
     public static bool IsUncertain(ToolCallEvent e) => e.Phase is "outcome_unknown";
     public static bool Resolves(ToolCallEvent e) => e.Phase.StartsWith("late_", StringComparison.Ordinal);
 }
+
+/// <summary>
+/// V9: the "↩ Continue session (940df0a2)" chip. Shown when a headless Claude run finished with a session id;
+/// selected by default so the next prompt in the same folder is a follow-up (`claude --resume`). Clicking it
+/// deselects it (start fresh this time); × removes it. Switching folders removes it too.
+/// </summary>
+public sealed class ContinuationViewModel : ObservableObject
+{
+    private bool _isSelected = true;
+
+    public ContinuationViewModel(ContinuableSession session) => Session = session;
+
+    public ContinuableSession Session { get; }
+    public string Folder => Session.WorkingDirectory;
+    public string Text => $"\u21A9 Continue session ({Session.ShortId})";
+    public string ToolTipText => $"Follow-up to \u201C{Session.Spec.Title}\u201D in {Folder} on Claude Pro (claude --resume {Session.SessionId}). Click to start fresh instead; \u00D7 removes it.";
+    public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+}

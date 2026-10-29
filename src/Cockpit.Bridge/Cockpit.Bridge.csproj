@@ -8,9 +8,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <!-- Ship: `dotnet publish -c Release -r win-x64` gives a Native AOT exe that starts in tens of ms.
-         Publish -r linux-x64 for the copy that runs inside WSL. AOT needs the platform C++ toolchain. -->
-    <PublishAot Condition="'$(CockpitVerify)' != 'true'">true</PublishAot>
-    <IsAotCompatible Condition="'$(CockpitVerify)' != 'true'">true</IsAotCompatible>
+         Publish -r linux-x64 for the copy that runs inside WSL. AOT needs the platform C++ toolchain and the ILCompiler
+         NuGet package, so offline builds (CockpitUseShims=true) publish the bridge as a normal .NET app. -->
+    <PublishAot Condition="'$(CockpitUseShims)' != 'true'">true</PublishAot>
+    <IsAotCompatible Condition="'$(CockpitUseShims)' != 'true'">true</IsAotCompatible>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Cockpit.Protocol/Cockpit.Protocol.csproj" />

@@ -6,6 +6,11 @@
   1. Checks the prerequisites: Windows, the .NET 8 SDK, and (for the Native AOT bridge) the MSVC linker from the
      "Desktop development with C++" workload, found with vswhere.
   2. Optionally runs the offline verification suite first (-RunTests; CockpitVerify=true, no SolidWorks needed).
+  2b. V9: restores every project from NuGet. If that fails (no network, or a proxy that blocks nuget.org), it falls
+     back to the built-in offline shims (-p:CockpitUseShims=true): SQLite through Windows' own System32\winsqlite3.dll
+     and the bundled xxHash64, with no NuGet download at all. Offline builds are framework-dependent (the .NET 8
+     Desktop Runtime installed with the SDK runs them) and the bridge is a normal .NET app (Native AOT needs NuGet).
+     -UseShims chooses the offline build directly; -NoShimFallback fails instead of falling back.
   3. Publishes, each into its own staging folder:
        src\Cockpit.Wpf       -> AiCockpit.exe            (the tray overlay) + Themes\*.xaml (loose fallback copies)
        src\Cockpit.CliHost   -> cockpit.exe              (console host: doctor, organize, rollback, ...)
@@ -47,7 +52,10 @@ param(
     # Escape hatch when the C++ build tools are not installed: the bridge is published as a normal .NET app.
     [switch]$NoAot,
     [switch]$IncludeSymbols,
-    [switch]$SkipDoctor
+    [switch]$SkipDoctor,
+    # V9: build with the offline shims (no NuGet) from the start, or never fall back to them.
+    [switch]$UseShims,
+    [switch]$NoShimFallback
 )
 
 $ErrorActionPreference = 'Stop'
@@ -100,9 +108,11 @@ if (-not ($sdks -match '^8\.')) { throw "No .NET 8 SDK found. Installed: $($sdks
 Write-Host "dotnet SDKs: $($sdks -join '; ')"
 
 $aot = -not $NoAot
-if ($aot -and -not (Test-MsvcLinker)) {
-    throw ('Native AOT for cockpit-mcp-bridge needs the MSVC linker ("Desktop development with C++" in the Visual Studio Installer, ' +
-           'or the Build Tools). Install it, or run again with -NoAot to publish the bridge as a normal .NET app.')
+if ($aot -and -not $UseShims -and -not (Test-MsvcLinker)) {
+    # V9: never a reason to stop. The bridge works the same as a normal .NET app; Native AOT only makes it start faster.
+    Write-Warning ('Native AOT for cockpit-mcp-bridge needs the MSVC linker ("Desktop development with C++" in the Visual Studio ' +
+                   'Installer, or the Build Tools); not found, so the bridge is published as a normal .NET app.')
+    $aot = $false
 }
 if (-not $SolidWorksInteropDir) { $SolidWorksInteropDir = Find-SolidWorksInterop }
 $withSolidWorks = [bool]$SolidWorksInteropDir
@@ -121,22 +131,54 @@ if ($RunTests) {
     Get-ChildItem -Path src, verify -Directory -Recurse -Filter obj | Remove-Item -Recurse -Force
 }
 
+# -- 2b. NuGet, or the offline shims -------------------------------------------------------------------
+function Get-PublishPlan([bool]$offline) {
+    $c = @('-c', 'Release', '-r', $Runtime, '-nologo', '-p:TreatWarningsAsErrors=true')
+    if ($withSolidWorks) { $c += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
+    if ($RequireSolidWorks) { $c += '-p:CockpitRequireSolidWorks=true' }
+    # Offline: no runtime packs (framework-dependent) and no ILCompiler/ILLink (no Native AOT, no AOT analyzers).
+    if ($offline) { $c += '-p:CockpitUseShims=true' }
+    $sc = if ($FrameworkDependent -or $offline) { '-p:SelfContained=false' } else { '-p:SelfContained=true' }
+    $nativeAot = $aot -and -not $offline
+    return @{
+        Common   = $c
+        Projects = [ordered]@{
+            'src\Cockpit.Wpf'       = @($sc)
+            'src\Cockpit.CliHost'   = @($sc)
+            'src\Cockpit.SwxWorker' = @($sc)
+            'src\Cockpit.Bridge'    = if ($nativeAot) { @('-p:PublishAot=true') } else { @('-p:PublishAot=false', $sc) }
+        }
+        Offline  = $offline
+        Aot      = $nativeAot
+        FrameworkDependent = ($FrameworkDependent -or $offline)
+    }
+}
+
+$plan = Get-PublishPlan ([bool]$UseShims)
+if (-not $plan.Offline) {
+    Step 'NuGet restore'
+    $restored = $true
+    foreach ($p in $plan.Projects.Keys) {
+        & dotnet restore $p -r $Runtime @($plan.Common | Where-Object { $_ -like '-p:*' }) @($plan.Projects[$p])
+        if ($LASTEXITCODE -ne 0) { $restored = $false; break }
+    }
+    if (-not $restored) {
+        if ($NoShimFallback) { throw 'NuGet restore failed and -NoShimFallback was given.' }
+        Write-Warning ('NuGet restore failed (no network, or a proxy blocks nuget.org). Falling back to the offline shims ' +
+                       '(CockpitUseShims=true): SQLite through Windows'' own winsqlite3.dll, no NuGet download, a framework-dependent ' +
+                       'package (the .NET 8 Desktop Runtime installed with the SDK runs it) and a JIT bridge instead of Native AOT.')
+        $plan = Get-PublishPlan $true
+    }
+}
+if ($plan.Offline) { Write-Host 'Build: offline shims (CockpitUseShims=true), no NuGet' }
+
 # -- 3. Publish each project into its own staging folder ------------------------------------------------
 $staging = Join-Path $root 'dist\.staging'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
-$common = @('-c', 'Release', '-r', $Runtime, '-nologo', '-p:TreatWarningsAsErrors=true')
-if ($withSolidWorks) { $common += "-p:SolidWorksInteropDir=$SolidWorksInteropDir" }
-if ($RequireSolidWorks) { $common += '-p:CockpitRequireSolidWorks=true' }
-$selfContained = if ($FrameworkDependent) { @('--self-contained', 'false') } else { @('--self-contained', 'true') }
-
-$projects = [ordered]@{
-    'src\Cockpit.Wpf'       = @($selfContained)
-    'src\Cockpit.CliHost'   = @($selfContained)
-    'src\Cockpit.SwxWorker' = @($selfContained)
-    'src\Cockpit.Bridge'    = if ($aot) { @('-p:PublishAot=true') } else { @('-p:PublishAot=false') + $selfContained }
-}
+$common = $plan.Common
+$projects = $plan.Projects
 
 foreach ($p in $projects.Keys) {
     Step "Publish $p"
@@ -181,10 +223,11 @@ foreach ($r in $required) {
 
 $commit = (& git -C $root rev-parse --short HEAD 2>$null)
 $version = @(
-    'AI Cockpit V8 (Windows stabilized release candidate)'
+    'AI Cockpit V9 (Windows release candidate)'
     "built $(Get-Date -Format 'yyyy-MM-dd HH:mm') from commit $commit"
-    "runtime $Runtime, $(if ($FrameworkDependent) { 'framework-dependent (.NET 8 Desktop Runtime required)' } else { 'self-contained' })"
-    "bridge: $(if ($aot) { 'Native AOT' } else { 'JIT' })"
+    "runtime $Runtime, $(if ($plan.FrameworkDependent) { 'framework-dependent (.NET 8 Desktop Runtime required)' } else { 'self-contained' })"
+    "bridge: $(if ($plan.Aot) { 'Native AOT' } else { 'JIT' })"
+    "dependencies: $(if ($plan.Offline) { 'offline shims (SQLite via System32\winsqlite3.dll), no NuGet' } else { 'NuGet (Microsoft.Data.Sqlite, System.IO.Hashing)' })"
     "SolidWorks worker: $(if ($withSolidWorks) { "with SolidWorks support ($SolidWorksInteropDir)" } else { 'without SolidWorks support (no interop found at build time)' })"
 ) -join "`r`n"
 Set-Content -Path (Join-Path $OutDir 'VERSION.txt') -Value $version -Encoding ASCII

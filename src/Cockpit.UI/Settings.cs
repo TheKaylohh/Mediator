@@ -1,3 +1,5 @@
+using System.Numerics;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Cockpit.Core.Connectors;
@@ -83,7 +85,9 @@ public enum HotkeyModifiers : uint { None = 0, Alt = 1, Control = 2, Shift = 4, 
 
 /// <summary>
 /// A global hotkey such as "Ctrl+Shift+Space". Needs Ctrl, Alt or Win (Shift alone would steal typing) and a key
-/// from a small safe set: letters, digits, F1–F24, Space. Pure, so the picker and settings are testable on any OS.
+/// from a small safe set: letters, digits, F1–F24, Space, and (V9) Tab, Enter and OemTilde (the ~ / ` key). Tab and
+/// Enter need two modifiers, and the system's own Alt+Tab / Win+Tab / Ctrl+Alt+Tab are refused. Pure, so the picker,
+/// the settings and <see cref="HotkeyParser"/> are testable on any OS.
 /// </summary>
 public sealed record HotkeyGesture(HotkeyModifiers Modifiers, string Key)
 {
@@ -92,26 +96,43 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, string Key)
     /// <summary>Offered in the first-run card and settings; any valid gesture can also be typed.</summary>
     public static readonly IReadOnlyList<string> Presets = ["Ctrl+Shift+Space", "Ctrl+Alt+Space", "Ctrl+Shift+K", "Ctrl+Alt+J", "Win+Shift+Space"];
 
-    /// <summary>The Win32 virtual-key code.</summary>
+    /// <summary>The Win32 virtual-key code (0 = not a supported key).</summary>
     public uint VirtualKey => Key switch
     {
         "Space" => 0x20,
+        "Tab" => 0x09,
+        "Enter" => 0x0D,
+        "OemTilde" => 0xC0, // VK_OEM_3: the ` ~ key on US layouts
         { Length: 1 } k when k[0] is >= 'A' and <= 'Z' => k[0],
         { Length: 1 } k when k[0] is >= '0' and <= '9' => k[0],
-        { Length: >= 2 } k when k[0] == 'F' && int.TryParse(k[1..], out int n) && n is >= 1 and <= 24 => (uint)(0x70 + n - 1),
+        { Length: >= 2 } k when k[0] == 'F' && int.TryParse(k[1..], NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n is >= 1 and <= 24 => (uint)(0x70 + n - 1),
         _ => 0,
     };
 
-    public override string ToString()
+    /// <summary>Canonical form, stored in settings.json and accepted by <see cref="TryParse"/> (round-trips).</summary>
+    public override string ToString() => string.Join('+', ModifierNames().Append(Key));
+
+    /// <summary>For people: like <see cref="ToString"/> but the OemTilde key shows as "~" (tray menu, setup card).</summary>
+    public string DisplayText => string.Join('+', ModifierNames().Append(Key == "OemTilde" ? "~" : Key));
+
+    private IEnumerable<string> ModifierNames()
     {
-        var parts = new List<string>();
-        if (Modifiers.HasFlag(HotkeyModifiers.Control)) parts.Add("Ctrl");
-        if (Modifiers.HasFlag(HotkeyModifiers.Alt)) parts.Add("Alt");
-        if (Modifiers.HasFlag(HotkeyModifiers.Shift)) parts.Add("Shift");
-        if (Modifiers.HasFlag(HotkeyModifiers.Win)) parts.Add("Win");
-        parts.Add(Key);
-        return string.Join('+', parts);
+        if (Modifiers.HasFlag(HotkeyModifiers.Control)) yield return "Ctrl";
+        if (Modifiers.HasFlag(HotkeyModifiers.Alt)) yield return "Alt";
+        if (Modifiers.HasFlag(HotkeyModifiers.Shift)) yield return "Shift";
+        if (Modifiers.HasFlag(HotkeyModifiers.Win)) yield return "Win";
     }
+
+    private static string? NormalizeKey(string raw) => raw.ToLowerInvariant() switch
+    {
+        "space" or "spacebar" => "Space",
+        "tab" => "Tab",
+        "enter" or "return" => "Enter",
+        "~" or "`" or "tilde" or "backtick" or "oemtilde" or "oem3" => "OemTilde",
+        _ when raw.Length == 1 && char.IsAsciiLetterOrDigit(raw[0]) => raw.ToUpperInvariant(),
+        _ when raw.Length is 2 or 3 && raw[0] is 'f' or 'F' && raw[1..].All(char.IsAsciiDigit) => "F" + raw[1..],
+        _ => null,
+    };
 
     public static bool TryParse(string? text, out HotkeyGesture gesture, out string? error)
     {
@@ -136,12 +157,16 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, string Key)
         }
         if ((mods & (HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.Win)) == 0)
         { error = "Include Ctrl, Alt or Win, so the hotkey does not take over normal typing."; return false; }
-        if (mods == HotkeyModifiers.Alt && parts[^1].Equals("space", StringComparison.OrdinalIgnoreCase))
+        if (NormalizeKey(parts[^1]) is not { } key || new HotkeyGesture(mods, key).VirtualKey == 0)
+        { error = $"'{parts[^1]}' is not supported; use a letter, a digit, F1–F24, Space, Tab, Enter or ~."; return false; }
+        if (mods == HotkeyModifiers.Alt && key == "Space")
         { error = "Alt+Space opens every window's system menu; pick another."; return false; }
-        string key = parts[^1].Length == 1 ? parts[^1].ToUpperInvariant() : char.ToUpperInvariant(parts[^1][0]) + parts[^1][1..].ToLowerInvariant();
-        var candidate = new HotkeyGesture(mods, key);
-        if (candidate.VirtualKey == 0) { error = $"'{parts[^1]}' is not supported; use a letter, a digit, F1–F24 or Space."; return false; }
-        gesture = candidate;
+        if (key == "Tab" && (mods & (HotkeyModifiers.Alt | HotkeyModifiers.Win)) != 0)
+        { error = "Alt+Tab and Win+Tab belong to Windows' task switcher; pick another."; return false; }
+        int count = BitOperations.PopCount((uint)mods);
+        if (key is "Tab" or "Enter" && count < 2)
+        { error = $"{(mods.HasFlag(HotkeyModifiers.Control) ? "Ctrl" : "That modifier")}+{key} is used by most apps; add a second modifier, for example Ctrl+Shift+{key}."; return false; }
+        gesture = new HotkeyGesture(mods, key);
         return true;
     }
 }

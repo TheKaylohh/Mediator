@@ -69,6 +69,13 @@ jobs:
           dotnet build src/Cockpit.Wpf -c Release -p:TreatWarningsAsErrors=true
           # V8: no SolidWorks on the runner, so the worker builds with SOLIDWORKS_NOT_INSTALLED (warning COCKPIT001, not an error)
           dotnet build src/Cockpit.SwxWorker -c Release -p:TreatWarningsAsErrors=true -warnaserror
+      - name: V9 offline build (CockpitUseShims=true, no NuGet) of the real WPF overlay and every executable
+        shell: pwsh
+        run: |
+          foreach ($p in 'src/Cockpit.Wpf', 'src/Cockpit.CliHost', 'src/Cockpit.Bridge', 'src/Cockpit.SwxWorker') {
+            dotnet build $p -c Release -p:CockpitUseShims=true -p:TreatWarningsAsErrors=true
+            if ($LASTEXITCODE -ne 0) { throw "offline build failed: $p" }
+          }
       - name: Clean publish and doctor
         shell: pwsh
         run: |

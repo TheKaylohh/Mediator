@@ -86,6 +86,12 @@ public sealed record JobSpec
     /// reads them with cockpit_read_attachment. Never widens write access.
     /// </summary>
     public IReadOnlyList<Attachment> Attachments { get; init; } = [];
+    /// <summary>
+    /// V9: continue this Claude Code session (`claude --resume &lt;id&gt;`) instead of starting a new one. Must be a safe
+    /// token (<see cref="SessionIds.IsSafe"/>); pins the job to Claude Code and never switches subscriptions. Built by
+    /// <see cref="JobSpecFactory.Continue"/> from a <see cref="ContinuableSession"/>.
+    /// </summary>
+    public string? ContinueSessionId { get; init; }
 }
 
 /// <summary>A started job. Thread-safe: the state changes on the runtime's threads, observers read snapshots.</summary>
@@ -120,6 +126,8 @@ public sealed class RunningJob
     public AiProvider? OriginalProvider { get; internal set; }
     /// <summary>How the last headless run ended (null while running, or for interactive jobs).</summary>
     public RunOutcome? Outcome { get; internal set; }
+    /// <summary>V9: the CLI's session id from its stream (init or result event), for a later `--resume`.</summary>
+    public string? SessionId { get; internal set; }
     /// <summary>Every routing decision for this job, oldest first (also in the audit as cockpit/route).</summary>
     public IReadOnlyList<string> RoutingHistory => _routing;
     internal readonly List<string> _routing = new();
@@ -133,8 +141,12 @@ public sealed class RunningJob
 
     internal void SetRunning() => Interlocked.CompareExchange(ref _state, (int)JobState.Running, (int)JobState.Starting);
 
-    /// <summary>First terminal state wins (a kill racing a normal exit stays a kill).</summary>
-    internal bool TryFinish(JobState state, string? detail)
+    /// <summary>
+    /// First terminal state wins (a kill racing a normal exit stays a kill). <paramref name="beforeCompletion"/> runs
+    /// once the final state is set but before <see cref="Completion"/> completes, so whatever it records is visible to
+    /// anyone awaiting the job.
+    /// </summary>
+    internal bool TryFinish(JobState state, string? detail, Action<RunningJob>? beforeCompletion = null)
     {
         int current;
         do
@@ -145,6 +157,7 @@ public sealed class RunningJob
         while (Interlocked.CompareExchange(ref _state, (int)state, current) != current);
         EndedAt = DateTimeOffset.UtcNow;
         Detail ??= detail;
+        beforeCompletion?.Invoke(this);
         _done.TrySetResult(state);
         return true;
     }
@@ -379,6 +392,13 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         var bridge = Bridge ?? throw new InvalidOperationException(
             "cockpit-mcp-bridge was not found next to the Cockpit or in the repository build output. Build src/Cockpit.Bridge first.");
         string jobId = spec.JobId ?? NewJobId(spec.Kind);
+        if (spec.ContinueSessionId is { } resume)
+        {
+            // V9: the id goes on a command line (and through claude.cmd, cmd.exe): only a plain token is accepted.
+            if (!SessionIds.IsSafe(resume)) throw new ArgumentException("The session to continue has an invalid id; start a fresh job instead.", nameof(spec));
+            if (spec.Provider == AiProvider.GeminiCli) throw new ArgumentException("Only Claude Code sessions can be continued.", nameof(spec));
+            spec = spec with { Provider = AiProvider.ClaudeCode, NeverDowngrade = true };
+        }
         RouteDecision? route = null;
         if (spec.Launch != LaunchMode.None)
         {
@@ -390,6 +410,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             {
                 await AuditRouteAsync(jobId, spec.NeverDowngrade ? FailoverDecision.RefusedNeverDowngrade : FailoverDecision.RefusedBothUnavailable,
                     spec.Provider ?? ProviderRouter.Defaults(spec.Category).Primary, null, ex.Message).ConfigureAwait(false);
+                if (spec.ContinueSessionId is not null)
+                    throw new ProviderUnavailableException(ex.Message + " A Claude Code session can only continue on Claude Code; clear the continue-session chip to start fresh.");
                 throw;
             }
             await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
@@ -551,7 +573,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         return job.Provider == AiProvider.GeminiCli
             ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Headless(job.Workspace, spec.Model, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, spec.Model, spec.AllowMeteredBilling);
+                .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, spec.Model, spec.AllowMeteredBilling, spec.ContinueSessionId);
     }
 
     private async Task LaunchHeadlessAsync(RunningJob job, CancellationToken ct)
@@ -578,6 +600,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         monitor.EventReceived += (id, e) =>
         {
             job.Touch();
+            if (e.SessionId is { Length: > 0 } sid) job.SessionId = sid;
             StreamEvent?.Invoke(id, e);
         };
         monitor.BillingAlarm += (id, source) =>
@@ -667,7 +690,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         var psi = job.Provider == AiProvider.GeminiCli
             ? new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli), _options.GeminiSkipTrust).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling);
+                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling, spec.ContinueSessionId);
         job.Interactive = session;
         _options.Launcher.StartInteractive(psi, job.Workspace);
         // Never watch the launcher: wt.exe exits within milliseconds. The script's sentinel files tell us what happens.
@@ -754,9 +777,13 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 
     private void Finish(RunningJob job, JobState state, string? detail)
     {
-        if (job.TryFinish(state, detail)) Changed(job);
+        if (job.TryFinish(state, detail, j => { if (ContinuableSession.From(j) is { } session) LastContinuableSession = session; }))
+            Changed(job);
         Registry.Revoke(job.JobId);
     }
+
+    /// <summary>V9: the most recent finished headless Claude run that a follow-up can continue (`--resume`), or null.</summary>
+    public ContinuableSession? LastContinuableSession { get; private set; }
 
     private void OnRevoked(string jobId)
     {
@@ -792,7 +819,7 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
 }
 
 /// <summary>The job recipes behind the overlay's action tiles and the CLI commands.</summary>
-public static class JobSpecFactory
+public static partial class JobSpecFactory
 {
     public static readonly string[] SwxTools = [SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool];
     public static readonly string[] CadTools = [CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool];

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -67,6 +68,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         CycleThemeCommand = new RelayCommand(CycleTheme);
         AcknowledgeFaultCommand = new RelayCommand(() => SetFault(null), () => _fault is not null);
         AttachCommand = new RelayCommand(() => BrowseForAttachmentsRequested?.Invoke());
+        ClearContinuationCommand = new RelayCommand(() => ClearContinuation("Starting fresh: the next prompt opens a new session."), () => Continuation is not null);
 
         _runtime.JobChanged += job => _ui.Post(() => OnJobChanged(job));
         _runtime.ToolCallActivity += e => _ui.Post(() =>
@@ -171,7 +173,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         get => _suggestedAction;
         private set { if (SetProperty(ref _suggestedAction, value)) OnPropertyChanged(nameof(SuggestionText)); }
     }
-    public string SuggestionText => SuggestedAction is { } a ? $"Enter ↵  {a.Title}  ·  {a.Provider}" : "";
+    public string SuggestionText => IsContinuing
+        ? $"Enter ↵  Continue: {Continuation!.Session.Spec.Title}  ·  Claude Pro"
+        : SuggestedAction is { } a ? $"Enter ↵  {a.Title}  ·  {a.Provider}" : "";
 
     public int ActiveJobCount => Jobs.Count(j => j.IsActive);
     public string JobsTabHeader => ActiveJobCount > 0 ? $"Jobs ({ActiveJobCount})" : "Jobs";
@@ -441,6 +445,9 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             ContextChips.Add(new ContextChipViewModel(ContextKind.App, snapshot.ProcessName, snapshot.WindowTitle) { IsIncluded = false });
         if (snapshot.AmbiguousExplorerTab)
             StatusText = "Several Explorer tabs are open; check the folder chip is the one you meant.";
+        // V9: opening the panel on another folder means a new task there, not a follow-up.
+        if (Continuation is { } chip && ContextChips.FirstOrDefault(c => c.Kind == ContextKind.Folder) is { } here && !SameFolder(here.Value, chip.Folder))
+            ClearContinuation();
         UpdateSuggestion();
     }
 
@@ -459,6 +466,8 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     private void UpdateSuggestion()
     {
         SuggestedAction = Route(PromptText);
+        OnPropertyChanged(nameof(IsContinuing));
+        OnPropertyChanged(nameof(SuggestionText));
         _ = RefreshRouteAsync();
     }
 
@@ -495,6 +504,11 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
 
     private void SubmitPrompt()
     {
+        if (IsContinuing)
+        {
+            _ = ContinueSessionAsync(PromptText.Trim());
+            return;
+        }
         var tile = Route(PromptText);
         if (tile is null) return;
         _ = RunActionAsync(tile, PromptBody(PromptText));
@@ -555,6 +569,11 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         var launch = UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless;
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
         JobSpec spec = SpecFor(tile.Id, folder, prompt, launch) with { NeverDowngrade = KeepSubscription, Attachments = attached.Select(c => c.Attachment!).ToList() };
+        return await StartAndShowAsync(spec, attached, $"Started: {spec.Title}").ConfigureAwait(true);
+    }
+
+    private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started)
+    {
         try
         {
             var job = await _runtime.StartJobAsync(spec).ConfigureAwait(true);
@@ -564,7 +583,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
                 foreach (var c in attached) ContextChips.Remove(c);
                 OnPropertyChanged(nameof(AttachmentChips));
                 OnJobChanged(job);
-                StatusText = $"Started: {spec.Title}";
+                StatusText = started;
                 PromptText = "";
                 SelectedTab = 1;
             });
@@ -575,6 +594,69 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             _ui.Post(() => StatusText = ex.Message);
             return null;
         }
+    }
+
+    // ── V9: session continuation (`claude --resume`) ─────────────────────────────────────────────────
+
+    private ContinuationViewModel? _continuation;
+
+    /// <summary>The "↩ Continue session" chip, when the last headless Claude run can be continued; null otherwise.</summary>
+    public ContinuationViewModel? Continuation
+    {
+        get => _continuation;
+        private set
+        {
+            if (_continuation is { } old) old.PropertyChanged -= OnContinuationChanged;
+            if (!SetProperty(ref _continuation, value)) return;
+            if (value is not null) value.PropertyChanged += OnContinuationChanged;
+            OnPropertyChanged(nameof(HasContinuation));
+            ClearContinuationCommand.Refresh();
+            UpdateSuggestion();
+        }
+    }
+
+    public bool HasContinuation => Continuation is not null;
+
+    /// <summary>The next Enter continues the session: the chip is selected and the prompt is not a "/" command.</summary>
+    public bool IsContinuing => Continuation is { IsSelected: true } && !PromptText.TrimStart().StartsWith('/');
+
+    public RelayCommand ClearContinuationCommand { get; }
+
+    private void OnContinuationChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ContinuationViewModel.IsSelected)) UpdateSuggestion();
+    }
+
+    public void ClearContinuation(string? status = null)
+    {
+        if (Continuation is null) return;
+        Continuation = null;
+        if (status is not null) StatusText = status;
+    }
+
+    private static bool SameFolder(string a, string b) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    /// <summary>
+    /// Sends <paramref name="prompt"/> as a follow-up in the chip's session: same folder, tools and attachments (plus any
+    /// new ones), `claude -p --resume &lt;id&gt;`, never on another subscription. A different folder named in the prompt
+    /// starts fresh instead (and removes the chip). The chip goes while the follow-up runs and comes back with its
+    /// session when it finishes.
+    /// </summary>
+    public async Task<RunningJob?> ContinueSessionAsync(string prompt)
+    {
+        if (Continuation is not { } chip) return null;
+        if (ResolveFolder(prompt) is { } folder && !SameFolder(folder, chip.Folder))
+        {
+            ClearContinuation($"Different folder: starting a fresh session for {ShortName(folder)}.");
+            return Route(PromptText) is { } tile ? await RunActionAsync(tile, PromptBody(PromptText)).ConfigureAwait(true) : null;
+        }
+        var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
+        var spec = JobSpecFactory.Continue(chip.Session, prompt, UseTerminal ? LaunchMode.Interactive : LaunchMode.Headless, attached.Select(c => c.Attachment!).ToList());
+        var job = await StartAndShowAsync(spec, attached, $"Continuing session {chip.Session.ShortId}: {chip.Session.Spec.Title}").ConfigureAwait(true);
+        if (job is not null) _ui.Post(() => { if (ReferenceEquals(Continuation, chip)) Continuation = null; });
+        return job;
     }
 
     /// <summary>The job recipe behind each tile.</summary>
@@ -636,6 +718,8 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
             if (item.IsActive) SetFault(null); // a new job clears the last fault
         }
         item.Update(job);
+        if (!item.IsActive && ContinuableSession.From(job) is { } session && (Continuation is null || Continuation.Session.EndedAt <= session.EndedAt))
+            Continuation = new ContinuationViewModel(session);
         if (!item.IsActive)
         {
             // Any approval still showing for an ended job can no longer matter.

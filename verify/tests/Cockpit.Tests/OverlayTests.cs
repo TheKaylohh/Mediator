@@ -331,7 +331,7 @@ static class OverlayTests
             && g.Modifiers == (HotkeyModifiers.Control | HotkeyModifiers.Shift), "default gesture round-trips");
         Check.True(HotkeyGesture.TryParse("Win+Alt+F13", out var f, out _) && f.VirtualKey == 0x7C, "F13 → VK 0x7C");
         Check.True(HotkeyGesture.TryParse("Ctrl+Alt+J", out var j, out _) && j.VirtualKey == 'J', "letter");
-        foreach (var (bad, why) in new[] { ("Shift+A", "Ctrl, Alt or Win"), ("Alt+Space", "system menu"), ("Ctrl+Ctrl+A", "twice"), ("Ctrl+Hyper+A", "not a modifier"), ("Ctrl+Enter", "not supported"), ("A", "modifier") })
+        foreach (var (bad, why) in new[] { ("Shift+A", "Ctrl, Alt or Win"), ("Alt+Space", "system menu"), ("Ctrl+Ctrl+A", "twice"), ("Ctrl+Hyper+A", "not a modifier"), ("Ctrl+Esc", "not supported"), ("Ctrl+Enter", "second modifier"), ("A", "modifier") })
             Check.True(!HotkeyGesture.TryParse(bad, out _, out var err) && err!.Contains(why, StringComparison.Ordinal), $"'{bad}' refused: {err}");
         foreach (var preset in HotkeyGesture.Presets) Check.True(HotkeyGesture.TryParse(preset, out _, out _), $"preset {preset} is valid");
         return Task.CompletedTask;
@@ -661,5 +661,129 @@ static class OverlayTests
         })
             Check.True(all.Contains(needle, StringComparison.Ordinal), $"checker catches {what}; errors were:\n{all}");
         return Task.CompletedTask;
+    }
+
+    // ── V9: hotkeys ──────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>A RegisterHotKey stand-in: some combinations are owned by "another program".</summary>
+    sealed class FakeRegistrar : IHotkeyRegistrar
+    {
+        public readonly HashSet<(uint, uint)> Taken = new();
+        public (uint Mods, uint Vk)? Registered;
+        public int Registrations;
+        public bool TryRegister(uint modifiers, uint virtualKey, out int win32Error)
+        {
+            Check.True(Registered is null, "the old hotkey is unregistered before a new one is registered");
+            if (Taken.Contains((modifiers, virtualKey))) { win32Error = HotkeyBinding.ErrorHotkeyAlreadyRegistered; return false; }
+            Registered = (modifiers, virtualKey);
+            Registrations++;
+            win32Error = 0;
+            return true;
+        }
+        public void Unregister() => Registered = null;
+    }
+
+    /// <summary>HotkeyParser: valid and invalid strings, normalisation, Win32 codes.</summary>
+    public static Task HotkeyParsing()
+    {
+        foreach (var (text, mods, vk, canonical) in new (string, uint, uint, string)[]
+        {
+            ("Ctrl+Shift+Space", 0x2 | 0x4, 0x20, "Ctrl+Shift+Space"),
+            ("control + shift + space", 0x2 | 0x4, 0x20, "Ctrl+Shift+Space"),
+            ("Shift+Ctrl+Space", 0x2 | 0x4, 0x20, "Ctrl+Shift+Space"),
+            ("Alt+Space".Replace("Alt", "Ctrl+Alt", StringComparison.Ordinal), 0x2 | 0x1, 0x20, "Ctrl+Alt+Space"),
+            ("ctrl+alt+c", 0x2 | 0x1, 'C', "Ctrl+Alt+C"),
+            ("Win+Shift+7", 0x8 | 0x4, '7', "Shift+Win+7"),
+            ("Ctrl+Shift+f12", 0x2 | 0x4, 0x7B, "Ctrl+Shift+F12"),
+            ("Alt+F1", 0x1, 0x70, "Alt+F1"),
+            ("Ctrl+Shift+Tab", 0x2 | 0x4, 0x09, "Ctrl+Shift+Tab"),
+            ("Ctrl+Shift+Return", 0x2 | 0x4, 0x0D, "Ctrl+Shift+Enter"),
+            ("Ctrl+~", 0x2, 0xC0, "Ctrl+OemTilde"),
+            ("Ctrl+Shift+`", 0x2 | 0x4, 0xC0, "Ctrl+Shift+OemTilde"),
+            ("Win+OemTilde", 0x8, 0xC0, "Win+OemTilde"),
+        })
+        {
+            Check.True(HotkeyParser.TryParse(text, out uint m, out uint v, out string norm), $"'{text}' parses");
+            Check.True(m == mods && v == vk && norm == canonical, $"'{text}' → mods {m:X} vk {v:X} '{norm}' (expected {mods:X} {vk:X} '{canonical}')");
+            Check.True(HotkeyParser.TryParse(norm, out uint m2, out uint v2, out string again) && m2 == m && v2 == v && again == norm, $"'{norm}' round-trips");
+        }
+        Check.True(HotkeyGesture.TryParse("Ctrl+Shift+`", out var tilde, out _) && tilde.DisplayText == "Ctrl+Shift+~", "the tilde key shows as ~");
+
+        foreach (var (bad, why) in new[]
+        {
+            ("", "modifier and a key"), ("Ctrl", "modifier and a key"), ("Ctrl+Shift", "not supported"), ("Ctrl+Alt+Shift", "not supported"),
+            ("Shift+F5", "Ctrl, Alt or Win"), ("Alt+Space", "system menu"), ("Alt+Tab", "task switcher"), ("Win+Shift+Tab", "task switcher"),
+            ("Ctrl+Alt+Tab", "task switcher"), ("Ctrl+Tab", "second modifier"), ("Win+Enter", "second modifier"), ("Ctrl+F25", "not supported"),
+            ("Ctrl+F0", "not supported"), ("Ctrl+Esc", "not supported"), ("Ctrl+AB", "not supported"), ("Ctrl+é", "not supported"), ("Ctrl+Ctrl+A", "twice"),
+            ("Hyper+A", "not a modifier"),
+        })
+        {
+            Check.True(!HotkeyParser.TryParse(bad, out uint m, out uint v, out string n, out string? err) && m == 0 && v == 0 && n.Length == 0, $"'{bad}' refused");
+            Check.True(err!.Contains(why, StringComparison.Ordinal), $"'{bad}': reason mentions '{why}' ({err})");
+        }
+        Check.True(!HotkeyParser.TryParse(null, out _, out _, out _), "null refused");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>HotkeyBinding: start with fallback, live rebind, conflicts keep the old hotkey, setup card rebinds before saving.</summary>
+    public static async Task HotkeyRebinding()
+    {
+        var reg = new FakeRegistrar();
+        var binding = new HotkeyBinding(reg);
+        var seen = new List<string?>();
+        binding.ActiveChanged += g => seen.Add(g?.DisplayText);
+
+        var start = binding.Start("Ctrl+Alt+J");
+        Check.True(start.Success && binding.Active?.ToString() == "Ctrl+Alt+J" && reg.Registered == (0x3u, (uint)'J'), "configured hotkey registered at start");
+
+        // Live rebind: no restart, the old one is released first (FakeRegistrar checks the order).
+        var r = binding.Rebind("Ctrl+Shift+K");
+        Check.True(r.Success && binding.Active?.ToString() == "Ctrl+Shift+K" && reg.Registered == (0x6u, (uint)'K'), "rebound live");
+        Check.True(binding.Rebind("ctrl+shift+k") is { Success: true } && reg.Registrations == 2, "same hotkey: nothing re-registered");
+
+        // Conflict: another program owns Ctrl+Alt+C → the previous hotkey is registered again and stays active.
+        reg.Taken.Add((0x3u, (uint)'C'));
+        var conflict = binding.Rebind("Ctrl+Alt+C");
+        Check.True(!conflict.Success && conflict.Active?.ToString() == "Ctrl+Shift+K" && reg.Registered == (0x6u, (uint)'K'), "conflict keeps Ctrl+Shift+K");
+        Check.True(conflict.Message.Contains("already used by another program", StringComparison.Ordinal) && conflict.Message.Contains("keeping Ctrl+Shift+K", StringComparison.Ordinal), conflict.Message);
+        Check.True(binding.Rebind("Shift+A") is { Success: false, Active: not null } bad && bad.Message.Contains("Ctrl, Alt or Win", StringComparison.Ordinal) && reg.Registered is not null, "an invalid string changes nothing");
+
+        // Start with a taken configured hotkey: falls back to the default for this session (the setting is not touched).
+        var reg2 = new FakeRegistrar();
+        reg2.Taken.Add((0x3u, (uint)'C'));
+        var b2 = new HotkeyBinding(reg2);
+        var s2 = b2.Start("Ctrl+Alt+C");
+        Check.True(!s2.Success && b2.Active == HotkeyGesture.Default && s2.Message.Contains("using Ctrl+Shift+Space for now", StringComparison.Ordinal), s2.Message);
+        // Default taken too: no hotkey, tray only.
+        var reg3 = new FakeRegistrar();
+        reg3.Taken.Add((0x6u, 0x20u));
+        var b3 = new HotkeyBinding(reg3);
+        var s3 = b3.Start(null);
+        Check.True(!s3.Success && b3.Active is null && reg3.Registered is null && s3.Message.Contains("tray icon", StringComparison.Ordinal), s3.Message);
+        Check.True(b3.Start("garbage") is { Active: null }, "unparsable setting falls back to the default (taken here)");
+
+        Check.True(seen.SequenceEqual(new string?[] { "Ctrl+Alt+J", null, "Ctrl+Shift+K", null, "Ctrl+Shift+K" }), "ActiveChanged follows every change: " + string.Join(", ", seen));
+        Check.Equal("Open AI Cockpit  (Ctrl+Shift+K)", Cockpit.Wpf.TrayIcon.OpenText(binding.Active?.DisplayText), "tray menu text shows the active hotkey");
+        Check.Equal("Open AI Cockpit", Cockpit.Wpf.TrayIcon.OpenText(null), "no hotkey: plain menu text");
+
+        // Setup card: rebinds before saving; a conflict keeps the card open, saves nothing, keeps the old hotkey.
+        var settings = new MemorySettingsStore();
+        var overlay = new CockpitOverlayViewModel(new FakeRuntime(), new InlineDispatcher(), settings);
+        var card = new OnboardingViewModel(new FakeProbe(), new FakeStartup(), overlay);
+        var cardReg = new FakeRegistrar();
+        var cardBinding = new HotkeyBinding(cardReg);
+        cardBinding.Start(overlay.Settings.Hotkey);
+        card.Rebinder = g => cardBinding.Rebind(g.ToString());
+        cardReg.Taken.Add((0x3u, (uint)'J'));
+        await card.StartAsync();
+        card.UsePresetCommand.Execute("Ctrl+Alt+J");
+        Check.True(!card.Finish() && card.IsOpen && card.HotkeyError.Contains("already used by another program", StringComparison.Ordinal), "conflict shown in the card: " + card.HotkeyError);
+        Check.True(settings.Saves == 0, "nothing saved");
+        Check.True(cardBinding.Active == HotkeyGesture.Default && !card.FinishCommand.CanExecute(null), "old hotkey still active; Finish waits for a new choice");
+        HotkeyGesture? changed = null;
+        card.HotkeyChanged += g => changed = g;
+        card.UsePresetCommand.Execute("Ctrl+Shift+K");
+        Check.True(card.Finish() && !card.IsOpen, "a free hotkey finishes");
+        Check.True(settings.Current?.Hotkey == "Ctrl+Shift+K" && cardBinding.Active?.ToString() == "Ctrl+Shift+K" && changed?.ToString() == "Ctrl+Shift+K", "saved, registered live, announced");
     }
 }

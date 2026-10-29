@@ -159,12 +159,25 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("custom MCP: validate, 15 s health ping, cockpit.mcp.json (no env), reload, disable/remove unregister; dead or missing servers reported", () => Cockpit.Tests.ConnectorTests.CustomMcpRegistry(testsDll)),
     ("custom MCP through the bus: Destructive (asks even when the grant says Auto), denied never runs, secrets scrubbed, image passthrough, audited", () => Cockpit.Tests.ConnectorTests.CustomMcpThroughGate(bridgeDll, testsDll)),
     ("connector probe: --version parsed, credential file only checked for existence, sign-in terminal without API keys", Cockpit.Tests.ConnectorTests.ProbeOnLinux),
+    // V9: session continuation (claude --resume)
+    ("session V9: a finished run's session_id is offered; the follow-up runs claude -p --resume <id> in the same folder with a new job and grant; unsafe ids, Gemini and a limited Claude are refused; killed runs are not offered", () => Cockpit.Tests.SessionTests.RuntimeContinuation(bridgeDll, testsDll)),
+    ("overlay V9: ↩ Continue session chip appears auto-selected, Enter continues, click deselects, × and a folder switch remove it, a different folder in the prompt starts fresh, the chip returns after the follow-up", () => Cockpit.Tests.SessionTests.OverlayContinuation(bridgeDll, testsDll)),
+    // V9: the whole overlay is compiled (WpfCompileStub)
+    ("wpf V9: overlay code runs against the compile stub: converters, ThemeManager pack URIs and its compiled → loose → keep-current fallback", Cockpit.Tests.WpfCompileTests.ConvertersAndThemeManager),
+    ("wpf V9: the compile pass catches a missing using System.IO, an x:Name renamed only in XAML, and a non-existent Windows Forms member", Cockpit.Tests.WpfCompileTests.CompilePassCatchesMistakes),
+    // V9: hotkeys
+    ("overlay V9: HotkeyParser accepts Ctrl/Alt/Shift/Win + Space, A–Z, 0–9, F1–F24, Tab, Enter, ~ (normalised, round-trips); refuses modifier-only, Shift-only and system combinations", Cockpit.Tests.OverlayTests.HotkeyParsing),
+    ("overlay V9: hotkey start falls back to the default then none; live rebind releases the old one first; a conflict keeps the previous hotkey; the setup card rebinds before saving; tray text follows", Cockpit.Tests.OverlayTests.HotkeyRebinding),
     // V8: multi-monitor / mixed-DPI placement
     ("placement V8: work area on every taskbar edge, auto-hide strips, 100/150/200 % and 100→200 % moves, negative coordinates, too tall/wide clamped, 5000 random layouts stay on screen", Cockpit.Tests.PlacementTests.Geometry),
     ("placement V8: WM_WINDOWPOSCHANGING rewrite on an unmanaged WINDOWPOS (resize, DPI rect, move, hide untouched); WINDOWPOS/APPBARDATA/MONITORINFO layouts", Cockpit.Tests.PlacementTests.WindowPosChanging),
     // V8: Windows release scripts (static: they cannot run here)
     ("release scripts V8: .ps1 ASCII-only (PowerShell 5.1 ANSI trap), launch.bat/install-shortcut.vbs ASCII + CRLF, no cmd blocks, per-user, every VBScript variable declared", Cockpit.Tests.ReleaseScriptTests.ScriptsAreWindowsSafe),
     ("release scripts V8: publish-release.ps1 always publishes the 4 executables, the 3 themes and both launchers, and checks them", Cockpit.Tests.ReleaseScriptTests.PublishScriptPackagesEverything),
+    // V9: offline shims decoupled from CockpitVerify
+    ("release scripts V9: publish-release.ps1 restores from NuGet and falls back to -p:CockpitUseShims=true (framework-dependent, no Native AOT); -NoShimFallback; no MSVC never stops it", Cockpit.Tests.ReleaseScriptTests.PublishScriptFallsBackToShims),
+    ("build V9: CockpitUseShims evaluated by MSBuild: NuGet by default, shims + empty local feed + no AOT when set, independent of CockpitVerify", Cockpit.Tests.ReleaseScriptTests.ShimSwitchEvaluation),
+    ("build V9: real ship build (CockpitVerify=false) with CockpitUseShims=true from an empty feed: 0 packages, 0 warnings; cockpit doctor from it opens the databases and passes the bridge self-test", Cockpit.Tests.ReleaseScriptTests.OfflineShipBuild),
     // V8: building and running without SolidWorks
     ("swx V8: SwxUnavailableHost fails every call with solidworks_not_installed; the stub build still creates SwxComHost", Cockpit.Tests.SwxFallbackTests.UnavailableHostInProcess),
     ("swx V8: worker built without the SolidWorks interop, as a real child process through the bus: \"SolidWorks assemblies not installed on this machine\", do-not-retry, audited", () => Cockpit.Tests.SwxFallbackTests.NoInteropWorkerThroughTheBus(bridgeDll)),

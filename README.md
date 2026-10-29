@@ -1,6 +1,14 @@
-# AI Cockpit V8 (Windows stabilized release candidate)
+# AI Cockpit V9 (Windows release candidate)
 
 A personal Windows cockpit that drives your existing subscriptions through their official CLIs — Claude Code (Claude Pro) and Gemini CLI (Google AI Pro), with automatic failover when one is at its limit — and your desktop apps: SolidWorks, DaVinci Resolve, Blender, plus build123d for parametric parts and an exact-arithmetic linear algebra tutor. Every tool call is gated, audited and, for files, reversible.
+**V9 closes the V8 review**:
+- every C# file of the WPF overlay is compiled on every test run (against `verify/stubs/WpfCompileStub`);
+- `-p:CockpitUseShims=true` builds the real Windows app with no NuGet download, and `publish-release.ps1` falls back to it offline;
+- the hotkey rebinds live, keeps the old one on a conflict, and shows in the tray;
+- follow-up prompts continue the last Claude session with `claude -p --resume` (the ↩ chip).
+
+Start with [CHANGELOG.md](CHANGELOG.md) and [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md).
+
 **V8 is the Windows stabilization release**:
 - themes load by absolute pack URI, with a loose-file fallback;
 - SolidWorks, DaVinci Resolve and Blender are found through the registry and Program Files (version folders included), not just PATH;
@@ -31,4 +39,4 @@ Start with [CHANGELOG.md](CHANGELOG.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/R
 | `scripts/swx-integration.ps1` | Real-SolidWorks procedure (STEP import cases, ownership, worker restart) |
 | `scripts/capture-cli.ps1` | Captures real Claude/Gemini CLI output with your own subscriptions, for parser fixtures |
 | `.github/workflows/v6.yml` | CI layers: Linux offline + live, Windows offline + ship build, self-hosted licensed jobs |
-| `verify/` | Offline stand-ins and the test runner: `bash verify/run-tests.sh` (110 tests; PASS/FAIL/SKIP; zero warnings); `stubs/SwxWorkerNoInterop` is the worker built with no SolidWorks interop; `live-requirements.txt` for the 6 live tests; `fixtures/real` holds real CLI captures, `fixtures/swx` real STEP files |
+| `verify/` | Offline stand-ins and the test runner: `bash verify/run-tests.sh` (119 tests; PASS/FAIL/SKIP; zero warnings); `stubs/SwxWorkerNoInterop` is the worker built with no SolidWorks interop; `stubs/WpfCompileStub` lets the overlay's C# compile on Linux; `stubs/SqliteShim` + `HashingShim` are also the offline (`CockpitUseShims`) dependencies; `live-requirements.txt` for the 6 live tests; `fixtures/real` holds real CLI captures, `fixtures/swx` real STEP files |
