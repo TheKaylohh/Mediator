@@ -12,7 +12,8 @@ public enum AiProvider { ClaudeCode, GeminiCli }
 /// Chat = answer from knowledge, no tools, no local files; Search = web search only, no local files;
 /// Files and the app categories = only the Cockpit tools of that category, through the approval gate.
 /// </summary>
-public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat, Search }
+/// <summary>Browser (V11): work in the user's Chrome through Claude in Chrome (Claude Code only).</summary>
+public enum TaskCategory { Cad, Code, Files, Tutor, Resolve, Blender, Chat, Search, Browser }
 
 /// <summary>V10: which subscription goes first when the user did not pick one. AutoBest = per-category defaults.</summary>
 public enum RoutingPolicy { AutoBest, ConserveClaude, PreferClaude }
@@ -61,7 +62,7 @@ public static class ProviderRouter
 
     public static (AiProvider Primary, AiProvider Fallback) Defaults(TaskCategory category) => category switch
     {
-        TaskCategory.Cad or TaskCategory.Code or TaskCategory.Blender or TaskCategory.Search => (AiProvider.ClaudeCode, AiProvider.GeminiCli),
+        TaskCategory.Cad or TaskCategory.Code or TaskCategory.Blender or TaskCategory.Search or TaskCategory.Browser => (AiProvider.ClaudeCode, AiProvider.GeminiCli),
         _ => (AiProvider.GeminiCli, AiProvider.ClaudeCode),
     };
 
@@ -130,13 +131,13 @@ public static class ProviderRouter
     {
         ["/cad"] = TaskCategory.Cad, ["/code"] = TaskCategory.Code, ["/files"] = TaskCategory.Files,
         ["/tutor"] = TaskCategory.Tutor, ["/resolve"] = TaskCategory.Resolve, ["/blender"] = TaskCategory.Blender,
-        ["/search"] = TaskCategory.Search, ["/ask"] = TaskCategory.Chat,
+        ["/search"] = TaskCategory.Search, ["/ask"] = TaskCategory.Chat, ["/chrome"] = TaskCategory.Browser, ["/browser"] = TaskCategory.Browser,
     };
 
     /// <summary>What the chat badge calls a category ("Search", "Chat", "Files", ...).</summary>
     public static string CategoryName(TaskCategory c) => c switch
     {
-        TaskCategory.Cad => "CAD", TaskCategory.Search => "Web search", TaskCategory.Chat => "Answer",
+        TaskCategory.Cad => "CAD", TaskCategory.Search => "Web search", TaskCategory.Chat => "Answer", TaskCategory.Browser => "Chrome",
         _ => c.ToString(),
     };
 

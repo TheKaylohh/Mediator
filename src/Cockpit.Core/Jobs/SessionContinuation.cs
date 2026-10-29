@@ -161,6 +161,8 @@ public static partial class JobSpecFactory
     /// </summary>
     public static (IReadOnlyList<string> Tools, TaskCategory Category) InferToolsAndCategory(string prompt, string? activeApp)
     {
+        // V11: asking for the browser by name wins over everything ("open Khan Academy in chrome and answer the matrix MCQ").
+        if (IsBrowserRequest(prompt)) return ([], TaskCategory.Browser);
         var (tools, category) = InferAppTools(prompt, activeApp);
         if (category != TaskCategory.Chat) return (tools, category);
         string t = (prompt ?? "").ToLowerInvariant();
@@ -169,8 +171,21 @@ public static partial class JobSpecFactory
         return ([], TaskCategory.Chat);
     }
 
-    /// <summary>True for the categories that never get the user's folder or any Cockpit tool.</summary>
-    public static bool IsNoLocalAccess(TaskCategory category) => category is TaskCategory.Chat or TaskCategory.Search;
+    /// <summary>True for the categories that never get the user's folder or any Cockpit tool (a Browser job works only in Chrome).</summary>
+    public static bool IsNoLocalAccess(TaskCategory category) => category is TaskCategory.Chat or TaskCategory.Search or TaskCategory.Browser;
+
+    /// <summary>Words that ask for the browser itself: "claude in chrome", "in chrome", "open ... in the browser", "this tab".</summary>
+    private static readonly string[] BrowserIntent = ["chrome", "browser", "this tab", "new tab", "web page", "webpage"];
+
+    /// <summary>True when the prompt asks for work in the user's browser (V11).</summary>
+    public static bool IsBrowserRequest(string? prompt)
+    {
+        string t = (prompt ?? "").ToLowerInvariant();
+        return BrowserIntent.Any(k => HasWord(t, k));
+    }
+
+    /// <summary>A Browser job runs Claude Code with --chrome (Claude in Chrome); no other CLI can drive the browser.</summary>
+    public static bool UsesChrome(JobSpec spec) => spec.Category == TaskCategory.Browser;
 
     private static readonly string[] CreateIntent = ["create", "make", "model", "design", "build", "3d print", "stl", "print"];
 
@@ -221,9 +236,10 @@ public static partial class JobSpecFactory
             WorkingDirectory = work,
             Launch = launch,
             // CAD runs chain many tool calls (parts, fixes, cards, assembly); a plain answer needs few.
-            MaxTurns = category == TaskCategory.Cad ? CadMaxTurns : 20,
+            MaxTurns = category is TaskCategory.Cad or TaskCategory.Browser ? CadMaxTurns : 20,
             UserText = prompt,
-            Prompt = "Answer the user's request directly and clearly." + (tools.Count > 0
+            Prompt = category == TaskCategory.Browser ? Browser.ClaudeInChrome.Guidance + "\n\nUser: " + prompt
+                : "Answer the user's request directly and clearly." + (tools.Count > 0
                 ? " If it needs their files or desktop apps, use the Cockpit tools you were granted (only those); otherwise just answer."
                 : category == TaskCategory.Search
                     ? " Use web search to find current, specific information, then answer concisely and name your sources. Do not read, list or search local files: none are shared with you."

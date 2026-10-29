@@ -699,7 +699,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
         string body = PromptBody(text);
         var (tools, category) = JobSpecFactory.InferToolsAndCategory(body, _activeApp);
         string? folder = ResolveFolder(body);
-        bool specific = tile.Id != "claude-terminal" && (!tile.NeedsFolder || folder is not null) && tools.All(t => tile.Tools.Contains(t));
+        bool specific = category != TaskCategory.Browser && tile.Id != "claude-terminal" && (!tile.NeedsFolder || folder is not null) && tools.All(t => tile.Tools.Contains(t));
         if (specific) _ = RunActionAsync(tile, body, provider);
         else _ = RunAssistantAsync(body, provider, tools, category);
     }
@@ -1373,7 +1373,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
     private readonly Dictionary<string, string> _progressKind = new(StringComparer.Ordinal);
 
     private static string ShortTool(string name) =>
-        name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? name["mcp__cockpit__".Length..] : name;
+        name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? name["mcp__cockpit__".Length..] : Cockpit.Core.Browser.ClaudeInChrome.ShortName(name);
 
     private void OnStreamEvent(string jobId, CockpitStreamEvent e)
     {
@@ -1403,7 +1403,7 @@ public sealed partial class CockpitOverlayViewModel : ObservableObject, IApprova
                 };
                 break;
             case ToolUseEvent tu when TurnFor(jobId) is { } stepTurn:
-                string tool = tu.Name.StartsWith("mcp__cockpit__", StringComparison.Ordinal) ? tu.Name["mcp__cockpit__".Length..] : tu.Name;
+                string tool = ShortTool(tu.Name);
                 stepTurn.Steps.Add("\u2699 " + tool);
                 stepTurn.ThinkingSummary = $"Using {tool} ({stepTurn.Steps.Count} step{(stepTurn.Steps.Count == 1 ? "" : "s")})";
                 break;

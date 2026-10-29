@@ -191,6 +191,8 @@ public sealed record RuntimeOptions
     public ProtectedPathPolicy? PathPolicy { get; init; }
     /// <summary>Starts SolidWorks for CAD tools. Null: the real one on Windows with the real worker, else nothing.</summary>
     public IDesktopAppSession? SolidWorksSession { get; init; }
+    /// <summary>V11: starts Chrome for Browser jobs. Null: the real Chrome on Windows unless simulating (tests), else nothing.</summary>
+    public IDesktopAppSession? ChromeSession { get; init; }
     public TimeSpan BridgeTimeout { get; init; } = TimeSpan.FromMinutes(20);
     public ICockpitLog Log { get; init; } = NullLog.Instance;
     /// <summary>Null: Antigravity CLI (`agy`) located on PATH or in %LOCALAPPDATA%gybin when a job needs it.</summary>
@@ -321,6 +323,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
     public ISwxBackend Swx { get; }
     /// <summary>V10: the SolidWorks the CAD tools drive, started on demand (one copy); a no-op with a simulated backend.</summary>
     public IDesktopAppSession SolidWorks { get; }
+    /// <summary>V11: the user's Chrome, for Browser jobs (Claude in Chrome).</summary>
+    public IDesktopAppSession Chrome { get; }
     public CockpitPaths Paths => _options.Paths;
 
     public IReadOnlyList<RunningJob> Jobs => _jobs.Values.OrderBy(j => j.StartedAt).ToList();
@@ -369,6 +373,9 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         // The real SolidWorks only with the real worker on Windows; a simulated backend (tests, --simulate) starts nothing.
         SolidWorks = options.SolidWorksSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
             ? new SolidWorksSession(SolidWorksSession.DefaultStartTimeout, options.Log)
+            : NoDesktopAppSession.Instance);
+        Chrome = options.ChromeSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
+            ? new Browser.ChromeSession(options.Log)
             : NoDesktopAppSession.Instance);
         Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
         Tools.Register(new SwxPartToolProvider(SolidWorks));
@@ -465,6 +472,15 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             if (!SessionIds.IsSafe(resume)) throw new ArgumentException("The session to continue has an invalid id; start a fresh job instead.", nameof(spec));
             if (spec.Provider == AiProvider.GeminiCli) throw new ArgumentException("Only Claude Code sessions can be continued.", nameof(spec));
             spec = spec with { Provider = AiProvider.ClaudeCode, NeverDowngrade = true };
+        }
+        if (JobSpecFactory.UsesChrome(spec) && spec.Launch != LaunchMode.None)
+        {
+            // Claude in Chrome is a Claude Code feature, and one agent at a time in the user's browser: two would fight over tabs
+            // (and each extra run costs Chrome memory).
+            if (_jobs.Values.Any(j => j.State is JobState.Starting or JobState.Running && JobSpecFactory.UsesChrome(j.Spec)))
+                throw new InvalidOperationException("A Chrome job is already running. Wait for it to finish (or stop it), then try again.");
+            spec = spec with { Provider = AiProvider.ClaudeCode, NeverDowngrade = true };
+            Chrome.WarmUp(); // Chrome loads while the job is set up
         }
         RouteDecision? route = null;
         if (spec.Launch != LaunchMode.None)
@@ -698,13 +714,16 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
             ? AgyHeadless(job)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
                 .ClaudeHeadless(job.Workspace, spec.WorkingDirectory, spec.MaxTurns, job.Model, spec.AllowMeteredBilling, spec.ContinueSessionId,
-                    webSearch: spec.Category == TaskCategory.Search, noLocalFiles: NoLocalAccess(spec), effort: job.Effort);
+                    webSearch: spec.Category == TaskCategory.Search, noLocalFiles: NoLocalAccess(spec), effort: job.Effort,
+                    chrome: JobSpecFactory.UsesChrome(spec));
     }
 
     private async Task LaunchHeadlessAsync(RunningJob job, CancellationToken ct)
     {
         var provider = job.Provider ?? AiProvider.ClaudeCode;
         string cli = provider == AiProvider.ClaudeCode ? "claude" : "agy";
+        // The CLI looks for the Claude in Chrome extension once, at start: Chrome must be open first.
+        if (JobSpecFactory.UsesChrome(job.Spec)) await Chrome.EnsureReadyAsync(ct).ConfigureAwait(false);
         var process = _options.Launcher.StartHeadless(HeadlessStartInfo(job));
         job.Process = process;
         job.ProcessGroup.Assign(process);
@@ -818,7 +837,8 @@ public sealed class CockpitRuntime : ICockpitRuntime, IAsyncDisposable
         var psi = job.Provider == AiProvider.GeminiCli
             ? AllowCockpitTools(new GeminiLaunchBuilder(RequireExecutable(AiProvider.GeminiCli))).Interactive(job.Workspace, session, hasBrief, spec.AllowMeteredBilling)
             : new CliLaunchBuilder(RequireExecutable(AiProvider.ClaudeCode), _options.BridgeTimeout + TimeSpan.FromMinutes(1))
-                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling, spec.ContinueSessionId);
+                .ClaudeInteractive(job.Workspace, spec.WorkingDirectory, session, hasBrief, spec.AllowMeteredBilling, spec.ContinueSessionId,
+                    chrome: JobSpecFactory.UsesChrome(spec));
         job.Interactive = session;
         _options.Launcher.StartInteractive(psi, job.Workspace);
         // Never watch the launcher: wt.exe exits within milliseconds. The script's sentinel files tell us what happens.

@@ -137,6 +137,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("assembly name V10: the .SLDASM name a request gives is the output (folder or full path); default planes front/top/right as mate ids", () => { Cockpit.Tests.AssemblyRequestTests.RequestedNameAndPlaneIds(); return Task.CompletedTask; }),
     ("default-plane mates V10: a plan mating front/top/right planes is validated and reaches SolidWorks as planes; never for Concentric", () => Cockpit.Tests.AssemblyRequestTests.DefaultPlaneMatesReachTheBackend(bridgeDll)),
     ("swx worker V10: mates on default planes (by tree position), prompts quiet during the build and the user's settings restored", Cockpit.Tests.SwxTests.DefaultPlaneMatesAndQuietPrompts),
+    ("chrome V11: browser prompts route to Browser; claude --chrome with only the safe browser tools; local files stay off", () => { Cockpit.Tests.BrowserTests.RoutingAndLaunch(); return Task.CompletedTask; }),
+    ("chrome V11: Chrome started once on demand (joined, light flags), an open Chrome reused, a missing one explained", Cockpit.Tests.BrowserTests.StartsChromeOnceAndLight),
     ("iterations V10: saving vN deletes Cockpit's older versions (and backups, copies, STLs, views) only; views returned as images; proportions vs reference", () => { Cockpit.Tests.ChatAppTests.IterationsVersionsAndViews(); return Task.CompletedTask; }),
     ("part tool V10: schema offers every builder op (loft, sweep, revolve, surfaces, shell, mirror...) and fitBoxMm", () => { Cockpit.Tests.AppSessionTests.PartToolSchemaCoversSurfacing(); return Task.CompletedTask; }),
     ("saved chats V10: tools, category and folder survive a restart; old chats inferred; follow-ups gain the tools they need", Cockpit.Tests.ModelChoiceTests.SavedChatKeepsTools),

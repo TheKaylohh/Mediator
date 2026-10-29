@@ -77,7 +77,7 @@ public sealed class CliLaunchBuilder
     public static readonly string[] ClaudeLocalTools = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "NotebookEdit", "NotebookRead"];
 
     public ProcessStartInfo ClaudeHeadless(JobWorkspace ws, string workingDirectory, int maxTurns, string? model = null, bool allowMeteredBilling = false,
-        string? resumeSessionId = null, bool webSearch = false, bool noLocalFiles = false, string? effort = null)
+        string? resumeSessionId = null, bool webSearch = false, bool noLocalFiles = false, string? effort = null, bool chrome = false)
     {
         var args = new List<string>
         {
@@ -86,10 +86,12 @@ public sealed class CliLaunchBuilder
             "--include-partial-messages",
             "--mcp-config", ws.ClaudeMcpConfigPath, "--strict-mcp-config",
             // Our gate is authoritative, so Claude's own prompt for these tools would only duplicate it.
-            "--allowedTools", $"mcp__{JobWorkspaceFactory.ServerName}" + (webSearch ? ",WebSearch,WebFetch" : ""),
+            "--allowedTools", $"mcp__{JobWorkspaceFactory.ServerName}" + (webSearch ? ",WebSearch,WebFetch" : "") + (chrome ? "," + Browser.ClaudeInChrome.AllowedToolsArgument : ""),
             "--max-turns", maxTurns.ToString(CultureInfo.InvariantCulture),
         };
         if (noLocalFiles) { args.Add("--disallowedTools"); args.Add(string.Join(",", ClaudeLocalTools)); }
+        // V11: Claude in Chrome (the CLI connects to the extension in the user's Chrome).
+        if (chrome) args.Add("--chrome");
         if (model is not null) { args.Add("--model"); args.Add(model); }
         if (ModelCatalog.IsEffort(effort)) { args.Add("--effort"); args.Add(effort!); }
         if (resumeSessionId is not null) { args.Add("--resume"); args.Add(RequireSafeSession(resumeSessionId)); }
@@ -117,10 +119,11 @@ public sealed class CliLaunchBuilder
     /// </summary>
     /// <param name="hasBrief">V6: the user's task is never put on a command line (visible to other processes). When the job has
     /// one, the first message is a fixed instruction to fetch it from cockpit_job_brief over the authenticated bus.</param>
-    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false, string? resumeSessionId = null)
+    public ProcessStartInfo ClaudeInteractive(JobWorkspace ws, string workingDirectory, InteractiveSession session, bool hasBrief, bool allowMeteredBilling = false, string? resumeSessionId = null, bool chrome = false)
     {
         string command = $"& {Ps(_claudeExecutable)} --mcp-config {Ps(ws.ClaudeMcpConfigPath)} --strict-mcp-config --allowedTools {Ps("mcp__" + JobWorkspaceFactory.ServerName)}"
             + (resumeSessionId is not null ? " --resume " + Ps(RequireSafeSession(resumeSessionId)) : "")
+            + (chrome ? " --chrome" : "")
             + (hasBrief ? " " + Ps(JobBriefToolProvider.Instruction) : "");
         string script = InteractiveSession.WriteScript(Path.Combine(ws.Root, "launch-claude.ps1"), ws.Root, VariablesToScrub(allowMeteredBilling), allowMeteredBilling,
             new Dictionary<string, string> { ["MCP_TOOL_TIMEOUT"] = ((long)_toolTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture) },
