@@ -307,7 +307,8 @@ public sealed class PathAuthorizer
         try
         {
             bool dir = Directory.Exists(v.FullPath);
-            using var h = dir ? OpenDirectoryVerified(v) : OpenVerified(v, create: false);
+            // Attributes only: a file another program holds open for writing (a part open in SolidWorks) still verifies.
+            using var h = dir ? OpenDirectoryVerified(v) : OpenVerified(v, create: false, attributesOnly: true);
             return v;
         }
         catch (PathDeniedException ex) { return ex.Verdict; }
@@ -452,7 +453,9 @@ public sealed class PathAuthorizer
         finally { LinuxFs.Close(rootFd); }
     }
 
-    private SafeFileHandle OpenVerified(PathVerdict v, bool create)
+    /// <param name="attributesOnly">Windows: open for attributes only, sharing everything, so no other program's open handle
+    /// (SolidWorks keeps open documents open for writing) causes a sharing violation (Win32 error 32).</param>
+    private SafeFileHandle OpenVerified(PathVerdict v, bool create, bool attributesOnly = false)
     {
         if (UseKernelResolve)
         {
@@ -484,8 +487,10 @@ public sealed class PathAuthorizer
         SafeFileHandle h;
         if (OperatingSystem.IsWindows())
         {
-            uint access = create ? Win32.GENERIC_WRITE | Win32.DELETE : Win32.GENERIC_READ;
-            h = Win32.CreateFile(@"\\?\" + v.FullPath, access, Win32.FILE_SHARE_READ, IntPtr.Zero,
+            uint access = create ? Win32.GENERIC_WRITE | Win32.DELETE : attributesOnly ? Win32.FILE_READ_ATTRIBUTES : Win32.GENERIC_READ;
+            // Reading shares with writers too: a document open in its program (SolidWorks, Word) is held with write access.
+            uint share = create ? Win32.FILE_SHARE_READ : Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE | (attributesOnly ? Win32.FILE_SHARE_DELETE : 0);
+            h = Win32.CreateFile(@"\\?\" + v.FullPath, access, share, IntPtr.Zero,
                 create ? Win32.CREATE_NEW : Win32.OPEN_EXISTING, create ? 0 : Win32.FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
             if (h.IsInvalid)
             {

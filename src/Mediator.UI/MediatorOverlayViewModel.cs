@@ -587,6 +587,9 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
     // -- V10: one prompt at a time per chat, Stop, and the model / effort picker --
 
     private const string ChatBusyMessage = "This chat is still working on your last prompt. Wait for it, or press Stop.";
+    /// <summary>V16.1: what a terminal job's chat card says while it runs.</summary>
+    public const string TerminalNote = "Running in its own terminal window (PowerShell): the answer and any questions appear there, not here. " +
+        "Close that window, or press Stop in Jobs, to end it.";
     private const string StopReason = "stopped by the user";
     private bool _sending;
 
@@ -1136,9 +1139,12 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
             var job = await _runtime.StartJobAsync(ApplyModelPick(spec)).ConfigureAwait(true);
             _ui.Post(() =>
             {
-                if (job.Spec.Launch == LaunchMode.Headless && !_turns.ContainsKey(job.JobId))
+                if (job.Spec.Launch is LaunchMode.Headless or LaunchMode.Interactive && !_turns.ContainsKey(job.JobId))
                 {
                     var turn = new ChatTurnViewModel(job.JobId, spec.UserText ?? spec.Title, Badge(job));
+                    // V16.1: a terminal job answers in its own PowerShell window; its card says so instead of staying empty.
+                    // It does not keep the chat busy, so the chat can be used while it runs.
+                    if (job.Spec.Launch == LaunchMode.Interactive) { turn.IsRunning = false; turn.ResponseText = TerminalNote; }
                     _turns[job.JobId] = turn;
                     Conversation.Add(turn);
                 }
@@ -1332,7 +1338,9 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
             if (!item.IsActive)
             {
                 turn.IsRunning = false;
-                if (job.State != JobState.Succeeded && turn.ResponseText.Length == 0) { turn.IsError = true; turn.ResponseText = job.Detail ?? job.State.ToString(); }
+                if (job.Spec.Launch == LaunchMode.Interactive && turn.ResponseText == TerminalNote)
+                    turn.ResponseText = $"The terminal job ended ({job.State}){(job.Detail is { Length: > 0 } d ? ": " + d : ".")} Its conversation is in that PowerShell window.";
+                else if (job.State != JobState.Succeeded && turn.ResponseText.Length == 0) { turn.IsError = true; turn.ResponseText = job.Detail ?? job.State.ToString(); }
             }
         }
         if (!item.IsActive && job.Spec.Kind != Mediator.Core.Browser.BrowserPanelChats.Kind // V14.1: the side panel keeps its own chats

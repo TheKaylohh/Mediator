@@ -30,7 +30,7 @@ public sealed record SavedResume(string SessionId, AiProvider Provider, string W
     {
         // Reopened chats used to come back with no tools and the Chat category, so a follow-up could not reach SolidWorks.
         var inferred = JobSpecFactory.InferToolsAndCategory(LastPrompt, null);
-        var tools = Tools ?? inferred.Tools.ToList();
+        var tools = JobSpecFactory.WithCurrentToolset(Tools ?? inferred.Tools); // V16.1: chats saved by older versions get today's tools
         var category = Category ?? inferred.Category;
         var roots = Roots ?? (tools.Count > 0 && System.IO.Directory.Exists(WorkingDirectory) ? [WorkingDirectory] : []);
         var spec = JobSpecFactory.Assistant(null, LastPrompt, LaunchMode.Headless, tools, category, WorkingDirectory) with { Roots = roots };

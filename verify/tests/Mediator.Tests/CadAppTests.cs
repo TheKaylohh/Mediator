@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Cad;
+using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
 using Mediator.Core.Swx;
@@ -232,5 +233,98 @@ static class CadAppTests
         Check.True(!r.Text.Contains("images", StringComparison.Ordinal) && (int?)r.Structured!["pictures"] == 2, "file paths are not handed to the model, the count is");
         Check.True(app.LastViewsFolder is not null && !Directory.Exists(app.LastViewsFolder), "the call's picture folder is deleted afterwards");
         Check.True((await Call(p, job, "fc_capture_views", """{"views":["sideways"]}""")).IsError, "unknown views refused");
+    }
+}
+
+/// <summary>
+/// V16.1, from the Windows test battery: SolidWorks requests that did not get the SolidWorks tools (no "SolidWorks" in the
+/// prompt, chats saved by V15), the open document's folder, the running build, and files SolidWorks holds open.
+/// </summary>
+static class CadRoutingTests
+{
+    static string TempDir(string tag)
+    {
+        string d = Path.Combine(Path.GetTempPath(), "mediator-tests", "cadr-" + tag + "-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(d);
+        return d;
+    }
+
+    /// <summary>While SolidWorks is open, requests about the model get the whole toolset; old chats get the V16 tools.</summary>
+    public static void OpenModelRequestsAndOldChats()
+    {
+        var saved = JobSpecFactory.SolidWorksOpen;
+        try
+        {
+            string[] prompts =
+            [
+                "what does the open part weigh and what material is it?", "list the dimensions of this part", "how big is the selected hole?",
+                "set the material to 6061 Alloy", "suppress Fillet1 and set PartNo to BR-100", "list the BOM and check for interference",
+                "make an A3 drawing with a PDF", "show me the model from the front", "save this as bracket-v2",
+            ];
+            JobSpecFactory.SolidWorksOpen = () => true;
+            foreach (var p in prompts)
+            {
+                var (tools, category) = JobSpecFactory.InferToolsAndCategory(p, null);
+                Check.True(category == TaskCategory.Cad && tools.Contains(SolidWorksCadApp.InspectTool) && tools.Contains(SolidWorksCadApp.EditTool),
+                    $"SolidWorks open: \"{p}\" → the SolidWorks tools ({category})");
+            }
+            Check.True(JobSpecFactory.InferToolsAndCategory("what is the capital of France?", null).Category == TaskCategory.Chat, "a plain question stays a chat");
+            JobSpecFactory.SolidWorksOpen = () => false;
+            Check.True(JobSpecFactory.InferToolsAndCategory("what does the open part weigh?", null).Category != TaskCategory.Cad, "SolidWorks closed: a question does not start it");
+        }
+        finally { JobSpecFactory.SolidWorksOpen = saved; }
+
+        // A chat saved by V15 had only the V15 SolidWorks tools: reopened or continued, it has today's.
+        string[] v15 = ["swx_build_parametric_part", "swx_set_part_globals", "swx_session", "swx_document_ops", "swx_export_neutral", "swx_part_cards"];
+        var upgraded = JobSpecFactory.WithCurrentToolset(v15);
+        Check.True(JobSpecFactory.CadTools.All(upgraded.Contains), "an old SolidWorks chat gets every current SolidWorks tool");
+        Check.True(JobSpecFactory.WithCurrentToolset([Mediator.Core.CadFiles.CadFileToolProvider.InspectTool]).Count == 1, "a CAD-file chat does not gain SolidWorks");
+        var reopened = new SavedResume("s1", AiProvider.ClaudeCode, Path.GetTempPath(), "j1", true, "what's open in SolidWorks?", "a part") { Tools = [.. v15], Roots = [], Category = TaskCategory.Cad }
+            .ToSession(DateTimeOffset.Now);
+        Check.True(reopened.Spec.Tools.Contains(SolidWorksCadApp.InspectTool) && reopened.Spec.Tools.Contains(SolidWorksCadApp.DrawingTool), "a reopened V15 chat has the V16 tools");
+        var follow = JobSpecFactory.Continue(reopened, "now make it 25 mm");
+        Check.True(follow.Tools.Contains(SolidWorksCadApp.EditTool), "and so do its follow-ups");
+    }
+
+    /// <summary>A SolidWorks job works on the open document: its folder joins the job's folders, the prompt names it.</summary>
+    public static async Task OpenDocumentFolderShared(string bridgeDll)
+    {
+        string models = TempDir("open"), other = TempDir("other");
+        string part = Path.Combine(models, "bracket.SLDPRT");
+        File.WriteAllText(part, "p");
+        string? active = part;
+        await using var runtime = await MediatorRuntime.CreateAsync(new RuntimeOptions
+        {
+            Paths = new MediatorPaths(TempDir("rt")),
+            Bus = new BusOptions { PipeName = "mediator-cadr-" + Guid.NewGuid().ToString("N")[..10] },
+            Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
+            SwxBackend = new SimulatedSwxBackend(),
+            ActiveCadDocument = _ => Task.FromResult<string?>(active),
+        });
+        var cad = JobSpecFactory.Assistant(null, "what does the open part weigh?", LaunchMode.None, JobSpecFactory.CadTools, TaskCategory.Cad, runtime.ChatDirectory);
+        var job = await runtime.StartJobAsync(cad);
+        Check.True(job.Spec.Roots.Contains(models, StringComparer.OrdinalIgnoreCase) && job.Spec.Prompt.Contains(part, StringComparison.Ordinal),
+            "a CAD chat with no folder gets the open document's folder and is told the file: " + string.Join(";", job.Spec.Roots));
+        var withFolder = await runtime.StartJobAsync(cad with { Roots = [other], JobId = null });
+        Check.True(withFolder.Spec.Roots.Count == 2, "a chosen folder stays, the open document's folder is added");
+        var chat = await runtime.StartJobAsync(JobSpecFactory.Assistant(null, "hello", LaunchMode.None, [], TaskCategory.Chat, runtime.ChatDirectory));
+        Check.True(chat.Spec.Roots.Count == 0 && !chat.Spec.Prompt.Contains("SolidWorks", StringComparison.Ordinal), "other jobs never get it");
+        active = null;
+        var none = await runtime.StartJobAsync(cad with { JobId = null });
+        Check.True(none.Spec.Roots.Count == 0, "nothing open: no folder added");
+    }
+
+    /// <summary>The running build is recorded; a different build is told apart (V15 left no record).</summary>
+    public static void RunningBuildRecorded()
+    {
+        string data = TempDir("instance");
+        Check.True(RunningInstance.Read(data) is null && RunningInstance.Describe(null).Contains("older", StringComparison.Ordinal), "no record = an older version");
+        RunningInstance.Write(data);
+        var me = RunningInstance.Read(data)!;
+        Check.True(me.IsThisBuild && me.ProcessId == Environment.ProcessId && me.Version == MediatorVersion.Name, "this build recorded and recognised: " + RunningInstance.Describe(me));
+        var old = me with { Build = "000000000000", Version = "V16" };
+        Check.True(!old.IsThisBuild && RunningInstance.Describe(old).Contains("V16 (build 000000000000)", StringComparison.Ordinal), "another build is told apart");
+        Check.True(RunningInstance.OthersToReplace(me, System.Diagnostics.Process.GetCurrentProcess().ProcessName).All(p => p.Id != Environment.ProcessId),
+            "this process is never closed as the old one");
     }
 }

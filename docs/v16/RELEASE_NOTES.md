@@ -50,3 +50,21 @@ Run each with a part, an assembly and a drawing open in SolidWorks:
 11. "save this as bracket-v2" → a new file; the old one is unchanged.
 12. With two jobs at once, the second job's SolidWorks call is refused (naming the job that holds SolidWorks) instead of interleaving.
 13. After any call, Tools > Options > "Input dimension value" is as it was.
+
+## V16.1: fixes from the Windows test battery
+
+| Test | What happened | Cause | Fix |
+| --- | --- | --- | --- |
+| SWX-04 to 11, 14 | "No swx_inspect_model tool"; save_as and PNG missing | The tool descriptions the model quoted are V15's. An older Mediator was still in the tray: starting V16 only showed "already running" and quit, so every chat ran on V15. Chats saved by V15 also kept their V15 tool list forever. | A new build now offers to close an older running one and start itself; the tray shows the version; `mediator-cli doctor` prints the version, checks all 12 swx_ tools are registered and warns if the tray runs another build. Chats saved by older versions (reopened or continued) get today's SolidWorks and Office tools. |
+| SWX-02, 04, 14 | Active-document requests did not reach SolidWorks; a turn ran on Haiku with no CAD tools | Only prompts containing "SolidWorks"/.SLDPRT (or SolidWorks in front) were routed to SolidWorks. | While SolidWorks is running, a request about a part, assembly, drawing, feature, dimension, material, mass, BOM, selection, export, save... gets the whole SolidWorks toolset. |
+| SWX-05 to 07 | Edits refused for the open part | A chat with no folder could read the open document but not change it. | A SolidWorks job gets the open document's folder (like a folder selected in File Explorer) and is told which file is open. Every change still shows its approval card. |
+| SWX-08, 14 | `Win32 error 32` | Path checks opened the file allowing only other readers; SolidWorks holds open documents with write access. | Path checks open for attributes only; reads also share with writers. |
+| SWX-12 | PNG export refused | V15 (see first row). | V16's export has PNG. |
+| SWX-13 | PowerShell windows running Claude; jobs missing from the chat | The chat runs one background job at a time, so the second job ran in terminal mode (its own PowerShell window, by design) and terminal jobs had no chat card. | Terminal jobs get a chat card saying where they run and how to stop them, updated when they end. The lease guard itself works: the second job's SolidWorks call is refused while the first holds SolidWorks. |
+
+### Re-running the battery
+
+1. Quit every Mediator from the tray (or start the new build and answer Yes to "close it and start this one").
+2. Rebuild: `powershell -ExecutionPolicy Bypass -File scripts\publish-release.ps1`, then run `dist\Mediator\launch.bat`.
+3. `dist\Mediator\mediator-cli.exe doctor`: "Mediator V16.1 (build …)" and "SolidWorks tools ok, 12 swx_ tools registered".
+4. Start a **new** chat (not one from before) with SolidWorks open, and run the tests.

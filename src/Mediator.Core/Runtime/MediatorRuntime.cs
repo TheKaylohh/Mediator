@@ -190,6 +190,9 @@ public sealed record RuntimeOptions
     public ProtectedPathPolicy? PathPolicy { get; init; }
     /// <summary>Starts SolidWorks for CAD tools. Null: the real one on Windows with the real worker, else nothing.</summary>
     public IDesktopAppSession? SolidWorksSession { get; init; }
+    /// <summary>V16.1: the file of the document active in SolidWorks, or null (not running, nothing open, never saved). Null
+    /// probe: the real SolidWorks on Windows with the real worker, else none.</summary>
+    public Func<CancellationToken, Task<string?>>? ActiveCadDocument { get; init; }
     /// <summary>V11: starts Chrome for Browser jobs. Null: the real Chrome on Windows unless simulating (tests), else nothing.</summary>
     public IDesktopAppSession? ChromeSession { get; init; }
     /// <summary>V15: classic desktop Outlook for the outlook_* tools. Null: the real one (it reports itself unavailable off Windows).</summary>
@@ -329,6 +332,8 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     public ISwxBackend Swx { get; }
     /// <summary>V10: the SolidWorks the CAD tools drive, started on demand (one copy); a no-op with a simulated backend.</summary>
     public IDesktopAppSession SolidWorks { get; }
+
+    private readonly Func<CancellationToken, Task<string?>>? _activeCadDocument;
     /// <summary>V11: the user's Chrome, for Browser jobs (Claude in Chrome).</summary>
     public IDesktopAppSession Chrome { get; }
     /// <summary>V13: the Mediator for Chrome extension, when this host runs its bridge (the overlay does; mediator-cli does not).</summary>
@@ -385,6 +390,9 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         Chrome = options.ChromeSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
             ? new Browser.ChromeSession(options.Log)
             : NoDesktopAppSession.Instance);
+        _activeCadDocument = options.ActiveCadDocument ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
+            ? ct => SolidWorksLauncher.IsRunning() ? Task.Run(() => SwxParametric.ActivePath(TimeSpan.FromSeconds(20)), ct) : Task.FromResult<string?>(null)
+            : null);
         Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
         Tools.Register(new SwxPartToolProvider(SolidWorks));
         Tools.Register(new Cad.CadAppToolProvider(new SolidWorksCadApp(SolidWorks))); // V16: inspect, edit, drawings, pictures, documents, export
@@ -529,6 +537,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
                 route.Original, route.Provider, route.Reason).ConfigureAwait(false);
         }
+        spec = await WithOpenCadDocumentAsync(spec, ct).ConfigureAwait(false);
         PrepareRoots(spec);
         // A job that will drive SolidWorks starts it now, so it is loading while the model reads and plans. V14.1: only when
         // this request asks for SolidWorks (an action tile, or CAD words in what the user typed). A follow-up in a chat that
@@ -965,6 +974,35 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             Changed(job);
         ReleaseBrowser(job);
         Registry.Revoke(job.JobId);
+    }
+
+    /// <summary>
+    /// V16.1: "the open part", "this assembly": a SolidWorks job works on the document active in SolidWorks, so that document's
+    /// folder joins the job's folders (as a folder selected in File Explorer does) and the model is told which file it is.
+    /// Without it a chat with no folder could read the open part but not change or export it. Protected folders are never added;
+    /// every change still shows its approval card.
+    /// </summary>
+    private async Task<JobSpec> WithOpenCadDocumentAsync(JobSpec spec, CancellationToken ct)
+    {
+        if (_activeCadDocument is null || spec.Category != TaskCategory.Cad || !spec.Tools.Any(SolidWorksCadApp.ToolNames.Contains))
+            return spec;
+        string? path;
+        try { path = await _activeCadDocument(ct).WaitAsync(TimeSpan.FromSeconds(25), ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or ArgumentException or PlatformNotSupportedException)
+        {
+            _options.Log.Warn("The document open in SolidWorks could not be read: " + ex.Message);
+            return spec;
+        }
+        if (path is null) return spec;
+        string folder;
+        try { folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ""; }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return spec; }
+        if (folder.Length == 0 || !Directory.Exists(folder)) return spec;
+        var policy = _options.PathPolicy ?? ProtectedPathPolicy.CreateDefault();
+        bool covered = spec.Roots.Any(r => Mediator.Core.Security.PathSyntax.Current.IsSameOrInside(folder, Path.GetFullPath(r)));
+        if (!covered && policy.CheckJobRoot(folder) is not null) return spec;
+        string note = $"\n\nOpen in SolidWorks right now: {path}. Its folder is shared with you; a swx_ tool without a path works on this document.";
+        return spec with { Roots = covered ? spec.Roots : [.. spec.Roots, folder], Prompt = spec.Prompt + note };
     }
 
     /// <summary>V13: how long a Browser job waits for the extension after Chrome is up (its worker reconnects within seconds).</summary>

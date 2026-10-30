@@ -2,6 +2,18 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V16.1: SolidWorks test battery fixes (2026-10-30)
+
+Diagnosis per test: [docs/v16/RELEASE_NOTES.md](docs/v16/RELEASE_NOTES.md#v161-fixes-from-the-windows-test-battery).
+
+- **An old Mediator in the tray answered the tests.** A newer build now offers to close an older running one; the tray and `doctor` show the version; `doctor` checks all SolidWorks tools are registered and warns when the tray runs another build.
+- **Chats saved by V15 kept V15's tools**: reopened and continued chats get today's SolidWorks and Office tools.
+- **Requests about the open model reach SolidWorks** without the word "SolidWorks" while SolidWorks is running.
+- **The open document's folder is shared** with SolidWorks jobs, so the open part can be changed, exported and saved as.
+- **Win32 error 32** on files open in SolidWorks fixed (path checks no longer conflict with SolidWorks' handle).
+- **Terminal jobs** get a chat card instead of disappearing.
+- 3 new tests (165; 154 run here, all pass).
+
 ## V16: code review and SolidWorks by chat (2026-10-29)
 
 Full notes, review findings and the Windows checklist: [docs/v16/RELEASE_NOTES.md](docs/v16/RELEASE_NOTES.md).

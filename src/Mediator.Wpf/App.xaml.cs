@@ -31,9 +31,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
         _single = new Mutex(initiallyOwned: true, MutexName, out bool first);
-        if (!first)
+        if (!first && !ReplaceOlderInstance())
         {
-            MessageBox.Show("Mediator is already running (see the tray).", "Mediator", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
         }
@@ -45,6 +44,8 @@ public partial class App : Application
             var paths = MediatorPaths.Default();
             _browser = Mediator.Core.Browser.BrowserExtensionHost.TryStart(paths.DataDirectory, log);
             _runtime = await MediatorRuntime.CreateAsync(new RuntimeOptions { Log = log, Paths = paths, BrowserBridge = _browser?.Bridge });
+            RunningInstance.Write(paths.DataDirectory); // V16.1: a later build can tell this one apart and replace it
+            log.Info("Mediator " + MediatorVersion.Display);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -122,6 +123,43 @@ public partial class App : Application
         {
             return null; // context is a convenience; never block the hotkey on it
         }
+    }
+
+    /// <summary>
+    /// V16.1: another overlay holds the single-instance lock. The same build: say so and stop. A different build (typically an
+    /// older version left in the tray, which kept answering every chat with its old tools): offer to close it and start this one.
+    /// True when this process now holds the lock and should start.
+    /// </summary>
+    private bool ReplaceOlderInstance()
+    {
+        var running = RunningInstance.Read(MediatorPaths.Default().DataDirectory);
+        if (running is { IsThisBuild: true })
+        {
+            MessageBox.Show($"Mediator {MediatorVersion.Name} is already running (see the tray).", "Mediator", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+        var answer = MessageBox.Show(
+            $"{RunningInstance.Describe(running)} is still running in the tray, so starting this copy would keep using it.\n\n" +
+            $"Close it and start Mediator {MediatorVersion.Display} instead? Jobs running in the old one are stopped.",
+            "Mediator", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes) return false;
+        foreach (var old in RunningInstance.OthersToReplace(running, System.Diagnostics.Process.GetCurrentProcess().ProcessName))
+        {
+            using (old)
+            {
+                try { old.Kill(entireProcessTree: true); old.WaitForExit(10_000); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
+        }
+        _single?.Dispose();
+        _single = new Mutex(initiallyOwned: true, MutexName, out bool first);
+        if (!first)
+        {
+            try { first = _single.WaitOne(TimeSpan.FromSeconds(5)); }
+            catch (AbandonedMutexException) { first = true; } // the old overlay was killed while holding it: it is ours now
+        }
+        if (!first) MessageBox.Show("The running Mediator could not be closed. Quit it from its tray icon, then start this one again.", "Mediator", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return first;
     }
 
     private async void Quit()

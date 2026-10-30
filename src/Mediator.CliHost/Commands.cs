@@ -409,6 +409,7 @@ public static class Commands
         var checks = new List<Check>();
         void Add(string name, string status, string detail) => checks.Add(new Check(name, status, detail));
 
+        Add("Mediator", "ok", MediatorVersion.Display);
         Add(".NET runtime", "ok", Environment.Version.ToString());
         Add("OS", "ok", System.Runtime.InteropServices.RuntimeInformation.OSDescription);
 
@@ -418,6 +419,14 @@ public static class Commands
             runtime = await MediatorRuntime.CreateAsync(Options(cli));
             Add("state folder", "ok", runtime.Paths.DataDirectory);
             Add("bus", "ok", runtime.Bus.PipeEndpoint.ToString());
+            // V16.1: every SolidWorks tool a CAD chat is given must be registered (an old build lacks the V16 ones).
+            var missing = JobSpecFactory.CadTools.Where(t => !runtime.Tools.TryGet(t, out _, out _)).ToList();
+            Add("SolidWorks tools", missing.Count == 0 ? "ok" : "fail", missing.Count == 0
+                ? $"{JobSpecFactory.CadTools.Count(t => t.StartsWith("swx_", StringComparison.Ordinal))} swx_ tools registered (inspect, edit, drawing, views, documents, export, parts, assemblies)"
+                : "not registered: " + string.Join(", ", missing));
+            var tray = RunningInstance.Read(runtime.Paths.DataDirectory);
+            if (tray is not null && !tray.IsThisBuild && System.Diagnostics.Process.GetProcesses().Any(p => p.Id == tray.ProcessId))
+                Add("overlay", "warn", $"the Mediator in the tray is a different build ({RunningInstance.Describe(tray)}); quit it from the tray and start this build's Mediator.exe");
             var chain = await runtime.Audit.VerifyAsync();
             Add("audit chain", chain.Ok ? "ok" : "fail", chain.Ok
                 ? $"{chain.RowsChecked} rows verified; head {chain.Head?[..Math.Min(16, chain.Head.Length)]}… (note it down to detect a truncated log later)"

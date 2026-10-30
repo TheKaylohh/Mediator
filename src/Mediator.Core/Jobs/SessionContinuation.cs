@@ -119,7 +119,7 @@ public static partial class JobSpecFactory
         var attachments = previous.Attachments.Concat(newAttachments ?? []).GroupBy(a => a.Id, StringComparer.Ordinal).Select(g => g.First()).ToList();
         // A follow-up may need tools the first turn did not ("now model an F40" after an assembly): add the ones it implies.
         var (moreTools, moreCategory) = InferToolsAndCategory(prompt, null);
-        var tools = previous.Tools.Concat(moreTools).Distinct(StringComparer.Ordinal).ToList();
+        var tools = WithCurrentToolset(previous.Tools.Concat(moreTools));
         var category = previous.Category == TaskCategory.Chat && moreTools.Count > 0 ? moreCategory : previous.Category;
         // "Using the chrome extension, now do it" after a plain answer: the follow-up becomes a Browser job (browser tools
         // are added when it starts; a Browser job gets no folder and no other Mediator tool).
@@ -228,6 +228,46 @@ public static partial class JobSpecFactory
     [GeneratedRegex(@"\.stl\b|\bstls?\s+files?\b|\bstls\b")]
     private static partial Regex StlFile();
 
+    /// <summary>
+    /// V16.1: a chat saved by an earlier version keeps the tool list it started with, so a SolidWorks chat from V15 never saw
+    /// the V16 tools. A chat that had any SolidWorks tool gets today's whole SolidWorks toolset; one with Office tools, all of them.
+    /// </summary>
+    public static List<string> WithCurrentToolset(IEnumerable<string> tools)
+    {
+        var list = tools.Distinct(StringComparer.Ordinal).ToList();
+        if (list.Any(t => t.StartsWith("swx_", StringComparison.Ordinal))) list = list.Concat(CadTools).Distinct(StringComparer.Ordinal).ToList();
+        if (list.Any(OfficeTools.Contains)) list = list.Concat(OfficeTools).Distinct(StringComparer.Ordinal).ToList();
+        return list;
+    }
+
+    /// <summary>
+    /// V16.1: whether SolidWorks is running (checked at most every 5 s). While it is, a request about parts, features,
+    /// dimensions, materials... is about the model on screen, even without the word "SolidWorks". Tests replace it.
+    /// </summary>
+    public static Func<bool> SolidWorksOpen { get; set; } = ProbeSolidWorks;
+
+    private static long _swCheckedAt = long.MinValue / 2;
+    private static volatile bool _swOpen;
+
+    private static bool ProbeSolidWorks()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        long now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _swCheckedAt) > 5000)
+        {
+            _swOpen = Swx.SolidWorksLauncher.IsRunning();
+            Interlocked.Exchange(ref _swCheckedAt, now);
+        }
+        return _swOpen;
+    }
+
+    /// <summary>Words that, while SolidWorks is open, mean the model on screen (start of a word: "part" also matches "parts").</summary>
+    private static readonly string[] OpenModelWords =
+        ["part", "assembl", "drawing", "feature", "dimension", "sketch", "extrude", "fillet", "chamfer", "hole", "material", "mass", "weigh",
+         "bom", "bill of material", "interference", "configuration", "mate", "face", "edge", "suppress", "custom propert", "propert",
+         "export", "save as", "save it", "save this", "save the", "screenshot", "picture", "the model", "this model", "open model", "selected", "selection", "thickness",
+         "diameter", "radius", "rebuild", "volume", "center of mass", "centre of mass", "equation", "global variable", "iso view", "isometric"];
+
     /// <summary>True when the request itself asks for SolidWorks work (used to start SolidWorks early only for those).</summary>
     public static bool AsksForSolidWorks(string? prompt) => InferAppTools(prompt ?? "", null).Tools.Contains(CadTools[0], StringComparer.Ordinal);
 
@@ -273,7 +313,8 @@ public static partial class JobSpecFactory
         // material", "C++ STL") is not a SolidWorks job (which started SolidWorks).
         bool create = CreateIntent.Any(k => HasWord(t, k));
         bool cad = (create && CadWord().IsMatch(t)) || MateWord().IsMatch(t)
-            || (HasWord(t, "assembl") && AssemblyContext().IsMatch(t));
+            || (HasWord(t, "assembl") && AssemblyContext().IsMatch(t))
+            || (OpenModelWords.Any(k => HasWord(t, k)) && SolidWorksOpen()); // V16.1: about the model open in SolidWorks
         bool cadFile = CadFileWord().IsMatch(t) || StlFile().IsMatch(t);
         bool officeFile = OfficeFileWord().IsMatch(t) || (OfficeNames.Any(k => HasWord(t, k)) && OfficeAction.Any(k => HasWord(t, k)));
         bool Special(int i) => (i == 0 && cad) || (i == 2 && cadFile) || (i == 3 && officeFile);

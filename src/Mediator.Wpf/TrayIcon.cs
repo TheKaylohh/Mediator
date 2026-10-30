@@ -27,7 +27,7 @@ public sealed class TrayIcon : IDisposable
 
         _icon = new Forms.NotifyIcon
         {
-            Text = "Mediator",
+            Text = "Mediator " + Mediator.Core.Runtime.MediatorVersion.Name,
             Icon = LoadIcon(),
             ContextMenuStrip = menu,
             Visible = true,
@@ -54,7 +54,8 @@ public sealed class TrayIcon : IDisposable
     public void SetHotkey(string? hotkey)
     {
         _open.Text = OpenText(hotkey);
-        _icon.Text = hotkey is null ? "Mediator (no hotkey: click to open)" : $"Mediator ({hotkey})";
+        string name = "Mediator " + Mediator.Core.Runtime.MediatorVersion.Name;
+        _icon.Text = hotkey is null ? name + " (no hotkey: click to open)" : $"{name} ({hotkey})";
     }
 
     public void Notify(string title, string text) => _icon.ShowBalloonTip(4000, title, text, Forms.ToolTipIcon.Info);
