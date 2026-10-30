@@ -49,9 +49,11 @@ public sealed class WorkspaceViewModel : ObservableObject
         OpenPaletteCommand = new RelayCommand(() => { PaletteQuery = ""; IsPaletteOpen = true; RefreshPalette(); });
         ClosePaletteCommand = new RelayCommand(() => IsPaletteOpen = false);
         RunFirstPaletteItemCommand = new RelayCommand(() => { if (PaletteResults.FirstOrDefault() is { } first) first.RunCommand.Execute(null); });
-        ToggleProfileCommand = new RelayCommand(() => IsProfileOpen = !IsProfileOpen);
-        CloseOverlaysCommand = new RelayCommand(() => { IsPaletteOpen = false; IsProfileOpen = false; IsShortcutsOpen = false; IsAboutOpen = false; });
-        OpenNotificationsCommand = new RelayCommand(() => SelectMode(Main.HasPendingApproval ? RightMode.Access : RightMode.Activity, toggle: false));
+        ToggleProfileCommand = new RelayCommand(() => { CloseNotifications(); IsProfileOpen = !IsProfileOpen; });
+        CloseOverlaysCommand = new RelayCommand(() => { CloseNotifications(); IsPaletteOpen = false; IsProfileOpen = false; IsShortcutsOpen = false; IsAboutOpen = false; });
+        OpenNotificationsCommand = new RelayCommand(ToggleNotifications);
+        ReviewApprovalCommand = new RelayCommand(() => SelectMode(RightMode.Access, toggle: false));
+        ClearNotificationsCommand = new RelayCommand(() => { Notifications.Clear(); RefreshNotifications(); });
         ProfileItems =
         [
             Item("Usage & Analytics", "", "Plan meters and Mediator's own runs", () => Host.OpenOverlayTab(MediatorOverlayViewModel.UsageTab)),
@@ -68,7 +70,10 @@ public sealed class WorkspaceViewModel : ObservableObject
         Main.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MediatorOverlayViewModel.CurrentChatId))
+            {
                 foreach (var item in PinnedChats.Concat(RecentChats)) item.IsCurrent = item.Chat.Id == Main.CurrentChatId;
+                ResetArtifactBaseline(); // another chat's files are not news
+            }
         };
         Main.Jobs.CollectionChanged += OnJobsChanged;
         Main.Conversation.CollectionChanged += (_, _) => RefreshHeader();
@@ -77,6 +82,7 @@ public sealed class WorkspaceViewModel : ObservableObject
         RefreshChats();
         OnJobsChanged(null, null);
         RefreshProjects();
+        ResetArtifactBaseline();
     }
 
     public MediatorOverlayViewModel Main { get; }
@@ -268,18 +274,88 @@ public sealed class WorkspaceViewModel : ObservableObject
 
     // ── Notifications ────────────────────────────────────────────────────────────────────────────────
 
-    public int NotificationCount => Main.PendingApprovalCount + JobRows.Count(j => j.IsFailedUnseen);
+    /// <summary>V18.2: what happened while you were elsewhere: permission requests, finished jobs and new files. Newest first; no job list.</summary>
+    public ObservableCollection<NotificationItem> Notifications { get; } = new();
+    public bool HasNoNotifications => Notifications.Count == 0;
+    public int NotificationCount => Notifications.Count(n => !n.IsRead);
     public bool HasNotifications => NotificationCount > 0;
-    public string NotificationText => NotificationCount == 0 ? "Nothing needs you" :
-        string.Join(" · ", new[] { Main.PendingApprovalCount > 0 ? $"{Main.PendingApprovalCount} approval(s) waiting" : null,
-            JobRows.Count(j => j.IsFailedUnseen) is > 0 and var f ? $"{f} failed job(s)" : null }.OfType<string>());
+    public string NotificationText => NotificationCount == 0 ? "Notifications: nothing new" : $"Notifications: {NotificationCount} new";
     public RelayCommand OpenNotificationsCommand { get; }
+    public RelayCommand ClearNotificationsCommand { get; }
+    /// <summary>Shows a waiting permission request (Access mode).</summary>
+    public RelayCommand ReviewApprovalCommand { get; }
+
+    private bool _isNotificationsOpen;
+    public bool IsNotificationsOpen { get => _isNotificationsOpen; private set => SetProperty(ref _isNotificationsOpen, value); }
+
+    private void ToggleNotifications()
+    {
+        if (IsNotificationsOpen) { CloseNotifications(); return; }
+        IsProfileOpen = false;
+        IsNotificationsOpen = true;
+    }
+
+    /// <summary>Closing the panel is what marks its items read (so the new ones can be told apart while it is open).</summary>
+    private void CloseNotifications()
+    {
+        if (!IsNotificationsOpen) return;
+        IsNotificationsOpen = false;
+        foreach (var n in Notifications) n.IsRead = true;
+        RefreshNotifications();
+    }
+
+    private const int MaxNotifications = 50;
+
+    private void Notify(NotificationKind kind, string title, string detail, string actionText = "", Action? action = null)
+    {
+        Notifications.Insert(0, new NotificationItem(kind, title, detail, actionText, action is null ? null : new RelayCommand(() => { CloseNotifications(); action(); })));
+        while (Notifications.Count > MaxNotifications) Notifications.RemoveAt(Notifications.Count - 1);
+        RefreshNotifications();
+    }
 
     internal void RefreshNotifications()
     {
         OnPropertyChanged(nameof(NotificationCount));
         OnPropertyChanged(nameof(HasNotifications));
+        OnPropertyChanged(nameof(HasNoNotifications));
         OnPropertyChanged(nameof(NotificationText));
+    }
+
+    private ApprovalViewModel? _notifiedApproval;
+
+    private void NotifyApproval()
+    {
+        if (Main.PendingApproval is not { } card || ReferenceEquals(card, _notifiedApproval)) return;
+        _notifiedApproval = card;
+        Notify(NotificationKind.Permission, "Permission requested", card.Title, "Review", () => SelectMode(RightMode.Access, toggle: false));
+    }
+
+    /// <summary>A job reached Completed or Failed (cancelled by you is not news).</summary>
+    internal void JobFinished(JobRow row)
+    {
+        if (row.StateLabel == "Completed") Notify(NotificationKind.JobCompleted, "Job completed", row.Job.Title, "Details", () => Inspect(row));
+        else if (row.StateLabel == "Failed") Notify(NotificationKind.JobFailed, "Job failed", row.Job.Title, "Details", () => Inspect(row));
+        NotifyNewArtifacts();
+    }
+
+    private readonly HashSet<string> _knownArtifacts = new(StringComparer.OrdinalIgnoreCase);
+
+    private void ResetArtifactBaseline()
+    {
+        _knownArtifacts.Clear();
+        foreach (var (path, _) in ArtifactsModeViewModel.Collect(Main)) _knownArtifacts.Add(path);
+    }
+
+    /// <summary>Files the conversation names that were not there before: announced once each (a burst becomes one line).</summary>
+    private void NotifyNewArtifacts()
+    {
+        var fresh = ArtifactsModeViewModel.Collect(Main).Where(x => x.Source == "answer" && _knownArtifacts.Add(x.Path)).Select(x => x.Path).Reverse().ToList();
+        if (fresh.Count == 0) return;
+        if (fresh.Count <= 3)
+            foreach (var path in fresh)
+                Notify(NotificationKind.Artifact, "File created", Path.GetFileName(path), "Open", () => Host.OpenPath(path));
+        else
+            Notify(NotificationKind.Artifact, $"{fresh.Count} files created", string.Join(", ", fresh.Take(3).Select(Path.GetFileName)) + ", ...", "Show", () => SelectMode(RightMode.Artifacts, toggle: false));
     }
 
     private void OnMainChanged(object? sender, PropertyChangedEventArgs e)
@@ -288,11 +364,12 @@ public sealed class WorkspaceViewModel : ObservableObject
         {
             case nameof(MediatorOverlayViewModel.ChatSearch): OnPropertyChanged(nameof(SearchText)); break;
             case nameof(MediatorOverlayViewModel.PendingApproval) or nameof(MediatorOverlayViewModel.PendingApprovalCount):
-                RefreshNotifications();
+                NotifyApproval();
                 Access.Refresh();
                 break;
             case nameof(MediatorOverlayViewModel.IsChatBusy) or nameof(MediatorOverlayViewModel.Continuation) or nameof(MediatorOverlayViewModel.HasConversation):
                 RefreshHeader();
+                if (e.PropertyName == nameof(MediatorOverlayViewModel.IsChatBusy) && !Main.IsChatBusy) NotifyNewArtifacts();
                 break;
         }
     }
@@ -427,16 +504,19 @@ public sealed class ProjectItem
 public sealed class JobRow : ObservableObject
 {
     private readonly WorkspaceViewModel _workspace;
-    private bool _seen;
 
     public JobRow(JobItemViewModel job, WorkspaceViewModel workspace)
     {
         Job = job;
         _workspace = workspace;
-        InspectCommand = new RelayCommand(() => { _seen = true; workspace.Inspect(this); workspace.RefreshNotifications(); });
+        InspectCommand = new RelayCommand(() => workspace.Inspect(this));
         OpenFolderCommand = new RelayCommand(() => workspace.Host.OpenPath(job.WorkspaceFolder));
+        _finished = IsFinished;
         job.PropertyChanged += OnJobChanged;
     }
+
+    private bool _finished;
+    private bool IsFinished => Job.State is JobState.Succeeded or JobState.Ended or JobState.Failed or JobState.Killed;
 
     public JobItemViewModel Job { get; }
     public RelayCommand InspectCommand { get; }
@@ -454,17 +534,36 @@ public sealed class JobRow : ObservableObject
         _ => Job.StateText,
     };
 
-    internal bool IsFailedUnseen => Job.State == JobState.Failed && !_seen;
-
     private void OnJobChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(JobItemViewModel.State) or nameof(JobItemViewModel.StateText))
         {
             OnPropertyChanged(nameof(StateLabel));
             _workspace.JobStateChanged();
-            _workspace.RefreshNotifications();
+            // Rows are rebuilt with the job list: only a job seen running that now ends is news.
+            if (!_finished && IsFinished) { _finished = true; _workspace.JobFinished(this); }
         }
     }
 
     internal void Detach() => Job.PropertyChanged -= OnJobChanged;
+}
+
+public enum NotificationKind { Permission, JobCompleted, JobFailed, Artifact }
+
+/// <summary>One line of the notifications panel.</summary>
+public sealed class NotificationItem(NotificationKind kind, string title, string detail, string actionText, RelayCommand? action) : ObservableObject
+{
+    private bool _isRead;
+    public NotificationKind Kind { get; } = kind;
+    public string Title { get; } = title;
+    public string Detail { get; } = detail;
+    public string TimeText { get; } = DateTime.Now.ToString("HH:mm", CultureInfo.InvariantCulture);
+    public string ActionText { get; } = actionText;
+    public RelayCommand? ActionCommand { get; } = action;
+    public bool HasAction => ActionCommand is not null;
+    public bool IsRead { get => _isRead; set => SetProperty(ref _isRead, value); }
+    public string Glyph => Kind switch { NotificationKind.Permission => "\uE7BA", NotificationKind.JobCompleted => "\uE73E", NotificationKind.JobFailed => "\uEA39", _ => "\uE8A5" };
+    public bool IsWarning => Kind == NotificationKind.Permission;
+    public bool IsDanger => Kind == NotificationKind.JobFailed;
+    public bool IsSuccess => Kind == NotificationKind.JobCompleted;
 }

@@ -336,45 +336,6 @@
             <TabItem Header="Actions">
               <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420">
                 <StackPanel>
-                <!-- V10: the conversation. Each headless run: prompt, CLI · model, steps, and the full answer (selectable). -->
-                <StackPanel Margin="8,6,8,0" Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}">
-                  <ItemsControl ItemsSource="{Binding Conversation}" Focusable="False">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <Border CornerRadius="{DynamicResource CardCornerRadius}" Background="{DynamicResource PanelBrush}" Padding="10,8" Margin="0,0,0,6">
-                          <StackPanel>
-                            <TextBlock Text="{Binding UserPrompt}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" Text="{Binding BadgeText}" />
-                            <TextBlock Style="{StaticResource MutedText}" Text="{Binding ThinkingSummary}"
-                                       Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
-                            <ItemsControl ItemsSource="{Binding Steps}" Focusable="False">
-                              <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                  <TextBlock Style="{StaticResource MutedText}" FontSize="12" Text="{Binding}" />
-                                </DataTemplate>
-                              </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBox Margin="0,4,0,0" Text="{Binding ResponseText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                                     Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextBrush}"
-                                     MaxHeight="300" VerticalScrollBarVisibility="Auto" />
-                          </StackPanel>
-                        </Border>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding OpenFullViewCommand}" AutomationProperties.Name="Open full view">
-                      <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE740;" Margin="0,0,5,0" />
-                        <TextBlock Text="Full view" FontSize="12" />
-                      </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding ClearConversationCommand}"
-                            AutomationProperties.Name="Clear conversation">
-                      <TextBlock Text="Clear conversation" FontSize="12" />
-                    </Button>
-                  </StackPanel>
-                </StackPanel>
                 <ItemsControl ItemsSource="{Binding FilteredActions}" Margin="8,6,8,6" Focusable="False">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -447,9 +408,63 @@
             <!-- Jobs -->
             <TabItem Header="{Binding JobsTabHeader}">
               <Grid>
-                <TextBlock Style="{StaticResource MutedText}" Margin="16" Text="No jobs yet. Run an action or type a prompt."
-                           Visibility="{Binding Jobs.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+                <TextBlock Margin="16" Text="No jobs yet. Run an action or type a prompt." Foreground="{DynamicResource MutedBrush}">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                      <Style.Triggers>
+                        <MultiDataTrigger>
+                          <MultiDataTrigger.Conditions>
+                            <Condition Binding="{Binding Jobs.Count}" Value="0" />
+                            <Condition Binding="{Binding HasConversation}" Value="False" />
+                          </MultiDataTrigger.Conditions>
+                          <Setter Property="Visibility" Value="Visible" />
+                        </MultiDataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420">
+                  <StackPanel>
+                  <!-- V10: the conversation. Each headless run: prompt, CLI · model, steps, and the full answer (selectable). -->
+                  <StackPanel Margin="8,6,8,0" Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}">
+                    <ItemsControl ItemsSource="{Binding Conversation}" Focusable="False">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <Border CornerRadius="{DynamicResource CardCornerRadius}" Background="{DynamicResource PanelBrush}" Padding="10,8" Margin="0,0,0,6">
+                            <StackPanel>
+                              <TextBlock Text="{Binding UserPrompt}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                              <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" Text="{Binding BadgeText}" />
+                              <TextBlock Style="{StaticResource MutedText}" Text="{Binding ThinkingSummary}"
+                                         Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                              <ItemsControl ItemsSource="{Binding Steps}" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                  <DataTemplate>
+                                    <TextBlock Style="{StaticResource MutedText}" FontSize="12" Text="{Binding}" />
+                                  </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                              </ItemsControl>
+                              <TextBox Margin="0,4,0,0" Text="{Binding ResponseText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                       Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextBrush}"
+                                       MaxHeight="300" VerticalScrollBarVisibility="Auto" />
+                            </StackPanel>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                      <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding OpenFullViewCommand}" AutomationProperties.Name="Open full view">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE740;" Margin="0,0,5,0" />
+                          <TextBlock Text="Full view" FontSize="12" />
+                        </StackPanel>
+                      </Button>
+                      <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding ClearConversationCommand}"
+                              AutomationProperties.Name="Clear conversation">
+                        <TextBlock Text="Clear conversation" FontSize="12" />
+                      </Button>
+                    </StackPanel>
+                  </StackPanel>
                   <ItemsControl ItemsSource="{Binding Jobs}" Margin="8,6,8,6" Focusable="False">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
@@ -497,6 +512,7 @@
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
+                  </StackPanel>
                 </ScrollViewer>
               </Grid>
             </TabItem>

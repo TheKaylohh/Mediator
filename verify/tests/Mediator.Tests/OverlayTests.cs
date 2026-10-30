@@ -901,7 +901,7 @@ static class OverlayTests
         var args = launcher.Headless[0].ArgumentList.ToList();
         Check.True(args[args.IndexOf("--model") + 1] == "haiku" && turn.BadgeText == "Answer · Claude Code · haiku", $"Claude First + short chat → haiku ({turn.BadgeText})");
         Check.True(args.Contains("--disallowedTools") && args[args.IndexOf("--disallowedTools") + 1].Contains("Read", StringComparison.Ordinal) && !args.Any(a => a.Contains("WebSearch", StringComparison.Ordinal)), "plain answer: no local file tools, no web search");
-        Check.True(turn.ResponseText == answer && turn.ResponseText.Length > 500 && vm.SelectedTab == 0 && vm.HasConversation, "full answer, untruncated, on the Actions tab");
+        Check.True(turn.ResponseText == answer && turn.ResponseText.Length > 500 && vm.SelectedTab == MediatorOverlayViewModel.JobsTab && vm.HasConversation, "full answer, untruncated, in the Jobs tab");
         Check.True(vm.Activity.Any(a => a.Detail.EndsWith("…", StringComparison.Ordinal)), "the Activity feed still truncates");
 
         // (c) cross-CLI continuation

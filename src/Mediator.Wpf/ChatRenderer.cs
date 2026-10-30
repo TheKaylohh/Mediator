@@ -71,8 +71,9 @@ internal sealed class ChatRenderer
         {
             if (e.PropertyName is nameof(MediatorOverlayViewModel.IsChatBusy)) r.Schedule();
         };
-        // The page is repainted the moment the new brushes are merged, not after the 200 ms debounce (and not before them).
-        ThemeManager.Applied += () => { r._debounce.Stop(); r.Render(); };
+        // V18.2: the page follows the moment the new brushes are merged: only its colour variables change (no markdown re-render,
+        // no debounce), so the chat area and the WPF panels switch together.
+        ThemeManager.Applied += r.ApplyTheme;
         r._web.NavigateToString(Page);
         return true;
     }
@@ -126,12 +127,21 @@ internal sealed class ChatRenderer
         {
             p = t.UserPrompt, b = t.BadgeText, s = t.Steps.ToArray(), r = t.ResponseText, run = t.IsRunning, th = t.ThinkingSummary, err = t.IsError,
         }).ToArray();
-        var theme = new Dictionary<string, string>
-        {
-            ["bg"] = Css("WindowBackgroundBrush", "#0b1220"), ["panel"] = Css("PanelBrush", "#111a2b"), ["text"] = Css("TextBrush", "#e6edf6"),
-            ["muted"] = Css("MutedBrush", "#8aa0b8"), ["accent"] = Css("AccentBrush", "#3fd0ff"), ["line"] = Css("LineBrush", "#22324a"),
-        };
-        _ = _web.CoreWebView2.ExecuteScriptAsync("render(" + JsonSerializer.Serialize(new { turns, theme, busy = _vm.IsChatBusy }) + ")");
+        _ = _web.CoreWebView2.ExecuteScriptAsync("render(" + JsonSerializer.Serialize(new { turns, theme = ThemeColors(), busy = _vm.IsChatBusy }) + ")");
+    }
+
+    private static Dictionary<string, string> ThemeColors() => new()
+    {
+        ["bg"] = Css("WindowBackgroundBrush", "#0b1220"), ["panel"] = Css("PanelBrush", "#111a2b"), ["text"] = Css("TextBrush", "#e6edf6"),
+        ["muted"] = Css("MutedBrush", "#8aa0b8"), ["accent"] = Css("AccentBrush", "#3fd0ff"), ["line"] = Css("LineBrush", "#22324a"),
+    };
+
+    private void ApplyTheme()
+    {
+        if (!_ready || _web.CoreWebView2 is null) return;
+        _web.DefaultBackgroundColor = Application.Current?.TryFindResource("WindowBackgroundBrush") is SolidColorBrush { Color: var c }
+            ? System.Drawing.Color.FromArgb(c.A, c.R, c.G, c.B) : System.Drawing.Color.Transparent;
+        _ = _web.CoreWebView2.ExecuteScriptAsync("setTheme(" + JsonSerializer.Serialize(ThemeColors()) + ")");
     }
 
     /// <summary>A theme brush as CSS; gradients use their first stop.</summary>
@@ -209,8 +219,9 @@ function md(src){
 function send(act,i,text){window.chrome&&chrome.webview&&chrome.webview.postMessage({act:act,i:i,text:text});}
 function flash(b,label){const o=b.textContent;b.textContent=label;setTimeout(()=>b.textContent=o,1200);}
 const open=new Set(); // expanded step lists survive re-renders
+function setTheme(t){const r=document.documentElement.style; for(const k in t) r.setProperty('--'+k,t[k]);}
 function render(d){
-  const r=document.documentElement.style; for(const k in d.theme) r.setProperty('--'+k,d.theme[k]);
+  setTheme(d.theme);
   const atBottom=innerHeight+scrollY>=document.body.scrollHeight-80;
   const el=document.getElementById('chat');
   if(!d.turns.length){el.innerHTML='<div class="empty">Start a conversation below.</div>';return;}

@@ -2,6 +2,16 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V18.2: patch (2026-10-30)
+
+Details and the feature test list: [docs/v18/V18.2.md](docs/v18/V18.2.md).
+
+- **Quick panel**: the conversation of previous and active jobs now sits in the Jobs tab (above the job list), not on top of the Actions tab; sending a prompt or opening a saved chat switches to Jobs.
+- **Full screen**: the model dropdown, Auto-approve and the project / CLI / model / session line moved next to the folder buttons in the composer toolbar; the header is one row, so the conversation is taller.
+- **Theme switch**: the chat area follows the instant the new theme is merged (only its colour variables change; no markdown re-render or debounce), so it no longer lags the panels by 0.1-0.2 s.
+- **Profile and settings menu**: sits in the body row, scrolls when the window is short, and closes on a click elsewhere.
+- **Notifications**: the bell opens a real panel: permission requests, finished and failed jobs, and files the AI created, each with a button (Review, Details, Open). No old jobs; the badge counts unread ones; Clear all.
+
 ## V18: connectors as plug-ins, the full-screen app, light and dark themes (2026-10-30)
 
 Details and the Windows checklist: [docs/v18/RELEASE_NOTES.md](docs/v18/RELEASE_NOTES.md); the connector architecture: [docs/v18/CONNECTORS.md](docs/v18/CONNECTORS.md).

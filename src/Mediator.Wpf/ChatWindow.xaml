@@ -298,7 +298,7 @@
       <!-- ─── Center: the conversation (scoped to the chat's view model) ─── -->
       <DockPanel Grid.Column="2" DataContext="{Binding Main}">
         <!-- Conversation header. Row 1 (primary): title, then pin and retry. Row 2: where it runs (project, provider, session) and the secondary controls (model, approvals). -->
-        <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,8,12,8">
+        <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,4,12,4">
           <StackPanel>
             <DockPanel>
               <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,4" MinWidth="32" MinHeight="30" Command="{Binding RetryCommand}"
@@ -312,17 +312,6 @@
               <TextBox Style="{StaticResource FieldBox}" BorderThickness="0" Background="Transparent" Padding="0" MinHeight="0" FontFamily="{DynamicResource HeaderFont}"
                        FontSize="16" FontWeight="SemiBold" Text="{Binding ChatTitle, UpdateSourceTrigger=LostFocus}" ToolTip="Click to rename this chat"
                        AutomationProperties.Name="Chat title" KeyDown="TitleKeyDown" />
-            </DockPanel>
-            <DockPanel Margin="0,6,0,0">
-              <CheckBox DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="12" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
-                        ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged." />
-              <!-- Switch provider / model mid-conversation: the next turn runs there with the whole conversation handed over. -->
-              <ComboBox DockPanel.Dock="Right" MinWidth="190" FontSize="12" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
-                        DisplayMemberPath="Label" ToolTip="Provider and model for the next turn: the conversation is handed over. Auto lets the routing rules pick."
-                        AutomationProperties.Name="Provider and model" />
-              <TextBlock Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="0,0,8,0">
-                <Run Text="{Binding DataContext.ProjectText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.ProviderText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.SessionText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" />
-              </TextBlock>
             </DockPanel>
           </StackPanel>
         </Border>
@@ -346,7 +335,7 @@
                     Visibility="{Binding HasPendingApproval, Converter={StaticResource BoolToVisibility}}">
               <DockPanel>
                 <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="10,3"
-                        Command="{Binding DataContext.OpenNotificationsCommand, RelativeSource={RelativeSource AncestorType=Window}}" AutomationProperties.Name="Review approval">
+                        Command="{Binding DataContext.ReviewApprovalCommand, RelativeSource={RelativeSource AncestorType=Window}}" AutomationProperties.Name="Review approval">
                   <TextBlock Text="Review" FontSize="12" />
                 </Button>
                 <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE7BA;" Margin="0,0,8,0" Foreground="{DynamicResource WarningBrush}" />
@@ -452,6 +441,12 @@
                   <TextBlock Text="Allow folder" FontSize="12" />
                 </StackPanel>
               </Button>
+              <!-- V18.2: model, approvals and where this chat runs sit beside the folder buttons, which gives the conversation the height. -->
+              <ComboBox DockPanel.Dock="Left" MinWidth="170" Margin="6,0,0,0" FontSize="12" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
+                        DisplayMemberPath="Label" ToolTip="Provider and model for the next turn: the conversation is handed over. Auto lets the routing rules pick."
+                        AutomationProperties.Name="Provider and model" />
+              <CheckBox DockPanel.Dock="Left" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
+                        ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged." />
               <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="10,3" Margin="6,0,0,0" Command="{Binding StopCommand}"
                       Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVisibility}}" ToolTip="Stop the running prompt" AutomationProperties.Name="Stop">
                 <StackPanel Orientation="Horizontal">
@@ -465,7 +460,14 @@
               </Button>
               <ComboBox DockPanel.Dock="Right" MinWidth="70" Margin="6,0,0,0" FontSize="12" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
                         ToolTip="Reasoning effort (--effort). Auto: the CLI's default" AutomationProperties.Name="Effort" />
-              <TextBlock Style="{StaticResource MutedText}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding RouteText}" />
+              <StackPanel Margin="10,0" VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding DataContext.ProjectToolTip, RelativeSource={RelativeSource AncestorType=Window}}">
+                  <Run Text="{Binding DataContext.ProjectText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.ProviderText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.SessionText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" />
+                </TextBlock>
+                <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="{Binding RouteText}"
+                           Visibility="{Binding RouteText, Converter={StaticResource EmptyToCollapsed}}" />
+              </StackPanel>
             </DockPanel>
           </StackPanel>
         </Border>
@@ -572,20 +574,73 @@
       </Border>
     </Border>
 
-    <Border Grid.RowSpan="2" Panel.ZIndex="40" Width="300" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,44,96,0" Style="{StaticResource Card}" Padding="6"
+    <!-- V18.2: notifications: permission requests, finished jobs and new files (not a job list). -->
+    <Border Grid.Row="1" Panel.ZIndex="39" Background="Transparent" MouseLeftButtonDown="OverlayBackgroundClick"
+            Visibility="{Binding IsNotificationsOpen, Converter={StaticResource BoolToVisibility}}" />
+    <Border Grid.Row="1" Panel.ZIndex="40" Width="380" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,60,10" Style="{StaticResource Card}" Padding="8"
+            Background="{DynamicResource RaisedBrush}" Visibility="{Binding IsNotificationsOpen, Converter={StaticResource BoolToVisibility}}">
+      <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="4,0,0,6">
+          <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding ClearNotificationsCommand}" Content="Clear all" FontSize="12"
+                  AutomationProperties.Name="Clear notifications" />
+          <TextBlock Text="Notifications" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Top" Style="{StaticResource MutedText}" Margin="4,4,4,8" TextWrapping="Wrap"
+                   Text="Nothing yet. Permission requests, finished jobs and new files show up here."
+                   Visibility="{Binding HasNoNotifications, Converter={StaticResource BoolToVisibility}}" />
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ItemsControl ItemsSource="{Binding Notifications}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border x:Name="Row" Margin="0,1" Padding="8,6" CornerRadius="6" BorderThickness="3,0,0,0" BorderBrush="Transparent" Background="Transparent">
+                  <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="10,3" Margin="8,0,0,0" VerticalAlignment="Center" Content="{Binding ActionText}"
+                            Command="{Binding ActionCommand}" Visibility="{Binding HasAction, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock x:Name="Glyph" DockPanel.Dock="Left" Style="{StaticResource Icon}" FontSize="14" Text="{Binding Glyph}" Margin="0,2,10,0" VerticalAlignment="Top"
+                               Foreground="{DynamicResource AccentBrush}" />
+                    <StackPanel>
+                      <TextBlock FontWeight="SemiBold" FontSize="13">
+                        <Run Text="{Binding Title, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding TimeText, Mode=OneWay}" Foreground="{DynamicResource MutedBrush}" FontWeight="Normal" FontSize="11.5" />
+                      </TextBlock>
+                      <TextBlock Style="{StaticResource MutedText}" FontSize="12" Text="{Binding Detail}" TextWrapping="Wrap" MaxHeight="48" />
+                    </StackPanel>
+                  </DockPanel>
+                </Border>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding IsRead}" Value="False">
+                    <Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource SelectionBrush}" />
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding IsWarning}" Value="True"><Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource WarningBrush}" /></DataTrigger>
+                  <DataTrigger Binding="{Binding IsDanger}" Value="True"><Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource DangerBrush}" /></DataTrigger>
+                  <DataTrigger Binding="{Binding IsSuccess}" Value="True"><Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource SuccessBrush}" /></DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+
+    <!-- V18.2: the profile menu sits in the body row (so it can never run past the window) and scrolls when the window is short; a click anywhere else closes it. -->
+    <Border Grid.Row="1" Panel.ZIndex="39" Background="Transparent" MouseLeftButtonDown="OverlayBackgroundClick"
+            Visibility="{Binding IsProfileOpen, Converter={StaticResource BoolToVisibility}}" />
+    <Border Grid.Row="1" Panel.ZIndex="40" Width="320" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,10,10" Style="{StaticResource Card}" Padding="6"
             Background="{DynamicResource RaisedBrush}" Visibility="{Binding IsProfileOpen, Converter={StaticResource BoolToVisibility}}">
-      <ItemsControl ItemsSource="{Binding ProfileItems}" Focusable="False">
-        <ItemsControl.ItemTemplate>
-          <DataTemplate>
-            <Button Style="{StaticResource ListButton}" Command="{Binding RunCommand}" ToolTip="{Binding Hint}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="{Binding Glyph}" Margin="0,0,10,0" />
-                <TextBlock Text="{Binding Title}" />
-              </StackPanel>
-            </Button>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ItemsControl ItemsSource="{Binding ProfileItems}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Button Style="{StaticResource ListButton}" Command="{Binding RunCommand}" ToolTip="{Binding Hint}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="{Binding Glyph}" Margin="0,0,10,0" />
+                  <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
     </Border>
 
     <Border Grid.RowSpan="2" Panel.ZIndex="60" Width="460" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource Card}" Padding="16"

@@ -156,6 +156,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
             if (value == UsageTab && Usage is { IsBusy: false } u) _ = u.RefreshAsync();
         }
     }
+    public const int JobsTab = 1;
     public const int ConnectorsTab = 3;
     public const int UsageTab = 4;
 
@@ -961,7 +962,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         Continuation = _lastSession is null ? null : new ContinuationViewModel(_lastSession);
         if (quiet) return;
         StatusText = _lastSession is null ? $"Opened \"{chat.Title}\" (read-only: no session to resume)." : $"Opened \"{chat.Title}\": your next prompt continues it.";
-        SelectedTab = 0;
+        SelectedTab = JobsTab;
     }
     public event Action? OpenFullViewRequested;
     public RelayCommand ClearConversationCommand { get; }
@@ -995,7 +996,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         var attached = AttachmentChips.Where(c => c.IsIncluded).ToList();
         var spec = JobSpecFactory.Assistant(ResolveFolder(prompt), prompt, LaunchMode.Headless, inferred.Item1, inferred.Item2, _runtime.ChatDirectory)
             with { Provider = provider, NeverDowngrade = KeepSubscription, RoutingPolicy = RoutingPolicy, Attachments = attached.Select(c => c.Attachment!).ToList() };
-        return StartAndShowAsync(spec, attached, $"Asking: {spec.Title}", stayOnActions: true);
+        return StartAndShowAsync(spec, attached, $"Asking: {spec.Title}");
     }
 
     private ChatTurnViewModel? TurnFor(string jobId) => _turns.GetValueOrDefault(jobId);
@@ -1198,7 +1199,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         return spec;
     }
 
-    private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started, bool stayOnActions = false)
+    private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started)
     {
         spec = WithAllowedFolders(spec);
         if (_softwareContext is { } software && spec.Launch != LaunchMode.None) spec = spec with { Prompt = spec.Prompt + "\n\nThis chat is about: " + software };
@@ -1228,7 +1229,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
                 OnJobChanged(job);
                 StatusText = started;
                 PromptText = "";
-                SelectedTab = stayOnActions ? 0 : 1;
+                SelectedTab = JobsTab; // V18.2: the conversation and the jobs live in the Jobs tab, not on top of the actions
             });
             return job;
         }
