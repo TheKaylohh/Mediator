@@ -7,10 +7,11 @@ using Mediator.Core.Connectors;
 namespace Mediator.UI;
 
 /// <summary>
-/// The overlay's look. HoloHud is the default: an original holographic HUD (glass, cyan, electric blue, amber, crimson).
-/// ProDark is the JetBrains-style charcoal palette of V4–V6; CleanLight is a daylight theme.
+/// The look of both windows. V18: Dark (the default) and Light are the designed themes, switched with the sun/moon button in
+/// the quick panel and the full-screen app. The V7-V17 themes stay available as classics (Themes/Legacy): Holo HUD (glass,
+/// cyan), Pro Dark (JetBrains-style charcoal) and Clean Light.
 /// </summary>
-public enum MediatorTheme { HoloHud, ProDark, CleanLight }
+public enum MediatorTheme { Dark, Light, HoloHud, ProDark, CleanLight }
 
 /// <summary>What the animated orb in the header shows. The view maps each state to a colour and an animation.</summary>
 public enum ReactorState { Idle, Active, AwaitingApproval, Error }
@@ -18,7 +19,7 @@ public enum ReactorState { Idle, Active, AwaitingApproval, Error }
 /// <summary>Per-user overlay settings, stored as settings.json in the data folder.</summary>
 public sealed record MediatorSettings
 {
-    public MediatorTheme Theme { get; init; } = MediatorTheme.HoloHud;
+    public MediatorTheme Theme { get; init; } = MediatorTheme.Dark;
     public string Hotkey { get; init; } = HotkeyGesture.Default.ToString();
     public bool FirstRunCompleted { get; init; }
     /// <summary>What the user last chose; the Run key itself is the source of truth and is re-read at start.</summary>

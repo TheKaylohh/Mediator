@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18: the messages between the SolidWorks connector and mediator-swx-worker (part cards, assembly plans, results). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.SolidWorks.Contracts</RootNamespace>
+    <AssemblyName>Mediator.Connector.SolidWorks.Contracts</AssemblyName>
+  </PropertyGroup>
+</Project>

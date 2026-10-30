@@ -6,7 +6,7 @@ using Mediator.Core.Browser;
 using Mediator.Core.Bus;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -264,7 +264,7 @@ static class ExtensionBridgeTests
             Paths = new MediatorPaths(RuntimeTests.TempDir()),
             Bus = new BusOptions { PipeName = "mediator-ext-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
             BrowserBridge = server,
         });
         var prompt = new CountingPrompt();

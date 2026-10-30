@@ -2,9 +2,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
-using Mediator.Core.CadFiles;
+using Mediator.Connectors.CadFiles;
 using Mediator.Core.Jobs;
-using Mediator.Core.Office;
+using Mediator.Connectors.Office;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
 
@@ -179,7 +179,7 @@ static class OfficeCadTests
             var (tools, _) = JobSpecFactory.InferToolsAndCategory(notOffice, null);
             Check.True(!tools.Contains(OfficeToolProvider.ReadTool) && !tools.Contains(CadFileToolProvider.InspectTool), $"'{notOffice}' gets no Office/CAD file tools");
         }
-        Check.True(!JobSpecFactory.AsksForSolidWorks("how many triangles in part.stl"), "inspecting an STL does not start SolidWorks");
+        Check.True(!SolidWorksConnector.AsksForSolidWorks("how many triangles in part.stl"), "inspecting an STL does not start SolidWorks");
         Check.True(ProviderRouter.ParsePrefix("/office make a memo") is { Category: TaskCategory.Office, Remainder: "make a memo" }, "/office prefix");
         Check.True(ProviderRouter.ParsePrefix("/outlook unread today") is { Category: TaskCategory.Office }, "/outlook prefix");
         return Task.CompletedTask;

@@ -1,7 +1,7 @@
 using Mediator.Core.Bus;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.UI;
 
 namespace Mediator.Tests;
@@ -75,14 +75,14 @@ static class FollowUpContextTests
             Paths = new MediatorPaths(TempDir("req-data")),
             Bus = new Mediator.Core.Bus.BusOptions { PipeName = "mediator-req-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
         });
         string folder = TempDir("req-train");
         string request = $"Save all parts to {folder}. Locomotive_Boiler: cylinder 30 mm x 80 mm. Axle reused 4 times. Fix the Locomotive_Chassis at the origin.";
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.None) with { UserText = request });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.None) with { UserText = request });
         Check.True(job.Spec.Prompt.Contains(request, StringComparison.Ordinal) && job.Spec.Prompt.Contains("swx_part_cards", StringComparison.Ordinal),
             "the job's prompt holds the user's request AND the action's steps: " + job.Spec.Prompt[..Math.Min(300, job.Spec.Prompt.Length)]);
-        var plain = JobSpecFactory.CodeCad(folder, "a bracket 40 mm wide", LaunchMode.None) with { UserText = "a bracket 40 mm wide" };
+        var plain = SolidWorksConnector.CodeCad(folder, "a bracket 40 mm wide", LaunchMode.None) with { UserText = "a bracket 40 mm wide" };
         Check.True(JobSpecFactory.WithUserText(plain) == plain.Prompt, "a template that already has the request is left as it is");
     }
 }

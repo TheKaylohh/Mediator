@@ -15,7 +15,7 @@
        src\Mediator.Wpf       -> Mediator.exe            (the tray overlay) + Themes\*.xaml (loose fallback copies)
        src\Mediator.CliHost   -> mediator-cli.exe              (console host: doctor, organize, rollback, ...)
        src\Mediator.Bridge    -> mediator-mcp-bridge.exe   (Native AOT: -p:PublishAot=true, starts in milliseconds)
-       src\Mediator.SwxWorker -> mediator-swx-worker.exe   (V8: ALWAYS. With the SolidWorks interop when it is found;
+       src\Connectors\SolidWorks\Worker -> connectors\SolidWorks\mediator-swx-worker.exe   (V8: ALWAYS; V18: inside the SolidWorks connector. With the SolidWorks interop when it is found;
                                                           without it the worker answers "SolidWorks assemblies not
                                                           installed on this machine" and the build only warns, MEDIATOR001)
      Self-contained win-x64 by default (no .NET install needed on the target PC); -FrameworkDependent makes a smaller
@@ -25,7 +25,7 @@
      left out unless -IncludeSymbols.
   5. Adds the zero-dependency launchers (launch.bat, install-shortcut.vbs: double-click, no PowerShell execution
      policy involved), Create-Desktop-Shortcut.ps1, README-FIRST.txt, VERSION.txt and SHA256SUMS.txt, checks that
-     every required file is present (the four executables and the three themes), then runs `mediator-cli.exe doctor`
+     every required file is present (the four executables, the connectors and the five themes), then runs `mediator-cli.exe doctor`
      from the package as a smoke test.
 
   Every build uses -p:TreatWarningsAsErrors=true. The one expected warning is MEDIATOR001 (no SolidWorks interop),
@@ -146,9 +146,11 @@ function Get-PublishPlan([bool]$offline) {
     return @{
         Common   = $c
         Projects = [ordered]@{
-            'src\Mediator.Wpf'       = @($sc)
-            'src\Mediator.CliHost'   = @($sc)
-            'src\Mediator.SwxWorker' = @($sc)
+            # V18: mediator-cli's publish builds every connector into connectors\<Name> (once: the overlay skips it, and the
+            # worker is published on its own below, self-contained like the hosts, so the connector folder runs anywhere).
+            'src\Mediator.Wpf'       = @($sc, '-p:MediatorSkipConnectors=true')
+            'src\Mediator.CliHost'   = @($sc, '-p:MediatorConnectorWorker=false')
+            'src\Connectors\SolidWorks\Worker' = @($sc)
             # @( ) around the if: PowerShell unrolls a one-item array returned by an if, and splatting a string passes it char by char.
             'src\Mediator.Bridge'    = @(if ($nativeAot) { '-p:PublishAot=true' } else { '-p:PublishAot=false'; $sc })
         }
@@ -198,8 +200,10 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 $seen = @{}
 foreach ($dir in Get-ChildItem $staging -Directory) {
+    # V18: the SolidWorks worker lives in its connector's folder.
+    $prefix = if ($dir.Name -eq 'src_Connectors_SolidWorks_Worker') { 'connectors\SolidWorks\' } else { '' }
     foreach ($file in Get-ChildItem $dir.FullName -Recurse -File) {
-        $rel = $file.FullName.Substring($dir.FullName.Length + 1)
+        $rel = $prefix + $file.FullName.Substring($dir.FullName.Length + 1)
         if (-not $IncludeSymbols -and $rel -like '*.pdb') { continue }
         $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash
         if ($seen.ContainsKey($rel)) {
@@ -227,8 +231,9 @@ Copy-Item (Join-Path $scriptDir 'Create-Desktop-Shortcut.ps1') $OutDir
 $guide = Join-Path $root 'docs\Mediator-User-Guide.pdf'
 if (Test-Path $guide) { Copy-Item $guide $OutDir }
 
-$required = @('Mediator.exe', 'mediator-cli.exe', 'mediator-mcp-bridge.exe', 'mediator-swx-worker.exe',
-              'Themes\HoloHud.xaml', 'Themes\ProDark.xaml', 'Themes\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs',
+$required = @('Mediator.exe', 'mediator-cli.exe', 'mediator-mcp-bridge.exe', 'connectors\SolidWorks\mediator-swx-worker.exe',
+              'connectors\SolidWorks\Mediator.Connector.SolidWorks.dll', 'connectors\Office\Mediator.Connector.Office.dll',
+              'Themes\Dark.xaml', 'Themes\Light.xaml', 'Themes\Legacy\HoloHud.xaml', 'Themes\Legacy\ProDark.xaml', 'Themes\Legacy\CleanLight.xaml', 'launch.bat', 'install-shortcut.vbs',
               'chrome-extension\manifest.json', 'chrome-extension\background.js')
 foreach ($r in $required) {
     if (-not (Test-Path (Join-Path $OutDir $r))) { throw "$r is missing from the package." }

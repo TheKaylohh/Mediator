@@ -18,7 +18,14 @@ namespace Mediator.Wpf;
 public partial class App : Application
 {
     private const string MutexName = @"Local\Mediator.Overlay";
+    /// <summary>V18: a second start of the same build signals the running one (then exits): show the panel, or open the full-screen app.</summary>
+    private const string ShowSignalName = @"Local\Mediator.Show", WorkspaceSignalName = @"Local\Mediator.OpenWorkspace";
     private Mutex? _single;
+    private readonly List<RegisteredWaitHandle> _signals = [];
+
+    /// <summary>`Mediator.exe --workspace` (the "Mediator Workspace" shortcut): start with the full-screen app open.</summary>
+    private static bool WantsWorkspace(string[] args) =>
+        args.Any(a => a.Equals("--workspace", StringComparison.OrdinalIgnoreCase) || a.Equals("/workspace", StringComparison.OrdinalIgnoreCase));
     private Mediator.Core.Browser.BrowserExtensionHost? _browser;
     private MediatorRuntime? _runtime;
     private Mediator.Core.Browser.BrowserPanelChats? _panelChats;
@@ -31,7 +38,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
         _single = new Mutex(initiallyOwned: true, MutexName, out bool first);
-        if (!first && !ReplaceOlderInstance())
+        bool workspace = WantsWorkspace(e.Args);
+        if (!first && !ReplaceOlderInstance(workspace))
         {
             Shutdown();
             return;
@@ -42,6 +50,8 @@ public partial class App : Application
         {
             // V13: the Chrome extension bridge (127.0.0.1, paired) starts first, so Browser jobs can use it from the first prompt.
             var paths = MediatorPaths.Default();
+            // V18: the connectors installed next to Mediator.exe (connectors\<Name>), before anything lists tiles or programs.
+            Mediator.Core.Connectors.ConnectorCatalog.Set(Mediator.Core.Connectors.ConnectorLoader.LoadAll(log: log).SelectMany(r => r.Connectors));
             _browser = Mediator.Core.Browser.BrowserExtensionHost.TryStart(paths.DataDirectory, log);
             _runtime = await MediatorRuntime.CreateAsync(new RuntimeOptions { Log = log, Paths = paths, BrowserBridge = _browser?.Bridge });
             RunningInstance.Write(paths.DataDirectory); // V16.1: a later build can tell this one apart and replace it
@@ -63,13 +73,13 @@ public partial class App : Application
         _runtime.Approvals.Target = vm;
 
         // Theme before the first frame; later changes come from the header button or the first-run card.
-        // A theme that cannot be loaded keeps the current one (App.xaml merges HoloHud) and is reported, never fatal.
+        // A theme that cannot be loaded keeps the current one (App.xaml merges Dark) and is reported, never fatal.
         string? themeProblem = null;
         ThemeManager.LoadFailed += (theme, why) =>
         {
             log.Warn($"Theme {theme} could not be loaded; keeping the current theme. {why}");
             if (_tray is { } tray) tray.Notify("Theme unavailable", $"{theme} could not be loaded; the current theme is kept.");
-            else themeProblem = $"{theme} could not be loaded; HoloHud is used.";
+            else themeProblem = $"{theme} could not be loaded; Dark is used.";
         };
         ThemeManager.Apply(vm.CurrentTheme);
         vm.ThemeChanged += ThemeManager.Apply;
@@ -112,8 +122,41 @@ public partial class App : Application
         if (!bound.Success) _tray.Notify("Hotkey unavailable", bound.Message);
         onboarding.Rebinder = gesture => _hotkey.Rebind(gesture.ToString());
 
+        // V18: a later start of this build asks for the panel or the full-screen app (see ReplaceOlderInstance).
+        Listen(ShowSignalName, () => vm.OnHotkey(null));
+        Listen(WorkspaceSignalName, window.OpenWorkspace);
+
         // First launch, or neither CLI found: open the setup card.
         if (await onboarding.StartAsync()) vm.Show();
+        if (workspace) window.OpenWorkspace();
+    }
+
+    /// <summary>Runs <paramref name="action"/> on the UI thread each time another start sets the named event.</summary>
+    private void Listen(string name, Action action)
+    {
+        try
+        {
+            var signal = new EventWaitHandle(false, EventResetMode.AutoReset, name);
+            _signals.Add(ThreadPool.RegisterWaitForSingleObject(signal, (_, _) => Dispatcher.BeginInvoke(action), null, Timeout.Infinite, executeOnlyOnce: false));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or WaitHandleCannotBeOpenedException)
+        {
+            // Without it a second start shows the old "already running" message; nothing else depends on it.
+        }
+    }
+
+    /// <summary>True when the running copy took the request (it shows the panel or opens the full-screen app).</summary>
+    private static bool Signal(string name)
+    {
+        try
+        {
+            if (!EventWaitHandle.TryOpenExisting(name, out var signal)) return false;
+            using (signal) return signal.Set();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or WaitHandleCannotBeOpenedException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Runs on the UI (STA) thread before the panel activates, so the foreground window is still the user's.</summary>
@@ -131,11 +174,13 @@ public partial class App : Application
     /// older version left in the tray, which kept answering every chat with its old tools): offer to close it and start this one.
     /// True when this process now holds the lock and should start.
     /// </summary>
-    private bool ReplaceOlderInstance()
+    private bool ReplaceOlderInstance(bool workspace)
     {
         var running = RunningInstance.Read(MediatorPaths.Default().DataDirectory);
         if (running is { IsThisBuild: true })
         {
+            // V18: hand the request to the running copy, like a second click on an app's icon.
+            if (Signal(workspace ? WorkspaceSignalName : ShowSignalName)) return false;
             MessageBox.Show($"Mediator {MediatorVersion.Name} is already running (see the tray).", "Mediator", MessageBoxButton.OK, MessageBoxImage.Information);
             return false;
         }
@@ -167,6 +212,7 @@ public partial class App : Application
     {
         IsQuitting = true;
         _hotkey?.Dispose();
+        foreach (var signal in _signals) signal.Unregister(null);
         _tray?.Dispose();
         _panelChats?.Dispose();
         if (_runtime is not null) await _runtime.DisposeAsync(); // kills running jobs, stops the bus, closes databases

@@ -1,0 +1,67 @@
+<!-- Light (V18): soft paper-white surfaces, the same indigo accent, darkened for contrast on white.
+     Every theme defines exactly the same keys (verify/tests XamlChecker enforces it); the windows and styles use them through
+     DynamicResource, so ThemeManager swaps this dictionary at run time. Text colours meet WCAG AA (4.5:1) on the background,
+     panel and raised surfaces. The V7-V17 themes are kept unchanged in Themes/Legacy. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+  <!-- Surfaces, from the window up: background, panels and sidebars, raised (hover, inputs, chips). -->
+  <Color x:Key="BgColor">#FFF6F7F9</Color>
+  <Color x:Key="PanelColor">#FFFFFFFF</Color>
+  <Color x:Key="RaisedColor">#FFEEF0F4</Color>
+  <Color x:Key="BorderColor">#FFDDE0E6</Color>
+  <Color x:Key="TextColor">#FF16181D</Color>
+  <Color x:Key="MutedColor">#FF5C6170</Color>
+  <!-- One accent for actions and focus; a second, cooler one for activity. Status colours are reserved for status. -->
+  <Color x:Key="AccentColor">#FF4A55D6</Color>
+  <Color x:Key="Accent2Color">#FF0869AA</Color>
+  <Color x:Key="DangerColor">#FFC8323A</Color>
+  <Color x:Key="SuccessColor">#FF16794A</Color>
+  <Color x:Key="WarningColor">#FF935700</Color>
+  <Color x:Key="GlowColor">#FF000000</Color>
+
+  <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}" />
+  <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}" />
+  <SolidColorBrush x:Key="RaisedBrush" Color="{StaticResource RaisedColor}" />
+  <SolidColorBrush x:Key="LineBrush" Color="{StaticResource BorderColor}" />
+  <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
+  <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
+  <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+  <SolidColorBrush x:Key="Accent2Brush" Color="{StaticResource Accent2Color}" />
+  <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+  <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}" />
+  <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+  <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
+  <SolidColorBrush x:Key="BannerBackgroundBrush" Color="#1FC8323A" />
+  <SolidColorBrush x:Key="LowConfidenceRowBrush" Color="#26935700" />
+  <SolidColorBrush x:Key="SelectionBrush" Color="#334A55D6" />
+  <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FFEEF0F4" />
+  <SolidColorBrush x:Key="DropOverlayBrush" Color="#E6F6F7F9" />
+
+  <!-- The orb's four states. -->
+  <SolidColorBrush x:Key="OrbIdleBrush" Color="#FF4A55D6" />
+  <SolidColorBrush x:Key="OrbActiveBrush" Color="#FF0869AA" />
+  <SolidColorBrush x:Key="OrbApprovalBrush" Color="#FF935700" />
+  <SolidColorBrush x:Key="OrbErrorBrush" Color="#FFC8323A" />
+
+  <!-- Flat, opaque surfaces: no glass, no scanlines; the frame is a hairline. -->
+  <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource BgColor}" />
+  <SolidColorBrush x:Key="HudFrameBrush" Color="{StaticResource BorderColor}" />
+  <SolidColorBrush x:Key="ScanlineBrush" Color="Transparent" />
+  <!-- The sweep that runs along the prompt's edge while a job is active. -->
+  <LinearGradientBrush x:Key="SweepBrush" StartPoint="0,0" EndPoint="1,0">
+    <GradientStop Color="Transparent" Offset="0" />
+    <GradientStop Color="#994A55D6" Offset="0.5" />
+    <GradientStop Color="Transparent" Offset="1" />
+  </LinearGradientBrush>
+
+  <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="HeaderFont">Segoe UI Variable Display, Segoe UI</FontFamily>
+  <FontFamily x:Key="TechFont">Cascadia Mono, Consolas</FontFamily>
+
+  <CornerRadius x:Key="WindowCornerRadius">12</CornerRadius>
+  <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
+  <sys:Double x:Key="ShadowOpacity">0.16</sys:Double>
+  <!-- Corner brackets and the reticle frame belong to the Holo HUD legacy theme. -->
+  <Visibility x:Key="HudDecorVisibility">Collapsed</Visibility>
+</ResourceDictionary>

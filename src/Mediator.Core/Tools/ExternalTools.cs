@@ -77,12 +77,6 @@ public static class ToolLocator
     public static string? Ffprobe() => CliLaunchBuilder.ResolveOnPath("ffprobe");
     public static string? Ffmpeg() => CliLaunchBuilder.ResolveOnPath("ffmpeg");
 
-    /// <summary>
-    /// MEDIATOR_BLENDER, `blender` on PATH, else the newest install found in Program Files, %LOCALAPPDATA%\Programs,
-    /// the BlenderFoundation registry key, Apps &amp; features or Steam (see <see cref="Runtime.DesktopAppLocator"/>).
-    /// </summary>
-    public static string? Blender() => Runtime.ComponentLocator.FindDesktopApp(Runtime.DesktopApp.Blender)?.Executable;
-
     /// <summary>Windows: the `py -3` launcher, else python.exe; elsewhere python3. The Microsoft Store alias stub is skipped.</summary>
     public static (string Exe, string[] Prefix)? Python()
     {
@@ -169,30 +163,6 @@ public sealed class WslPythonRunner(string distro, string windowsExchange, strin
                      .Concat((environment ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}={kv.Value}"))
                      .Concat(["python3", "-I", script]).Concat(args))
             psi.ArgumentList.Add(a);
-        return runner.RunAsync(psi, timeout, ct);
-    }
-}
-
-/// <summary>Runs Blender in background mode (`blender -b ...`).</summary>
-public interface IBlenderRunner
-{
-    bool IsAvailable { get; }
-    string Describe { get; }
-    Task<ProcessResult> RunAsync(IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct);
-}
-
-public sealed class BlenderRunner(string? executable, IProcessRunner runner) : IBlenderRunner
-{
-    public static BlenderRunner Detect(IProcessRunner? runner = null) =>
-        new(Environment.GetEnvironmentVariable("MEDIATOR_BLENDER") is { Length: > 0 } b ? b : ToolLocator.Blender(), runner ?? DefaultProcessRunner.Instance);
-
-    public bool IsAvailable => executable is not null;
-    public string Describe => executable ?? "Blender not found (install it or set MEDIATOR_BLENDER)";
-
-    public Task<ProcessResult> RunAsync(IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct)
-    {
-        var psi = new ProcessStartInfo(executable ?? throw new InvalidOperationException(Describe));
-        foreach (var a in args) psi.ArgumentList.Add(a);
         return runner.RunAsync(psi, timeout, ct);
     }
 }

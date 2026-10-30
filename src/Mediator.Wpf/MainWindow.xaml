@@ -124,9 +124,10 @@
                     ToolTip="Which subscription goes first when you do not pick one (click to change)" AutomationProperties.Name="Routing policy">
               <TextBlock Text="{Binding RoutingPolicyText}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
             </Button>
-            <Button Style="{StaticResource FlatButton}" Padding="6,4" Command="{Binding CycleThemeCommand}"
-                    ToolTip="{Binding ThemeDisplayName}" AutomationProperties.Name="Next theme">
-              <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE790;" />
+            <!-- V18: light / dark mode (the same toggle as in the full-screen app); the classic themes are in the setup card. -->
+            <Button Style="{StaticResource FlatButton}" Padding="6,4" Command="{Binding ToggleLightDarkCommand}"
+                    ToolTip="{Binding LightDarkText}" AutomationProperties.Name="Light or dark mode">
+              <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="{Binding LightDarkGlyph}" />
             </Button>
           </StackPanel>
           <Button Grid.Column="4" Style="{StaticResource FlatButton}" Padding="6,4" Margin="2,0,0,0" ToolTip="Hide (Esc)" Command="{Binding HideCommand}"

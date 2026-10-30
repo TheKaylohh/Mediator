@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: Blender scenes and renders. Built on its own and shipped in <app>\connectors\Blender (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.Blender</RootNamespace>
+    <AssemblyName>Mediator.Connector.Blender</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+</Project>

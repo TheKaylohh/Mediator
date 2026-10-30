@@ -18,10 +18,13 @@ public sealed record WorkspacePrefs
     public bool RightVisible { get; init; } = true;
     public RightMode Mode { get; init; } = RightMode.Cockpit;
     public List<string> PinnedSoftware { get; init; } = [];
+    /// <summary>V18: where the full-screen app was last (restored bounds, device-independent pixels), or null: centred, maximized.</summary>
+    public WindowBounds? Window { get; init; }
 
     /// <summary>Value equality, the pinned list included (a record compares lists by reference).</summary>
     public bool Equals(WorkspacePrefs? other) => other is not null && LeftWidth.Equals(other.LeftWidth) && RightWidth.Equals(other.RightWidth)
-        && LeftVisible == other.LeftVisible && RightVisible == other.RightVisible && Mode == other.Mode && PinnedSoftware.SequenceEqual(other.PinnedSoftware);
+        && LeftVisible == other.LeftVisible && RightVisible == other.RightVisible && Mode == other.Mode && PinnedSoftware.SequenceEqual(other.PinnedSoftware)
+        && Equals(Window, other.Window);
 
     public override int GetHashCode() => HashCode.Combine(LeftWidth, RightWidth, LeftVisible, RightVisible, Mode, PinnedSoftware.Count);
 
@@ -30,6 +33,7 @@ public sealed record WorkspacePrefs
         ["leftWidth"] = Math.Round(LeftWidth, 1), ["rightWidth"] = Math.Round(RightWidth, 1),
         ["leftVisible"] = LeftVisible, ["rightVisible"] = RightVisible, ["mode"] = Mode.ToString(),
         ["pinnedSoftware"] = new JsonArray(PinnedSoftware.Select(s => (JsonNode)s).ToArray()),
+        ["window"] = Window?.ToJson(),
     };
 
     /// <summary>Reads what <see cref="ToJson"/> wrote; anything missing or out of range falls back to the default.</summary>
@@ -47,7 +51,29 @@ public sealed record WorkspacePrefs
             RightVisible = (bool?)o["rightVisible"] ?? true,
             Mode = Enum.TryParse<RightMode>((string?)o["mode"], ignoreCase: true, out var m) && Enum.IsDefined(m) ? m : d.Mode,
             PinnedSoftware = (o["pinnedSoftware"] as JsonArray ?? []).Select(n => (string?)n).OfType<string>().Distinct().ToList(),
+            Window = WindowBounds.FromJson(o["window"] as JsonObject),
         };
+    }
+}
+
+/// <summary>V18: the full-screen app's restored position and size, and whether it was maximized.</summary>
+public sealed record WindowBounds(double Left, double Top, double Width, double Height, bool Maximized)
+{
+    public const double MinWidth = 720, MinHeight = 480;
+
+    public JsonObject ToJson() => new()
+    {
+        ["left"] = Math.Round(Left), ["top"] = Math.Round(Top), ["width"] = Math.Round(Width), ["height"] = Math.Round(Height), ["maximized"] = Maximized,
+    };
+
+    /// <summary>Null when missing or not a usable size (the window then opens centred and maximized).</summary>
+    public static WindowBounds? FromJson(JsonObject? o)
+    {
+        if (o is null) return null;
+        static double? N(JsonNode? n) => n is JsonValue v && v.TryGetValue(out double d) && double.IsFinite(d) ? d : null;
+        if (N(o["left"]) is not { } l || N(o["top"]) is not { } t || N(o["width"]) is not { } w || N(o["height"]) is not { } h) return null;
+        if (w < MinWidth || h < MinHeight || w > 20000 || h > 20000 || Math.Abs(l) > 40000 || Math.Abs(t) > 40000) return null;
+        return new WindowBounds(l, t, w, h, (bool?)o["maximized"] ?? true);
     }
 }
 

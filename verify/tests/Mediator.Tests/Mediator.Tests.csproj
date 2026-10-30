@@ -11,7 +11,22 @@
   <ItemGroup>
     <ProjectReference Include="$(MediatorRoot)src/Mediator.Core/Mediator.Core.csproj" />
     <ProjectReference Include="$(MediatorRoot)src/Mediator.Protocol/Mediator.Protocol.csproj" />
-    <ProjectReference Include="$(MediatorRoot)src/Mediator.SwxWorker/Mediator.SwxWorker.csproj" />
+    <!-- Under an alias: the worker compiles in a copy of the stdio framing (Mediator.Protocol types). -->
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/SolidWorks/Worker/Mediator.SwxWorker.csproj" Aliases="worker" />
+    <!-- V18: the suite tests every connector directly (the app loads them from its connectors folder). -->
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/SolidWorks/Mediator.Connector.SolidWorks.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/FreeCAD/Mediator.Connector.FreeCAD.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/AutoCAD/Mediator.Connector.AutoCAD.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Inventor/Mediator.Connector.Inventor.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/NX/Mediator.Connector.NX.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Creo/Mediator.Connector.Creo.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/CATIA/Mediator.Connector.CATIA.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/CadFiles/Mediator.Connector.CadFiles.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/PartsFromCode/Mediator.Connector.PartsFromCode.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Office/Mediator.Connector.Office.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Resolve/Mediator.Connector.Resolve.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Blender/Mediator.Connector.Blender.csproj" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/Tutor/Mediator.Connector.Tutor.csproj" />
     <ProjectReference Include="$(MediatorRoot)src/Mediator.UI/Mediator.UI.csproj" />
     <!-- V8: in verify builds this is only the Win32 placement code (MonitorPlacement.cs), tested in PlacementTests. -->
     <ProjectReference Include="$(MediatorRoot)src/Mediator.Wpf/Mediator.Wpf.csproj" />

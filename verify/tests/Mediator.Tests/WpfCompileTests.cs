@@ -65,14 +65,14 @@ static class WpfCompileTests
         string loose = ThemeSources.LooseFile(AppContext.BaseDirectory, MediatorTheme.ProDark);
         try
         {
-            StubHooks.ResourceLoader = uri => uri.OriginalString.EndsWith("/Themes/ProDark.xaml", StringComparison.Ordinal) ? new ResourceDictionary { ["MarkerFrom"] = "compiled" } : StubHooks.DefaultLoader(uri);
+            StubHooks.ResourceLoader = uri => uri.OriginalString.EndsWith("/Themes/Legacy/ProDark.xaml", StringComparison.Ordinal) ? new ResourceDictionary { ["MarkerFrom"] = "compiled" } : StubHooks.DefaultLoader(uri);
             Check.True(ThemeManager.TryApply(MediatorTheme.ProDark), "compiled ProDark applied");
             Check.True(app.Resources.MergedDictionaries[0]["MarkerFrom"] as string == "compiled" && ThemeManager.LoadedFrom == ThemeSources.PackUri(MediatorTheme.ProDark), "merged[0] replaced, from the pack URI");
 
             // 2. Compiled resource missing (IOException "Cannot locate resource"): the loose copy next to the exe.
             StubHooks.ResourceLoader = StubHooks.DefaultLoader;
             Directory.CreateDirectory(Path.GetDirectoryName(loose)!);
-            File.Copy(Path.Combine(XamlChecker.RepoRoot(), "src", "Mediator.Wpf", "Themes", "ProDark.xaml"), loose, overwrite: true);
+            File.Copy(Path.Combine(XamlChecker.RepoRoot(), "src", "Mediator.Wpf", "Themes", "Legacy", "ProDark.xaml"), loose, overwrite: true);
             Check.True(ThemeManager.TryApply(MediatorTheme.ProDark), "loose ProDark applied");
             var looseDict = app.Resources.MergedDictionaries[0];
             Check.True(ThemeManager.LoadedFrom == loose && looseDict.Contains("AccentBrush") && looseDict.Count == 44, $"loaded from {ThemeManager.LoadedFrom} with all 44 keys ({looseDict.Count})");

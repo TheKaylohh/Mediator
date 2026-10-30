@@ -29,11 +29,8 @@ public interface IConnectorProbe
     Task<ToolProbe> ProbeToolAsync(string id, CancellationToken ct = default);
     /// <summary>"claude" or "agy". Only checks that the CLI's credential file exists; never reads it.</summary>
     CredentialState Credentials(string cliId);
-    AppStatus SolidWorks();
-    AppStatus Resolve();
-    AppStatus Blender();
-    /// <summary>V15: "word", "excel", "powerpoint" or "outlook".</summary>
-    AppStatus Office(string id) => new(id, Mediator.Core.Office.OfficeApps.DisplayName(id), false, "not checked");
+    /// <summary>V18: a desktop program some connector drives ("solidworks", "word"...): asked of that connector.</summary>
+    AppStatus App(string id) => new(id, id, false, "not checked");
     /// <summary>A visible terminal running the CLI with API-key variables removed, so it signs in with the subscription. Null with a reason when not possible.</summary>
     (ProcessStartInfo? StartInfo, string? Problem) SignIn(string cliId);
 }
@@ -47,10 +44,6 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
     DesktopAppLocator? apps = null, Func<string, int?>? runningProcess = null) : IConnectorProbe
 {
     private readonly string _home = home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    private readonly DesktopAppLocator _apps = apps ?? DesktopAppLocator.Default;
-    private readonly Func<string, int?> _running = runningProcess ?? FirstProcess;
-    /// <summary>Windows apps are reported as such off Windows, unless a locator was injected (tests).</summary>
-    private readonly bool _windowsApps = apps is not null || OperatingSystem.IsWindows();
 
     public static readonly IReadOnlyList<string> Prerequisites = ["claude", "agy", "python", "git"];
 
@@ -117,72 +110,10 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
 
     public CredentialState Credentials(string cliId) => File.Exists(CredentialFile(cliId)) ? CredentialState.FilePresent : CredentialState.NotFound;
 
-    public AppStatus SolidWorks()
-    {
-        if (!_windowsApps) return new AppStatus("solidworks", "SolidWorks", false, "Windows only");
-        var install = _apps.Find(DesktopApp.SolidWorks);
-        string installed = install is null ? "installation not found in the registry or the default folder" : $"installed: {Label(install)}";
-        if (_running("SLDWORKS") is { } pid)
-            return new AppStatus("solidworks", "SolidWorks", true, $"running (PID {pid}); the worker attaches to it. {installed}", install?.Executable);
-        return install is null
-            ? new AppStatus("solidworks", "SolidWorks", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.SolidWorks))})")
-            : new AppStatus("solidworks", "SolidWorks", true, $"{installed}; not running: the Mediator starts it when a SolidWorks job needs it", install.Executable);
-    }
+    /// <summary>What connectors use to check their programs (the locator, running processes, test overrides).</summary>
+    public ProgramProbe Programs { get; } = new(apps ?? DesktopAppLocator.Default, runningProcess ?? FirstProcess, executables, apps is not null || OperatingSystem.IsWindows());
 
-    public AppStatus Resolve()
-    {
-        if (!_windowsApps) return new AppStatus("resolve", "DaVinci Resolve", false, "Windows only");
-        var install = _apps.Find(DesktopApp.Resolve);
-        if (install is null)
-            return new AppStatus("resolve", "DaVinci Resolve", false, $"not installed (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.Resolve))})");
-        string edition = (install.ProductName ?? "").Contains("Studio", StringComparison.OrdinalIgnoreCase)
-            ? "Studio: the scripting bridge can create the timeline (enable External scripting: Local)"
-            : "edition not confirmed as Studio: FCPXML/EDL import works in both; the scripting bridge needs Studio";
-        string running = _running("Resolve") is { } id ? $"running (PID {id})" : "not running";
-        return new AppStatus("resolve", "DaVinci Resolve", true, $"{running}; {edition}; {Label(install)}", install.Executable);
-    }
-
-    public AppStatus Blender()
-    {
-        if (executables is not null && executables.TryGetValue("blender", out var forced))
-            return forced is null
-                ? new AppStatus("blender", "Blender", false, "not found")
-                : new AppStatus("blender", "Blender", true, forced);
-        var install = _apps.Find(DesktopApp.Blender);
-        return install is null
-            ? new AppStatus("blender", "Blender", false, $"not found (looked in {string.Join(", ", _apps.SearchedLocations(DesktopApp.Blender))})")
-            : new AppStatus("blender", "Blender", true, Label(install), install.Executable);
-    }
-
-    /// <summary>V15: Word, Excel and PowerPoint are optional (the Office tools write the files themselves; the app only
-    /// opens them). Outlook is usable only as classic desktop Outlook with a mail profile.</summary>
-    public AppStatus Office(string id)
-    {
-        string name = Mediator.Core.Office.OfficeApps.DisplayName(id);
-        if (!_windowsApps) return new AppStatus(id, name, false, "Windows only");
-        string? exe = executables is not null && executables.TryGetValue(id, out var forced) ? forced : Mediator.Core.Office.OfficeApps.Locate(id);
-        if (id != "outlook")
-            return exe is null
-                ? new AppStatus(id, name, false, "not installed. The Mediator still reads and writes these files; install Microsoft 365 to open them.")
-                : new AppStatus(id, name, true, $"installed — {exe}. The Mediator reads and writes the files itself and opens them here.", exe);
-        if (exe is null)
-            return Mediator.Core.Office.OfficeApps.LocateNewOutlook() is { } olk
-                ? new AppStatus(id, name, false, "only the new Outlook is installed, and it cannot be automated. Install classic Outlook (Microsoft 365 apps) for mail and calendar.", olk)
-                : new AppStatus(id, name, false, "classic Outlook is not installed.");
-        if (executables is not null) return new AppStatus(id, name, true, exe, exe);
-        string? why = new Mediator.Core.Office.OutlookClient().Unavailable();
-        return why is null
-            ? new AppStatus(id, name, true, $"classic Outlook with a mail profile — {exe}. Search, read, draft (never sends) and calendar.", exe)
-            : new AppStatus(id, name, false, why, exe);
-    }
-
-    /// <summary>"Blender 4.2 — C:\…\blender.exe (Program Files\Blender Foundation\Blender 4.2)".</summary>
-    private static string Label(DesktopAppInstall install)
-    {
-        string name = install.ProductName ?? DesktopAppLocator.DisplayName(install.App);
-        string version = install.Version is null || name.Contains(install.Version, StringComparison.OrdinalIgnoreCase) ? "" : " " + install.Version;
-        return $"{name}{version} — {install.Executable} ({install.FoundBy})";
-    }
+    public AppStatus App(string id) => ConnectorCatalog.ProbeProgram(id, Programs);
 
     private static int? FirstProcess(string name)
     {
@@ -212,5 +143,38 @@ public sealed partial class ConnectorProbe(IProcessRunner runner, string? home =
         // Without these the CLI would sign in to pay-per-token billing instead of the subscription.
         foreach (var v in GeminiLaunchBuilder.VariablesToScrub(false)) psi.Environment.Remove(v);
         return (psi, null);
+    }
+}
+
+/// <summary>
+/// V18: what a connector needs to report on its desktop program: the shared locator, running processes and the executables
+/// tests force. <see cref="WindowsApps"/> is false off Windows (unless a locator was injected): Windows programs say "Windows only".
+/// </summary>
+public sealed class ProgramProbe(DesktopAppLocator apps, Func<string, int?> running, IReadOnlyDictionary<string, string?>? executables, bool windowsApps)
+{
+    public DesktopAppLocator Apps { get; } = apps;
+    public bool WindowsApps { get; } = windowsApps;
+
+    /// <summary>The PID of a running process with this name, or null.</summary>
+    public int? Running(string processName) => running(processName);
+
+    /// <summary>True when a test forced the executable of <paramref name="id"/> (null: forced missing).</summary>
+    public bool Forced(string id, out string? executable)
+    {
+        executable = null;
+        return executables is not null && executables.TryGetValue(id, out executable);
+    }
+
+    /// <summary>True when tests injected executables: no real program is asked anything.</summary>
+    public bool IsTest => executables is not null;
+
+    public string SearchedLocations(DesktopApp app) => string.Join(", ", Apps.SearchedLocations(app));
+
+    /// <summary>"Blender 4.2 — C:\…\blender.exe (Program Files\Blender Foundation\Blender 4.2)".</summary>
+    public static string Label(DesktopAppInstall install)
+    {
+        string name = install.ProductName ?? DesktopAppLocator.DisplayName(install.App);
+        string version = install.Version is null || name.Contains(install.Version, StringComparison.OrdinalIgnoreCase) ? "" : " " + install.Version;
+        return $"{name}{version} — {install.Executable} ({install.FoundBy})";
     }
 }

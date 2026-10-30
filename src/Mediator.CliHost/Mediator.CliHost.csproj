@@ -11,4 +11,6 @@
   <ItemGroup>
     <ProjectReference Include="../Mediator.Core/Mediator.Core.csproj" />
   </ItemGroup>
+  <!-- V18: the connectors are built and copied to <output>\connectors (they are not referenced). -->
+  <Import Project="$(MediatorRoot)src/Connectors/Connectors.targets" Condition="Exists('$(MediatorRoot)src/Connectors/Connectors.targets')" />
 </Project>

@@ -71,4 +71,11 @@
   <Target Name="MediatorTestsNeedVerify" BeforeTargets="Build" Condition="'$(MediatorIsVerifySuite)' == 'true' and '$(MediatorVerify)' != 'true'">
     <Error Text="Mediator.Tests builds only with -p:MediatorVerify=true (see verify/run-tests.sh or scripts/check-windows-build.ps1 -RunVerifySuite)." />
   </Target>
+
+  <!-- V18 connectors (src/Connectors/<Name>): each builds against Mediator.Core without shipping a copy of it; the host's
+       connector loader shares the host's Core. The test suite may see their internals. -->
+  <ItemGroup Condition="'$(MediatorConnector)' == 'true'">
+    <ProjectReference Include="$(MediatorRoot)src/Mediator.Core/Mediator.Core.csproj" Private="false" />
+    <InternalsVisibleTo Include="Mediator.Tests" />
+  </ItemGroup>
 </Project>

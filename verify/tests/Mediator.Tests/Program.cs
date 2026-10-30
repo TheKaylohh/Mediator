@@ -23,16 +23,16 @@ if (args.Length >= 2 && args[0] == "--emit")
 
 if (args.Length == 2 && args[0] == "--write-fcpxml")
 {
-    static Mediator.Core.Resolve.ClipInfo V(string id, string name, double dur, bool video = true) =>
-        new(id, Path.Combine(Path.GetTempPath(), name), dur, video ? new Mediator.Core.Resolve.FrameRate(30000, 1001) : null, video ? 1920 : null, video ? 1080 : null, video, 1, 2, 48000, null, "t");
-    var plan = new Mediator.Core.Resolve.TimelinePlan("DTD check", new Mediator.Core.Resolve.FrameRate(30000, 1001), 1920, 1080,
+    static Mediator.Connectors.Resolve.ClipInfo V(string id, string name, double dur, bool video = true) =>
+        new(id, Path.Combine(Path.GetTempPath(), name), dur, video ? new Mediator.Connectors.Resolve.FrameRate(30000, 1001) : null, video ? 1920 : null, video ? 1080 : null, video, 1, 2, 48000, null, "t");
+    var plan = new Mediator.Connectors.Resolve.TimelinePlan("DTD check", new Mediator.Connectors.Resolve.FrameRate(30000, 1001), 1920, 1080,
     [
         new("k1", V("c1", "A clip.mp4", 10), 1.0, 3.5),
-        new("k3", V("c3", "C.mp4", 12), 2, 6, Transition: Mediator.Core.Resolve.CutTransition.Dissolve),
+        new("k3", V("c3", "C.mp4", 12), 2, 6, Transition: Mediator.Connectors.Resolve.CutTransition.Dissolve),
         new("k4", V("c4", "music.wav", 30, video: false), 0, 4, Track: 2, TimelineSec: 0.5),
         new("k5", V("c5", "broll.mov", 8), 1, 2, Track: 2, TimelineSec: 3.0),
     ]);
-    File.WriteAllText(args[1], Mediator.Core.Resolve.TimelineWriter.Fcpxml(plan));
+    File.WriteAllText(args[1], Mediator.Connectors.Resolve.TimelineWriter.Fcpxml(plan));
     return 0;
 }
 if (args.Length >= 1 && args[0] == "--fake-mcp") return await Mediator.Tests.ConnectorTests.FakeMcpServerAsync(args.Skip(1).ToArray());
@@ -44,16 +44,19 @@ if (args.Length == 6 && args[0] == "--journal-child") return await Mediator.Test
 if (args.Length == 2 && args[0] == "--test-pdf") { File.WriteAllBytes(args[1], Mediator.Tests.TestPdf.Build()); return 0; }
 if (args.Length == 4 && args[0] == "--pdf-text")
 {
-    var doc = Mediator.Core.Tutor.PdfTextExtractor.Extract(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
+    var doc = Mediator.Connectors.Tutor.PdfTextExtractor.Extract(args[1], int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture), int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture));
     Console.OutputEncoding = new System.Text.UTF8Encoding(false);
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { doc.PageCount, Pages = doc.Pages.Select(p => new { p.Number, p.Text }) }));
     return 0;
 }
 if (args.Length == 3 && args[0] == "--write-blender-script")
 {
-    File.WriteAllText(args[1], Mediator.Core.Blender.CarSceneScript.Render(new Mediator.Core.Blender.CarSceneParameters { DurationSec = 2, Engine = "CYCLES" }, Path.GetFullPath(args[2])));
+    File.WriteAllText(args[1], Mediator.Connectors.Blender.CarSceneScript.Render(new Mediator.Connectors.Blender.CarSceneParameters { DurationSec = 2, Engine = "CYCLES" }, Path.GetFullPath(args[2])));
     return 0;
 }
+
+// V18: the connectors every test sees (the app loads them from its connectors folder; the suite references them).
+ConnectorCatalog.Set(Mediator.Tests.TestConnectors.All());
 
 var bridgeDll = args.Length > 0 ? Path.GetFullPath(args[0]) : throw new ArgumentException("Pass the path to mediator-mcp-bridge.dll");
 var cliDll = args.Length > 1 ? Path.GetFullPath(args[1]) : throw new ArgumentException("Pass the path to mediator-cli.dll (the console host)");
@@ -165,6 +168,11 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("cad V17: installs found by version folder, override variable, Apps & features, COM registration", () => { Mediator.Tests.CadExpansionTests.LocatorFindsInstalls(); return Task.CompletedTask; }),
     ("cad V17: requests about FreeCAD/AutoCAD/Inventor/NX/Creo/CATIA get that program's tools only; saved chats upgraded", () => { Mediator.Tests.CadExpansionTests.RoutingToTheNewPrograms(); return Task.CompletedTask; }),
     ("workspace V16.2: the conversation keeps ≥ 50% of a large window; sidebars shrink, then hide (right first) and come back; drags capped", () => { Mediator.Tests.WorkspaceTests.LayoutProtectsTheConversation(); return Task.CompletedTask; }),
+    ("connectors V18: 13 connectors describe themselves; any subset works (no SolidWorks, none at all): routing, tiles, recipes, programs", () => { Mediator.Tests.PluginTests.CatalogIsTheOnlyLink(); return Task.CompletedTask; }),
+    ("connectors V18: a connector folder loads in its own context through the shared contract; a broken one is skipped", () => { Mediator.Tests.PluginTests.LoaderFindsFolders(); return Task.CompletedTask; }),
+    ("connectors V18: a runtime starts only its connectors; a job is granted only tools that exist", () => Mediator.Tests.PluginTests.RuntimeWithoutConnectors(bridgeDll)),
+    ("workspace V18: the full-screen app and the quick panel are never shown together; settings tabs switch between them", () => { Mediator.Tests.PluginTests.OneViewAtATime(); return Task.CompletedTask; }),
+    ("workspace V18: the full-screen app reopens where it was; a bad saved place is ignored", () => { Mediator.Tests.PluginTests.WindowPlacementPersists(); return Task.CompletedTask; }),
     ("workspace V16.2: sidebar sizes, visibility, mode and pins persist; custom actions and Save to now survive a restart", () => { Mediator.Tests.WorkspaceTests.PreferencesPersist(); return Task.CompletedTask; }),
     ("workspace V16.2: six modes share one panel and keep state; chats, projects, artifacts, palette, profile menu, software chat context", () => { Mediator.Tests.WorkspaceTests.RegionsAndModes(); return Task.CompletedTask; }),
     ("iterations V10: saving vN deletes Mediator's older versions (and backups, copies, STLs, views) only; views returned as images; proportions vs reference", () => { Mediator.Tests.ChatAppTests.IterationsVersionsAndViews(); return Task.CompletedTask; }),

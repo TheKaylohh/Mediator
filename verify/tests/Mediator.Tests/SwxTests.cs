@@ -1,5 +1,6 @@
-using Mediator.Protocol.Swx;
-using Mediator.SwxWorker;
+extern alias worker;
+using Mediator.Connectors.SolidWorks.Contracts;
+using worker::Mediator.SwxWorker;
 using Mediator.Tests.Fakes;
 using SolidWorks.Interop.swconst;
 

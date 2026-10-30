@@ -9,12 +9,8 @@ using Mediator.Core.Diagnostics;
 using Mediator.Core.Files;
 using Mediator.Core.Jobs;
 using Mediator.Core.Platform;
-using Mediator.Core.Blender;
-using Mediator.Core.CadCode;
-using Mediator.Core.Resolve;
-using Mediator.Core.Swx;
+using Mediator.Core.Connectors;
 using Mediator.Core.Tools;
-using Mediator.Core.Tutor;
 
 namespace Mediator.Core.Runtime;
 
@@ -184,19 +180,16 @@ public sealed record RuntimeOptions
     public ComponentCommand? Bridge { get; init; }
     /// <summary>Null: `claude` resolved on PATH when a job needs it.</summary>
     public string? ClaudeExecutable { get; init; }
-    /// <summary>Null: the real out-of-process worker. Tests and `--simulate` pass a <see cref="SimulatedSwxBackend"/>.</summary>
-    public ISwxBackend? SwxBackend { get; init; }
-    public ComponentCommand? SwxWorker { get; init; }
     public ProtectedPathPolicy? PathPolicy { get; init; }
-    /// <summary>Starts SolidWorks for CAD tools. Null: the real one on Windows with the real worker, else nothing.</summary>
-    public IDesktopAppSession? SolidWorksSession { get; init; }
-    /// <summary>V16.1: the file of the document active in SolidWorks, or null (not running, nothing open, never saved). Null
-    /// probe: the real SolidWorks on Windows with the real worker, else none.</summary>
-    public Func<CancellationToken, Task<string?>>? ActiveCadDocument { get; init; }
+    /// <summary>
+    /// V18: the connectors this runtime starts (SolidWorks, Office, Blender...). Null: the ones the host loaded from its
+    /// connectors folder (<see cref="ConnectorCatalog.All"/>).
+    /// </summary>
+    public IReadOnlyList<IMediatorConnector>? Connectors { get; init; }
+    /// <summary>V18: tests and `--simulate`: no desktop program is started (SolidWorks runs simulated, Chrome is not opened).</summary>
+    public bool Simulate { get; init; }
     /// <summary>V11: starts Chrome for Browser jobs. Null: the real Chrome on Windows unless simulating (tests), else nothing.</summary>
     public IDesktopAppSession? ChromeSession { get; init; }
-    /// <summary>V15: classic desktop Outlook for the outlook_* tools. Null: the real one (it reports itself unavailable off Windows).</summary>
-    public Office.IOutlookClient? Outlook { get; init; }
     /// <summary>V13: the Mediator for Chrome extension bridge (started by the overlay). Null: browser_* tools report it unavailable and
     /// Browser jobs use Claude in Chrome.</summary>
     public Browser.ChromeBridgeServer? BrowserBridge { get; init; }
@@ -215,24 +208,10 @@ public sealed record RuntimeOptions
     /// <summary>Interactive sessions: no tool call for this long ends the job (the grant is revoked; the tab stays open).</summary>
     public TimeSpan InteractiveIdleTimeout { get; init; } = TimeSpan.FromHours(2);
 
-    // Helper programs for the tool providers. Defaults are detected when the options are created; tests pass fakes.
+    // Helper programs shared by connectors. Defaults are detected when the options are created; tests pass fakes.
     public IProcessRunner ProcessRunner { get; init; } = DefaultProcessRunner.Instance;
-    public IMediaProbe MediaProbe { get; init; } = CompositeMediaProbe.Detect();
-    /// <summary>Python for PDF extraction and the Resolve script (local: they need your Windows files and apps).</summary>
+    /// <summary>Python on this PC, for connectors that run scripts (PDF extraction, the Resolve bridge...).</summary>
     public IPythonRunner Python { get; init; } = LocalPythonRunner.Detect();
-    /// <summary>Python for build123d. Null = <see cref="Python"/>. Set a <see cref="WslPythonRunner"/> to keep generated code inside WSL.</summary>
-    public IPythonRunner? CadPython { get; init; }
-    /// <summary>
-    /// The sandbox for model-written code. Null = detected: bubblewrap on Linux; on Windows none unless configured
-    /// (a <see cref="Isolation.WslBubblewrapSandbox"/>). Without one, custom code is refused, never run on the host.
-    /// </summary>
-    public Isolation.ISandboxRunner? CadSandbox { get; init; }
-    /// <summary>The interpreter inside the sandbox. Null = probed from the host Python on Linux.</summary>
-    public CadCode.SandboxPython? CadSandboxPython { get; init; }
-    /// <summary>Where sandbox runs are staged. Null = the workspaces folder. Must be inside the WSL exchange folder for the WSL sandbox.</summary>
-    public string? SandboxStagingDirectory { get; init; }
-    public IBlenderRunner Blender { get; init; } = BlenderRunner.Detect();
-    public string? Ffmpeg { get; init; } = ToolLocator.Ffmpeg();
 }
 
 /// <summary>Starts CLI processes. The default really starts them; tests record the start info and run a stand-in.</summary>
@@ -311,7 +290,7 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     private readonly RuntimeOptions _options;
     private readonly ConcurrentDictionary<string, RunningJob> _jobs = new(StringComparer.Ordinal);
     private readonly ChildProcessJob _workerGroup = new();
-    private readonly SwxWorkerClient? _ownedWorker;
+    private readonly List<ConnectorInstance> _connectors = [];
 
     public event Action<ToolCallEvent>? ToolCallActivity;
     public event Action<RunningJob>? JobChanged;
@@ -329,11 +308,12 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     public UsageLedger Usage { get; }
     public McpBusServer Bus { get; }
     public ComponentCommand? Bridge { get; }
-    public ISwxBackend Swx { get; }
-    /// <summary>V10: the SolidWorks the CAD tools drive, started on demand (one copy); a no-op with a simulated backend.</summary>
-    public IDesktopAppSession SolidWorks { get; }
 
-    private readonly Func<CancellationToken, Task<string?>>? _activeCadDocument;
+    /// <summary>V18: the connectors started in this runtime (one instance each).</summary>
+    public IReadOnlyList<ConnectorInstance> ConnectorInstances => _connectors;
+
+    /// <summary>The started instance of a connector, by its type (e.g. the SolidWorks connector's, for its worker).</summary>
+    public T? Connector<T>() where T : ConnectorInstance => _connectors.OfType<T>().FirstOrDefault();
     /// <summary>V11: the user's Chrome, for Browser jobs (Claude in Chrome).</summary>
     public IDesktopAppSession Chrome { get; }
     /// <summary>V13: the Mediator for Chrome extension, when this host runs its bridge (the overlay does; mediator-cli does not).</summary>
@@ -370,46 +350,26 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         Gate.KillRequested += jobId => KillJob(jobId, "kill chosen in an approval");
         Bridge = options.Bridge ?? ComponentLocator.Find(ComponentLocator.Bridge);
 
-        if (options.SwxBackend is { } backend)
-        {
-            Swx = backend;
-        }
-        else
-        {
-            var worker = options.SwxWorker ?? ComponentLocator.Find(ComponentLocator.SwxWorker);
-            _ownedWorker = new SwxWorkerClient(
-                new SwxWorkerOptions(worker?.FileName ?? ComponentLocator.SwxWorker, worker?.PrefixArguments ?? []), _workerGroup, options.Log);
-            Swx = _ownedWorker;
-        }
-
         Tools.Register(new FilesToolProvider(journal));
-        // The real SolidWorks only with the real worker on Windows; a simulated backend (tests, --simulate) starts nothing.
-        SolidWorks = options.SolidWorksSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
-            ? new SolidWorksSession(SolidWorksSession.DefaultStartTimeout, options.Log)
-            : NoDesktopAppSession.Instance);
-        Chrome = options.ChromeSession ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
+        Chrome = options.ChromeSession ?? (!options.Simulate && OperatingSystem.IsWindows()
             ? new Browser.ChromeSession(options.Log)
             : NoDesktopAppSession.Instance);
-        _activeCadDocument = options.ActiveCadDocument ?? (options.SwxBackend is null && OperatingSystem.IsWindows()
-            ? ct => SolidWorksLauncher.IsRunning() ? Task.Run(() => SwxParametric.ActivePath(TimeSpan.FromSeconds(20)), ct) : Task.FromResult<string?>(null)
-            : null);
-        Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
-        Tools.Register(new SwxPartToolProvider(SolidWorks));
-        string cadScripts = Path.Combine(options.Paths.DataDirectory, "cad-scripts"); // V17: patched connector scripts override the built-in ones
-        Tools.Register(new Cad.CadAppToolProvider(new SolidWorksCadApp(SolidWorks) { ScriptOverrideFolder = cadScripts }));
-        foreach (var cad in JobSpecFactory.OtherCadApps(cadScripts)) Tools.Register(new Cad.CadAppToolProvider(cad)); // V17: FreeCAD, AutoCAD, Inventor, NX, Creo, CATIA
-        Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
-        Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
-        var cadPython = options.CadPython ?? options.Python;
-        var sandbox = options.CadSandbox ?? (OperatingSystem.IsLinux()
-            ? new Isolation.BubblewrapSandbox(options.ProcessRunner)
-            : new Isolation.UnavailableSandbox("no sandbox is configured on Windows: set up the restricted WSL distro with bubblewrap (see docs/v6/ISOLATION.md)"));
-        var sandboxPython = options.CadSandboxPython ?? (sandbox is Isolation.BubblewrapSandbox && cadPython is LocalPythonRunner local
-            ? CadCode.SandboxPython.Probe(local.Executable) : null);
-        Tools.Register(new CodeCadToolProvider(cadPython, sandbox, sandboxPython, options.SandboxStagingDirectory ?? options.Paths.WorkspacesDirectory));
-        Tools.Register(new TutorToolProvider(options.Python, options.Paths.WorkspacesDirectory));
-        Tools.Register(new Office.OfficeToolProvider(options.Outlook)); // V15: Word, Excel, PowerPoint files and classic Outlook
-        Tools.Register(new CadFiles.CadFileToolProvider());             // V15: STL/OBJ/PLY/3MF, STEP, IGES, DXF/SVG
+        // V18: every connector the host loaded adds its tools. One that fails to start is skipped (and logged), never fatal.
+        var context = new ConnectorContext(options.Paths, options.Log, Registry, options.ProcessRunner, options.Python,
+            options.PathPolicy ?? ProtectedPathPolicy.CreateDefault(), options.Simulate, _workerGroup);
+        foreach (var connector in options.Connectors ?? ConnectorCatalog.All)
+        {
+            ConnectorInstance instance;
+            try { instance = connector.Start(context); }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                options.Log.Error($"The {connector.DisplayName} connector could not start; its tools are unavailable", ex);
+                continue;
+            }
+            instance.Connector = connector;
+            _connectors.Add(instance);
+            foreach (var provider in instance.Providers) Tools.Register(provider);
+        }
         Tools.Register(new OperationsToolProvider(operations));
         Tools.Register(Briefs);
         Tools.Register(Attachments);
@@ -539,12 +499,11 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             await AuditRouteAsync(jobId, route.Downgraded ? FailoverDecision.SwitchedBeforeLaunch : FailoverDecision.NotNeeded,
                 route.Original, route.Provider, route.Reason).ConfigureAwait(false);
         }
-        spec = await WithOpenCadDocumentAsync(spec, ct).ConfigureAwait(false);
+        // V18: each connector may adjust the job first (SolidWorks shares the open document's folder and starts early).
+        foreach (var connector in _connectors) spec = await connector.PrepareJobAsync(spec, ct).ConfigureAwait(false);
+        // A connector that is not installed has no tools: the job is granted only the tools that exist here.
+        spec = spec with { Tools = spec.Tools.Where(t => Tools.TryGet(t, out _, out _)).ToList() };
         PrepareRoots(spec);
-        // A job that will drive SolidWorks starts it now, so it is loading while the model reads and plans. V14.1: only when
-        // this request asks for SolidWorks (an action tile, or CAD words in what the user typed). A follow-up in a chat that
-        // once used CAD keeps the tools, and SolidWorks starts on the first SolidWorks tool call if the model needs it.
-        if (WarmsSolidWorks(spec)) SolidWorks.WarmUp();
         // The user's own words always reach the model, whatever template the action used (Assemble had no slot for them).
         spec = spec with { Prompt = JobSpecFactory.WithUserText(spec) };
         if (spec.Attachments.Count > 0) spec = spec with { Prompt = spec.Prompt + AttachmentPromptSuffix(spec.Attachments) };
@@ -978,35 +937,6 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         Registry.Revoke(job.JobId);
     }
 
-    /// <summary>
-    /// V16.1: "the open part", "this assembly": a SolidWorks job works on the document active in SolidWorks, so that document's
-    /// folder joins the job's folders (as a folder selected in File Explorer does) and the model is told which file it is.
-    /// Without it a chat with no folder could read the open part but not change or export it. Protected folders are never added;
-    /// every change still shows its approval card.
-    /// </summary>
-    private async Task<JobSpec> WithOpenCadDocumentAsync(JobSpec spec, CancellationToken ct)
-    {
-        if (_activeCadDocument is null || spec.Category != TaskCategory.Cad || !spec.Tools.Any(SolidWorksCadApp.ToolNames.Contains))
-            return spec;
-        string? path;
-        try { path = await _activeCadDocument(ct).WaitAsync(TimeSpan.FromSeconds(25), ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is TimeoutException or InvalidOperationException or ArgumentException or PlatformNotSupportedException)
-        {
-            _options.Log.Warn("The document open in SolidWorks could not be read: " + ex.Message);
-            return spec;
-        }
-        if (path is null) return spec;
-        string folder;
-        try { folder = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ""; }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return spec; }
-        if (folder.Length == 0 || !Directory.Exists(folder)) return spec;
-        var policy = _options.PathPolicy ?? ProtectedPathPolicy.CreateDefault();
-        bool covered = spec.Roots.Any(r => Mediator.Core.Security.PathSyntax.Current.IsSameOrInside(folder, Path.GetFullPath(r)));
-        if (!covered && policy.CheckJobRoot(folder) is not null) return spec;
-        string note = $"\n\nOpen in SolidWorks right now: {path}. Its folder is shared with you; a swx_ tool without a path works on this document.";
-        return spec with { Roots = covered ? spec.Roots : [.. spec.Roots, folder], Prompt = spec.Prompt + note };
-    }
-
     /// <summary>V13: how long a Browser job waits for the extension after Chrome is up (its worker reconnects within seconds).</summary>
     internal static readonly TimeSpan ExtensionWait = TimeSpan.FromSeconds(20);
 
@@ -1016,14 +946,6 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
     /// </summary>
     private bool ExtensionAvailable() =>
         BrowserBridge is { } b && (b.IsConnected || Browser.BrowserExtension.EverConnected(Paths.DataDirectory));
-
-    /// <summary>
-    /// V14.1: SolidWorks is started ahead of the model only for a SolidWorks action (Assemble, parametric parts) or a request
-    /// whose own words ask for CAD. Having the CAD tools is not enough: a follow-up in a chat that once used CAD keeps them.
-    /// </summary>
-    public static bool WarmsSolidWorks(JobSpec spec) =>
-        spec.Tools.Any(t => SwxToolProvider.ToolNames.Contains(t) || SwxPartToolProvider.ToolNames.Contains(t) || SolidWorksCadApp.ToolNames.Contains(t))
-        && (spec.Kind is "assemble" or "codecad" || JobSpecFactory.AsksForSolidWorks(spec.UserText ?? spec.Prompt));
 
     /// <summary>V13: when an extension job ends, the extension detaches from its tabs (Chrome's "is debugging" bar goes away).</summary>
     private void ReleaseBrowser(RunningJob job)
@@ -1063,7 +985,11 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
         foreach (var job in _jobs.Values.Where(j => j.State is JobState.Starting or JobState.Running))
             KillJob(job.JobId, "Mediator shutting down");
         await Bus.DisposeAsync().ConfigureAwait(false);
-        if (_ownedWorker is not null) await _ownedWorker.DisposeAsync().ConfigureAwait(false);
+        foreach (var connector in _connectors)
+        {
+            try { await connector.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException) { _options.Log.Warn("A connector did not stop cleanly: " + ex.Message); }
+        }
         _workerGroup.Dispose();
         foreach (var job in _jobs.Values) job.ProcessGroup.Dispose();
         await Usage.DisposeAsync().ConfigureAwait(false);
@@ -1085,241 +1011,24 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
 public static partial class JobSpecFactory
 {
     /// <summary>
-    /// Every CAD job gets the whole SolidWorks toolset: building parts (native or from code / STEP), reading part cards and
-    /// building assemblies. Splitting them made "make the parts and assemble them" impossible in one job.
-    /// </summary>
-    public static readonly string[] CadTools =
-    [
-        SwxPartToolProvider.BuildTool, SwxPartToolProvider.SetTool,                // native parametric parts
-        SolidWorksCadApp.SessionTool, SolidWorksCadApp.DocumentTool, SolidWorksCadApp.ExportTool, // open/save/close, STEP/STL/PDF/DXF
-        SolidWorksCadApp.InspectTool, SolidWorksCadApp.EditTool,                   // V16: read and change any part or assembly
-        SolidWorksCadApp.DrawingTool, SolidWorksCadApp.ViewsTool,                  // V16: drawings, pictures of the model
-        SolidWorksCadApp.SketchTool, SolidWorksCadApp.FeatureTool,                 // V17: sketches and features on the open part
-        SolidWorksCadApp.AssemblyTool, SolidWorksCadApp.AnnotateTool,              // V17: live assembly work, drawing annotation
-        SolidWorksCadApp.ScriptTool,                                               // V17: anything else, through the SolidWorks API
-        CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, // code → STEP → part
-        SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool,                  // part cards → assembly
-        CadFiles.CadFileToolProvider.InspectTool, CadFiles.CadFileToolProvider.ConvertTool, // V15: read and convert CAD files
-    ];
-
-    /// <summary>V15: CAD files without SolidWorks: inspect meshes, STEP, IGES and profiles; convert meshes.</summary>
-    public static readonly string[] CadFileTools = CadFiles.CadFileToolProvider.Names;
-
-    /// <summary>V17: the CAD programs beyond SolidWorks (each one's tools are named after its prefix: fc_, acad_, inv_, nx_, creo_, catia_).</summary>
-    public static IReadOnlyList<Cad.ICadApp> OtherCadApps(string? scriptOverrides = null) =>
-    [
-        new Cad.Apps.FreeCadApp(overrideFolder: scriptOverrides), new Cad.Apps.AutoCadApp(overrideFolder: scriptOverrides),
-        new Cad.Apps.InventorApp(overrideFolder: scriptOverrides), new Cad.Apps.NxApp(overrideFolder: scriptOverrides),
-        new Cad.Apps.CreoApp(overrideFolder: scriptOverrides), new Cad.Apps.CatiaApp(overrideFolder: scriptOverrides),
-    ];
-
-    /// <summary>V17: each other CAD program's whole toolset (plus the CAD-file tools), by tool prefix.</summary>
-    public static readonly IReadOnlyDictionary<string, string[]> CadToolsByPrefix = OtherCadApps()
-        .ToDictionary(a => a.Prefix, a => new Cad.CadAppToolProvider(a).ToolNames.Concat(CadFileTools).ToArray(), StringComparer.Ordinal);
-
-    /// <summary>V15: Word, Excel and PowerPoint files, and classic Outlook mail and calendar.</summary>
-    public static readonly string[] OfficeTools = Office.OfficeToolProvider.Names;
-
-    /// <summary>
-    /// Turns (model replies, one per tool call) a CAD job may take: several parts, their fixes and version iterations,
-    /// part cards and the assembly all happen in one run. Claude Code stops the job at --max-turns.
+    /// Turns (model replies, one per tool call) a long tool job may take: CAD runs chain parts, fixes, cards and an assembly;
+    /// browser runs chain page steps. Claude Code stops the job at --max-turns.
     /// </summary>
     public const int CadMaxTurns = 60;
-    public static readonly string[] ResolveTools = [ResolveToolProvider.ProbeTool, ResolveToolProvider.ExportTool, ResolveToolProvider.ApplyTool];
-    public static readonly string[] BlenderTools = [BlenderToolProvider.BuildTool, BlenderToolProvider.RenderTool];
-    public static readonly string[] TutorTools = [TutorToolProvider.ExtractTool, TutorToolProvider.VerifyTool];
 
-    private static string J(string path) => path.Replace("\\", "\\\\", StringComparison.Ordinal);
+    /// <summary>A path inside a prompt: backslashes doubled, as JSON in the instructions needs.</summary>
+    public static string J(string path) => path.Replace("\\", "\\\\", StringComparison.Ordinal);
 
-    /// <summary>Prompt 1: parametric parts as code → STEP → SolidWorks parts → assembly.</summary>
-    public static JobSpec CodeCad(string folder, string request, LaunchMode launch)
+    /// <summary>V18: the job of an action tile or CLI recipe (built in, or from a connector), or null when none has this id.</summary>
+    public static JobSpec? Recipe(string id, RecipeRequest request) => id switch
     {
-        string full = Path.GetFullPath(folder);
-        return new JobSpec
-        {
-            Kind = "codecad", Category = TaskCategory.Cad, Title = $"Parametric parts in {Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}",
-            Tools = CadTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = CadMaxTurns,
-            Prompt = $$"""
-                Design parametric parts for: {{request}}
-                Output folder: {{full}}
-                A. A single part described by its dimensions or features (plates, holes, bosses, ribs, fillets), or anything where the user
-                   wants design intent / to change dimensions later in SolidWorks: build it NATIVELY with swx_build_parametric_part
-                   (outputFolder "{{J(full)}}"). Make every size a global (mm) and position features with expressions of those globals
-                   (e.g. corner holes at "W/2-E"), so the part survives dimension changes. Check the returned report (no rebuild errors,
-                   holes at the right edge distances, features centred). If the user asks to change dimensions, call swx_set_part_globals
-                   and verify the report again. The part stays open in SolidWorks. Skip steps 1-3 below.
-                   Organic or styled shapes (vehicles, figurines, handles, housings, anything to 3D print) are also case A. Build them
-                   with curves, not boxes: draw sections with splines/outlines on offset planes (op plane + named sketches), loft them in
-                   order (add guide sketches to control the silhouette; a surface loft with guides stands in for a boundary surface),
-                   sweep a profile along a path for tubes and rims, revolve round parts, and use surface + knit + thicken for skins.
-                   For symmetric shapes build one half and mirror it. Finish with fillets (edgesNear picks specific edges) and cuts or
-                   extrudes for details. Keep ONE solid body with no thin walls (>= 1.5 mm). For a size limit set fitBoxMm and check
-                   the reported bounding box against it ("4 cubic inch box": assume a 4 in = 101.6 mm cube unless they say volume, and
-                   state the assumption). If a feature fails, read the log line, fix that feature and rebuild.
-                   When the request names a real object (a car model, a product, a character), it must be recognisable as THAT object,
-                   not a generic smooth shape. Work in a loop:
-                   1. Reference sheet first (in your answer): the real overall size (length, width, height in mm; web search if you can,
-                      else what you know) and 6-10 defining features with where they sit along the length (e.g. for a car: wheelbase and
-                      overhangs, nose shape, windscreen and roof position, side intakes, engine cover, rear wing, lights, wheel size).
-                   2. Build "<name>-v1" with referenceMm set to that size. Draw sections from the real proportions (positions as
-                      fractions of the length), not from guesses; add every defining feature as its own feature (cut, extrude, loft).
-                   3. Compare: look at the returned front, right, top and iso pictures (a car built along X shows its side profile in the front view) and the proportions check, feature by feature
-                      against the sheet. Write the differences as a short list.
-                   4. Rework and build "<name>-v2", "-v3"... (older versions are deleted automatically) until the proportions match and
-                      every defining feature is visible in the pictures, at most 6 versions. Finish with the checklist: each feature, done
-                      or approximated, and what still differs. Set exportStl true when the user wants to print it. Never assemble unrelated parts from the folder.
-                   Several parts that go together (a mechanism, a kit, "make the parts and mate them"): one job does it all, one tool
-                   call at a time. Build every part with swx_build_parametric_part (check each report), then call swx_part_cards on
-                   the output folder, then swx_build_assembly with only the parts you built and mates read from the cards
-                   (concentric for matching cylinders, coincident for opposed faces, default planes "front"/"top"/"right" to
-                   centre parts without matching faces), largest part fixed, saved under the assembly name the user asked for.
-                   A DXF/SVG drawing the user gives (logo, plate outline, gasket) becomes a profile shape "import" (path, width?) and
-                   is extruded or cut; lock: true keeps its exact shape. A 3D path (pipe, handlebar, wire) is op curve3d, then sweep.
-                   Existing SolidWorks files: swx_session shows what is open; swx_document_ops opens, saves, saves as or closes (never
-                   discard the user's unsaved work unless they say so); swx_export_neutral writes STEP/IGES/Parasolid/STL/3MF (PDF/DXF/DWG
-                   for drawings). swx_inspect_model reads any part or assembly (feature tree, dimensions, equations, properties, mass and
-                   material, configurations, the user's selection, BOM, mates, interference); swx_edit_model changes dimensions, globals,
-                   suppression, properties, material and configurations (left unsaved for review unless save: true); swx_create_drawing
-                   makes a drawing with views and dimensions; swx_capture_views shows you pictures of the model.
-                B. Otherwise (templated mechanical parts, assemblies):
-                1. Choose built-in templates in cad_generate_parametric_step (wheel_hub, brake_disc, coil_spring, strut_tube, control_arm,
-                   shaft, flange_bracket) with realistic millimetre parameters and an envelopeMm for each part. State any dimension you assume.
-                   Use cad_generate_custom_step only if no template fits; the user reviews that code.
-                2. Import the STEP files with swx_import_step (outputFolder "{{J(full)}}").
-                3. Read them with swx_part_cards and, if the user asked for an assembly, call swx_build_assembly with mates you are confident in.
-                Report every part with its bounding box, and which dimensions the user should check against real measurements.
-                """,
-        };
-    }
-
-    /// <summary>Prompt 2: a rough cut of the clips in a folder, as a Resolve-importable timeline.</summary>
-    public static JobSpec ResolveEdit(string folder, string request, LaunchMode launch)
-    {
-        string full = Path.GetFullPath(folder);
-        return new JobSpec
-        {
-            Kind = "resolve", Category = TaskCategory.Resolve, Title = $"Rough cut of {Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}",
-            Tools = ResolveTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = 25,
-            Prompt = $$"""
-                Edit the video clips in {{full}}: {{request}}
-                1. Call resolve_probe_clips with {"folder": "{{J(full)}}"}.
-                2. Plan a rough cut from file names, durations and the request: order, in/out points (seconds), dissolves where they help,
-                   music or B-roll on track 2 with timelineSec. Give each cut a short reason. You cannot see the footage: say so, and keep
-                   in/out points conservative.
-                3. Call resolve_export_timeline. The user reviews every cut.
-                4. Tell the user to import the .fcpxml in DaVinci Resolve (File > Import > Timeline). Only call resolve_apply_studio with
-                   run=true if the user said they use Resolve Studio with external scripting enabled.
-                """,
-        };
-    }
-
-    /// <summary>Prompt 3: an animated car scene in Blender.</summary>
-    public static JobSpec BlenderScene(string folder, string request, LaunchMode launch)
-    {
-        string full = Path.GetFullPath(folder);
-        return new JobSpec
-        {
-            Kind = "blender", Category = TaskCategory.Blender, Title = "Blender car scene",
-            Tools = BlenderTools, Roots = [full], WorkingDirectory = full, Launch = launch, MaxTurns = 15,
-            Prompt = $$"""
-                Create an animated Blender scene: {{request}}
-                Output folder: {{full}}
-                1. Translate the request into blender_build_car_scene parameters (road shape as roadPoints in metres, speed, duration, fps,
-                   camera offset, building count, style night or day, engine). Describe the look in your own words; do not copy any
-                   game's or brand's assets, logos or names into the scene.
-                2. Call blender_build_car_scene with outputFolder "{{J(full)}}".
-                3. If it saved a .blend, call blender_render_preview for a short low-resolution preview.
-                Report what was built and how to open it (Blender > File > Open).
-                """,
-        };
-    }
-
-    /// <summary>Prompt 5: tutoring from a textbook chapter, with exact arithmetic checks.</summary>
-    public static JobSpec Tutor(string? folder, string request, LaunchMode launch)
-    {
-        string? full = folder is null ? null : Path.GetFullPath(folder);
-        string work = full ?? Path.Combine(Path.GetTempPath(), "Mediator-chat");
-        Directory.CreateDirectory(work);
-        string source = full is null
-            ? "If the user attached PDFs or documents, read them and answer from them."
-            : $"Their documents (PDFs, notes) are in {full}; read them when the question is about them.";
-        return new JobSpec
-        {
-            Kind = "tutor", Category = TaskCategory.Tutor, Title = "Ask & learn",
-            Tools = TutorTools, Roots = full is null ? [] : [full], WorkingDirectory = work, Launch = launch, MaxTurns = 40,
-            Lifetime = TimeSpan.FromHours(4),
-            UserText = request,
-            Prompt = $$"""
-                Answer the user's question or teach them the topic they ask about, on any subject: {{request}}
-                {{source}} For a PDF, use tutor_extract_pdf_chapter on the pages that matter (ask for page numbers if unclear).
-                Be clear and direct. When teaching, go one idea at a time with a worked example, and offer a check question.
-                Before you state any matrix or linear-algebra result, or grade an answer that contains one, call tutor_verify_matrix
-                and use its exact result.
-                """,
-        };
-    }
+        "organize" => Organize(request.Folder!, request.Prompt.Length > 0 ? request.Prompt : "group by file type into Documents, Pictures, Archives, Installers", request.Launch),
+        "claude-terminal" => ClaudeCodeSession(request.Folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), request.Prompt),
+        _ => ConnectorCatalog.Recipe(id)?.Build(request),
+    };
 
     public static readonly string[] FileTools =
         [FilesToolProvider.PlanRules, FilesToolProvider.PlanMoves, FilesToolProvider.Execute, FilesToolProvider.Rollback, FilesToolProvider.Status];
-
-    public static string DefaultAssemblyPath(string folder) =>
-        Path.Combine(Path.GetFullPath(folder), string.Create(CultureInfo.InvariantCulture, $"Mediator-Assembly-{DateTime.Now:yyyyMMdd-HHmmss}.SLDASM"));
-
-    /// <summary>
-    /// The assembly file a request names ("...named Train_Master_Assembly.SLDASM", "save as C:\X\Car.sldasm"), placed in
-    /// <paramref name="folder"/> unless the request gives a full path; null when it names none.
-    /// </summary>
-    public static string? RequestedAssemblyPath(string? request, string folder)
-    {
-        var m = AssemblyFileName().Match(request ?? "");
-        if (!m.Success) return null;
-        string name = m.Groups["name"].Value;
-        string? dir = m.Groups["dir"].Success && m.Groups["dir"].Value.Length > 0 ? m.Groups["dir"].Value : null;
-        // A typed drive path ("D:\Out\") is already absolute: on Windows it is normalised, elsewhere kept as typed.
-        if (dir is not null && !OperatingSystem.IsWindows()) return dir + name;
-        try { return Path.GetFullPath(Path.Combine(dir ?? folder, name)); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return Path.Combine(Path.GetFullPath(folder), name); }
-    }
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"(?<dir>[A-Za-z]:\\(?:[^\\/:*?""<>|\r\n]+\\)*)?(?<name>[\w\-.]+\.sldasm)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
-    private static partial System.Text.RegularExpressions.Regex AssemblyFileName();
-
-    public static JobSpec Assemble(string folder, LaunchMode launch, string? outputPath = null)
-    {
-        string full = Path.GetFullPath(folder);
-        string output = Path.GetFullPath(outputPath ?? DefaultAssemblyPath(full));
-        var roots = new List<string> { full };
-        string outDir = Path.GetDirectoryName(output)!;
-        // The user chose the output folder; it becomes a second root unless it already lies inside the first.
-        if (!Mediator.Core.Security.PathSyntax.Current.IsSameOrInside(outDir, full)) roots.Add(outDir);
-        return new JobSpec
-        {
-            Kind = "assemble",
-            Category = TaskCategory.Cad,
-            Title = $"Assemble parts in {Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}",
-            Tools = CadTools,
-            Roots = roots,
-            WorkingDirectory = full,
-            Launch = launch,
-            MaxTurns = CadMaxTurns,
-            Prompt = $$"""
-                Create a new SolidWorks assembly from the part files in this folder: {{full}}
-                0. If the request needs parts that are not in the folder yet, build each one first with swx_build_parametric_part
-                   (outputFolder "{{J(full)}}", one call per part, checking each report), then continue with all the parts.
-                1. Call swx_part_cards with {"folder": "{{full.Replace("\\", "\\\\", StringComparison.Ordinal)}}"}.
-                2. From the cards (bounding boxes, cylinders, planes, mate references) work out how the parts fit together.
-                   Prefer concentric mates between cylinders of equal radius and coincident mates between opposed planes.
-                   To centre or align parts without matching faces (a cylinder on a block) mate their default planes: faceA/faceB
-                   "front", "top" or "right" (e.g. Coincident right-right and front-front centres the boiler on the chassis).
-                   A part used several times is one component per copy (key, position). Give every mate a confidence (0-1) and a one-line reason. Leave out mates you are unsure about.
-                3. Call swx_build_assembly once with outputPath "{{output.Replace("\\", "\\\\", StringComparison.Ordinal)}}" (or the assembly name
-                   the user asked for, in that folder), the first
-                   (largest) part fixed, and your mates. The user reviews and may untick mates before anything is built.
-                4. Report which mates were built, which failed, and what the user should check in SolidWorks.
-                Use only the mediator tools. Do not try to edit the part files.
-                """,
-        };
-    }
 
     public static JobSpec Organize(string folder, string criteria, LaunchMode launch)
     {

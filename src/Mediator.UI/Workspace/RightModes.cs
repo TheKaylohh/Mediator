@@ -310,7 +310,7 @@ public sealed class ActivityModeViewModel(WorkspaceViewModel workspace)
             sb.AppendLine(CultureInfo.InvariantCulture, $"{a.At.ToLocalTime():yyyy-MM-dd HH:mm:ss}\t{a.JobId}\t{a.Tool}\t{a.Phase}\t{a.Detail.ReplaceLineEndings(" ")}");
         try
         {
-            string dir = JobSpecFactory.DefaultOfficeFolder();
+            string dir = JobSpecFactory.MediatorDocumentsFolder();
             string file = Path.Combine(dir, $"activity-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
             File.WriteAllText(file, Mediator.Core.Security.Redactor.Redact(sb.ToString()));
             ExportText = "Saved " + file;
@@ -407,14 +407,13 @@ public sealed class SoftwareModeViewModel(WorkspaceViewModel workspace)
     public ObservableCollection<SoftwareGroup> Groups { get; } = new();
     private readonly List<SoftwareItem> _items = [];
 
-    /// <summary>Category, process name (routes the chat's tools), prompt prefix and what Mediator can do, per program id.</summary>
-    public static (string Category, string? Process, string? Prefix, string Capabilities) Describe(string id) => id switch
+    /// <summary>
+    /// Category, process name (routes the chat's tools), prompt prefix and what Mediator can do, per program id. V18: a
+    /// connector's programs describe themselves; the CLIs and Chrome are built in.
+    /// </summary>
+    public static (string Category, string? Process, string? Prefix, string Capabilities) Describe(string id) => Mediator.Core.Connectors.ConnectorCatalog.Program(id) is { } p
+        ? (p.Category, p.Process, p.PromptPrefix, p.Capabilities) : id switch
     {
-        "solidworks" => ("CAD", "sldworks", null, "build parametric parts and assemblies, read and change the open model, drawings, pictures, STEP/STL export"),
-        "resolve" => ("Creative", "resolve", null, "rough-cut timelines from a clips folder (FCPXML/EDL)"),
-        "blender" => ("Creative", "blender", null, "build a scene and render a preview"),
-        "word" or "excel" or "powerpoint" => ("Productivity", null, "/office ", "read and create Word, Excel and PowerPoint files"),
-        "outlook" => ("Productivity", null, "/outlook ", "search and read mail and calendar, save drafts (never sends)"),
         "chrome" => ("Other", null, "/chrome ", "read and act in your Chrome tabs"),
         "claude" or "claude-code" or "gemini" or "antigravity" => ("Development", null, "/code ", "coding jobs in a folder"),
         _ => ("Other", null, null, "open it from a chat"),

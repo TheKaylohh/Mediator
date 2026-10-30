@@ -58,7 +58,7 @@ static class SessionTests
         string folder = TempDir("parts");
         File.WriteAllText(Path.Combine(folder, "shaft.sldprt"), "p");
 
-        var first = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "cont-1" });
+        var first = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "cont-1" });
         Check.Equal(JobState.Succeeded, await first.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "first run succeeds");
         Check.True(ResumeArgument(launcher.Headless[0]) is null, "a fresh job has no --resume");
         Check.Equal(Session, first.SessionId, "session_id captured from the stream");
@@ -116,7 +116,7 @@ static class SessionTests
         // Not continuable: a killed run.
         await rt.Usage.SetCooldownAsync("claude-code", DateTimeOffset.UtcNow.AddSeconds(-1), "over");
         launcher.Script.Enqueue([Stream(Session), "gate=" + Path.Combine(TempDir("gate"), "never")]);
-        var killed = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "cont-k" });
+        var killed = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "cont-k" });
         rt.KillJob(killed.JobId, "test");
         Check.True(ContinuableSession.From(killed) is null && rt.LastContinuableSession?.JobId == "cont-2", "a killed run is not offered");
     }

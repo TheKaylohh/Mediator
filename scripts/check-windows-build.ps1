@@ -73,7 +73,7 @@ if (-not $SolidWorksInteropDir) {
 
 if ($RunVerifySuite) {
     Step 'Offline verification suite (MediatorVerify=true, stand-ins, no SolidWorks)'
-    foreach ($p in 'src\Mediator.Bridge', 'src\Mediator.SwxWorker', 'verify\stubs\SwxWorkerNoInterop', 'src\Mediator.CliHost', 'src\Mediator.Wpf', 'verify\tests\Mediator.Tests') {
+    foreach ($p in 'src\Mediator.Bridge', 'src\Connectors\SolidWorks\Worker', 'verify\stubs\SwxWorkerNoInterop', 'src\Mediator.CliHost', 'src\Mediator.Wpf', 'verify\tests\Mediator.Tests') {
         & dotnet build $p -nologo -v q -p:MediatorVerify=true -p:TreatWarningsAsErrors=true
         if ($LASTEXITCODE -ne 0) { throw "verify build failed: $p" }
     }
@@ -93,7 +93,7 @@ if ($SolidWorksInteropDir) { $common += "-p:SolidWorksInteropDir=$SolidWorksInte
 if ($CheckSolidWorks) { $common += '-p:MediatorRequireSolidWorks=true' }
 
 # V8: the worker is always built (with or without SolidWorks support).
-$projects = @('src\Mediator.Bridge', 'src\Mediator.CliHost', 'src\Mediator.SwxWorker')
+$projects = @('src\Mediator.Bridge', 'src\Mediator.CliHost', 'src\Connectors\SolidWorks\Worker')
 if (-not $SkipWpf) { $projects += 'src\Mediator.Wpf' }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

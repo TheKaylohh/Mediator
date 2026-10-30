@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: CATIA V5 (COM through Windows PowerShell). Built on its own and shipped in <app>\connectors\CATIA (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.CATIA</RootNamespace>
+    <AssemblyName>Mediator.Connector.CATIA</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The automation script, embedded; a copy in <data>\connectors\<id> overrides it without a rebuild. -->
+    <EmbeddedResource Include="Scripts\*.py;Scripts\*.ps1" LogicalName="Mediator.Cad.Scripts.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

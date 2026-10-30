@@ -202,13 +202,9 @@ public sealed class ConnectorsViewModel : ObservableObject
         _launcher = launcher ?? DefaultProcessLauncher.Instance;
         Clis.Add(new CliConnectorViewModel("claude", "Claude Code CLI", "Claude Pro", SignIn));
         Clis.Add(new CliConnectorViewModel("agy", "Antigravity CLI", "Google AI Pro", SignIn));
-        Apps.Add(new AppConnectorViewModel("solidworks", "SolidWorks", "Parts, assemblies, drawings, STEP import and export", "\uF158"));
-        Apps.Add(new AppConnectorViewModel("resolve", "DaVinci Resolve", "Video timelines from your clips", "\uE714"));
-        Apps.Add(new AppConnectorViewModel("blender", "Blender", "3D scenes and renders", "\uF158"));
-        Apps.Add(new AppConnectorViewModel("word", "Microsoft Word", "Open the documents Mediator writes", "\uE8A5"));
-        Apps.Add(new AppConnectorViewModel("excel", "Microsoft Excel", "Open the workbooks Mediator writes", "\uE80A"));
-        Apps.Add(new AppConnectorViewModel("powerpoint", "Microsoft PowerPoint", "Open the decks Mediator writes", "\uE8A1"));
-        Apps.Add(new AppConnectorViewModel("outlook", "Microsoft Outlook", "Search and read mail, write drafts, calendar", "\uE715"));
+        // V18: the desktop programs of the installed connectors.
+        foreach (var program in Mediator.Core.Connectors.ConnectorCatalog.Programs)
+            Apps.Add(new AppConnectorViewModel(program.Id, program.Name, program.Summary, program.Glyph));
         foreach (var (id, name, summary, glyph, ext, detail) in FileFormatCatalog)
         {
             var row = new AppConnectorViewModel(id, name, summary, glyph, ext) { Detail = detail, IsAvailable = true };
@@ -317,13 +313,7 @@ public sealed class ConnectorsViewModel : ObservableObject
             }
             foreach (var app in Apps)
             {
-                var status = app.Id switch
-                {
-                    "solidworks" => _probe.SolidWorks(),
-                    "resolve" => _probe.Resolve(),
-                    "blender" => _probe.Blender(),
-                    _ => _probe.Office(app.Id),
-                };
+                var status = _probe.App(app.Id);
                 _ui.Post(() => app.Apply(status));
             }
             _ui.Post(Browser.Update);

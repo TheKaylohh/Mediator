@@ -14,6 +14,8 @@ namespace Mediator.Wpf;
 /// the right sidebar. Layout lives in <see cref="WorkspaceViewModel"/>: this window only reports its width and forwards keys.
 /// Shortcuts: Ctrl+N new chat, Ctrl+K search chats, Ctrl+P palette, Ctrl+B left sidebar, Ctrl+Alt+B right sidebar,
 /// Ctrl+1..6 modes, Ctrl+Shift+C copy the last answer, Esc closes the palette or menus. Closing only hides the window.
+/// V18: a standalone app window: its own taskbar button and Alt+Tab entry, it reopens where it was, `Mediator.exe --workspace`
+/// (the "Mediator Workspace" shortcut) opens it directly, and while it is open the quick panel stays hidden.
 /// </summary>
 public partial class ChatWindow : Window
 {
@@ -42,19 +44,52 @@ public partial class ChatWindow : Window
             JumpToLatest.Visibility = ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset > 200 ? Visibility.Visible : Visibility.Collapsed;
         StateChanged += (_, _) => FitToWorkArea();
         Loaded += (_, _) => FitToWorkArea();
+        // V18: while this window is open the quick panel stays hidden (the hotkey and the tray bring this one forward).
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible) SavePlacement();
+            _vm.IsWorkspaceOpen = IsVisible;
+        };
 #if MEDIATOR_WEBVIEW
         bool attached = false;
         Loaded += async (_, _) => { if (!attached) { attached = true; await ChatRenderer.TryAttachAsync(ChatScroll, vm); } };
 #endif
     }
 
+    private bool _placed;
+
     public void Open()
     {
+        if (!_placed) RestorePlacement();
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Maximized;
         Activate();
         ScrollToEnd();
         FocusPrompt();
+    }
+
+    /// <summary>The first open goes where the window was last time (if that is still on a screen), else centred and maximized.</summary>
+    private void RestorePlacement()
+    {
+        _placed = true;
+        if (_ws.WindowPlacement is not { } b) return;
+        bool onScreen = b.Left + 100 < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth && b.Left + b.Width - 100 > SystemParameters.VirtualScreenLeft
+            && b.Top >= SystemParameters.VirtualScreenTop - 20 && b.Top + 40 < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight;
+        if (!onScreen) return;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        WindowState = WindowState.Normal;
+        Left = b.Left;
+        Top = b.Top;
+        Width = b.Width;
+        Height = b.Height;
+        if (b.Maximized) WindowState = WindowState.Maximized;
+    }
+
+    private void SavePlacement()
+    {
+        var r = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
+        if (r.IsEmpty || !double.IsFinite(r.Width)) return;
+        _ws.SaveWindowPlacement(new WindowBounds(r.Left, r.Top, r.Width, r.Height, WindowState == WindowState.Maximized));
     }
 
     // ── Window caption (the top bar) ────────────────────────────────────────────────────────────────

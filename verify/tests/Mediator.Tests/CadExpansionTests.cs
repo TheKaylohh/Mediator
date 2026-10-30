@@ -3,11 +3,16 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Cad;
-using Mediator.Core.Cad.Apps;
+using Mediator.Connectors.FreeCAD;
+using Mediator.Connectors.AutoCAD;
+using Mediator.Connectors.Inventor;
+using Mediator.Connectors.NX;
+using Mediator.Connectors.Creo;
+using Mediator.Connectors.CATIA;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -136,7 +141,7 @@ static class CadExpansionTests
     /// <summary>Every connector script: present, ASCII, compiles/parses, and handles every verb its tools call.</summary>
     public static void ScriptsAreSound()
     {
-        var apps = JobSpecFactory.OtherCadApps().Cast<ScriptCadApp>().ToList();
+        var apps = ConnectorCatalog.All.OfType<CadAppConnector>().Select(c => (ScriptCadApp)c.CreateApp(null)).ToList();
         foreach (var app in apps)
         {
             string script = app.LoadScript();
@@ -155,14 +160,14 @@ static class CadExpansionTests
                     Check.True(script.Contains($"'{op}'", StringComparison.Ordinal) || script.Contains($"\"{op}\"", StringComparison.Ordinal),
                         $"{app.DisplayName}: operation {op} ({cap}) is implemented in the script");
         }
-        Check.True(ScriptCadApp.LoadEmbedded("solidworks.ps1", null).Contains("ScriptBlock", StringComparison.Ordinal), "the SolidWorks script host is embedded");
+        Check.True(Embedded("solidworks.ps1").Contains("ScriptBlock", StringComparison.Ordinal), "the SolidWorks script host is embedded");
 
         string dir = TempDir("compile");
         if (Python() is { } py)
             foreach (var name in new[] { "freecad.py", "nx.py" })
             {
                 string f = Path.Combine(dir, name);
-                File.WriteAllText(f, ScriptCadApp.LoadEmbedded(name, null));
+                File.WriteAllText(f, Embedded(name));
                 var r = Run(py, "-I", "-c", $"import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())", f);
                 Check.True(r.Exit == 0, $"{name} is valid Python: {r.Output}");
             }
@@ -171,7 +176,7 @@ static class CadExpansionTests
         foreach (var name in new[] { "autocad.ps1", "inventor.ps1", "catia.ps1", "creo.ps1", "solidworks.ps1" })
         {
             string f = Path.Combine(dir, name);
-            File.WriteAllText(f, ScriptCadApp.LoadEmbedded(name, null));
+            File.WriteAllText(f, Embedded(name));
             var r = Run(pwsh, "-NoProfile", "-Command", "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('" + f +
                 "',[ref]$t,[ref]$e);if($e.Count){$e|ForEach-Object{$_.Message};exit 1}");
             Check.True(r.Exit == 0, $"{name} parses as PowerShell: {r.Output}");
@@ -199,12 +204,12 @@ static class CadExpansionTests
         }
         var env = new Dictionary<string, string?> { ["ProgramFiles"] = pf };
         var loc = new CadLocator(k => env.GetValueOrDefault(k), null, _ => null, windows: true);
-        Check.True(loc.Find(CadPrograms.AutoCad)?.Contains("AutoCAD 2025", StringComparison.Ordinal) == true, "the newest version folder is chosen");
-        Check.True(loc.Find(CadPrograms.Catia) is null, "a program that is not there is not found");
+        Check.True(loc.Find(AutoCadApp.Program)?.Contains("AutoCAD 2025", StringComparison.Ordinal) == true, "the newest version folder is chosen");
+        Check.True(loc.Find(CatiaApp.Program) is null, "a program that is not there is not found");
         string fc = Path.Combine(TempDir("fc"), "FreeCADCmd.exe");
         File.WriteAllText(fc, "");
         env["MEDIATOR_FREECAD"] = fc;
-        Check.Equal(fc, loc.Find(CadPrograms.FreeCad), "the override variable wins");
+        Check.Equal(fc, loc.Find(FreeCadApp.Program), "the override variable wins");
         string inv = TempDir("inv");
         Directory.CreateDirectory(Path.Combine(inv, "Bin"));
         File.WriteAllText(Path.Combine(inv, "Bin", "Inventor.exe"), "");
@@ -212,15 +217,15 @@ static class CadExpansionTests
             .Set(@"HKLM\" + DesktopAppLocator.UninstallKey + @"\inv", "InstallLocation", inv)
             .Set(@"HKLM\SOFTWARE\Classes\CATIA.Application\CLSID", "", "{x}");
         var loc2 = new CadLocator(k => env.GetValueOrDefault(k), reg, _ => null, windows: true);
-        Check.Equal(Path.Combine(inv, "Bin", "Inventor.exe"), loc2.Find(CadPrograms.Inventor), "Apps & features install location");
-        Check.True(loc2.ComRegistered(CadPrograms.Catia) && !loc2.ComRegistered(CadPrograms.AutoCad), "a registered COM class counts as installed");
+        Check.Equal(Path.Combine(inv, "Bin", "Inventor.exe"), loc2.Find(InventorApp.Program), "Apps & features install location");
+        Check.True(loc2.ComRegistered(CatiaApp.Program) && !loc2.ComRegistered(AutoCadApp.Program), "a registered COM class counts as installed");
         Check.True(new AutoCadApp(loc2).Unavailable() is { } why && why.Length > 0, "off Windows (or not installed) the connector says why, and its tools are never run");
     }
 
     public static void RoutingToTheNewPrograms()
     {
-        var saved = JobSpecFactory.SolidWorksOpen;
-        JobSpecFactory.SolidWorksOpen = () => false;
+        var saved = SolidWorksConnector.SolidWorksOpen;
+        SolidWorksConnector.SolidWorksOpen = () => false;
         try
         {
             foreach (var (prompt, prefix) in new[]
@@ -237,10 +242,18 @@ static class CadExpansionTests
             Check.True(JobSpecFactory.InferToolsAndCategory("help", "acad").Tools.Any(t => t.StartsWith("acad_", StringComparison.Ordinal)), "AutoCAD in front → its tools");
             Check.True(JobSpecFactory.WithCurrentToolset(["fc_session"]).Contains("fc_model_features"), "a saved chat with one FreeCAD tool gets them all");
         }
-        finally { JobSpecFactory.SolidWorksOpen = saved; }
-        Check.True(SolidWorksCadApp.ToolNames.All(JobSpecFactory.CadTools.Contains), "every SolidWorks tool is in CAD jobs");
+        finally { SolidWorksConnector.SolidWorksOpen = saved; }
+        Check.True(SolidWorksCadApp.ToolNames.All(SolidWorksConnector.Tools.Contains), "every SolidWorks tool is in CAD jobs");
         var swx = new CadAppToolProvider(new SolidWorksCadApp());
         Check.True(swx.ToolNames.Contains("swx_sketch") && swx.ToolNames.Contains("swx_model_features") && swx.ToolNames.Contains("swx_run_script") && !swx.ToolNames.Contains("swx_simulate"),
             "SolidWorks: sketch, features, assembly, annotate and script tools (simulation through scripts)");
     }
+    /// <summary>V18: each connector embeds its own script.</summary>
+    private static string Embedded(string name) => ScriptCadApp.LoadEmbedded(name switch
+    {
+        "freecad.py" => typeof(FreeCadApp).Assembly, "nx.py" => typeof(NxApp).Assembly, "autocad.ps1" => typeof(AutoCadApp).Assembly,
+        "inventor.ps1" => typeof(InventorApp).Assembly, "catia.ps1" => typeof(CatiaApp).Assembly, "creo.ps1" => typeof(CreoApp).Assembly,
+        _ => typeof(Mediator.Connectors.SolidWorks.SolidWorksCadApp).Assembly,
+    }, name, null);
+
 }

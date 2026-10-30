@@ -2,6 +2,17 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V18: connectors as plug-ins, the full-screen app, light and dark themes (2026-10-30)
+
+Details and the Windows checklist: [docs/v18/RELEASE_NOTES.md](docs/v18/RELEASE_NOTES.md); the connector architecture: [docs/v18/CONNECTORS.md](docs/v18/CONNECTORS.md).
+
+- **Connectors are plug-in pieces**: SolidWorks (with its worker and scripts), FreeCAD, AutoCAD, Inventor, NX, Creo, CATIA, Parts from code, CAD files, Office, Resolve, Blender and Tutor each live in `src/Connectors/<Name>`, build to `<app>\connectors\<Name>` and are loaded at start-up; the core references none of them. Tiles, routing, the Connectors tab, the Software Library, attachments, `mediator-cli doctor` and CLI recipes all come from the installed connectors. New `mediator-cli connectors`.
+- **The full screen is a standalone app**: own taskbar entry, reopens where it was, "Mediator Workspace" shortcut (`Mediator.exe --workspace`); a second start hands over to the running Mediator.
+- **The quick panel and the full screen are never open together**: the hotkey and tray bring the full screen forward while it is open.
+- **New Dark (default) and Light themes** with a light/dark toggle in both windows; the old themes are kept in `Themes/Legacy`.
+- 9 new tests (177; 166 run here, all pass).
+- The SolidWorks worker no longer references Mediator.Protocol (it compiles in the one file it used), which also fixes a `-warnaserror` build without SolidWorks.
+
 ## V17: CAD co-pilot expansion (2026-10-30)
 
 Details, coverage per program and the Windows checklist: [docs/v17/CAD_EXPANSION.md](docs/v17/CAD_EXPANSION.md).

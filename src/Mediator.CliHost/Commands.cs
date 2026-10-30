@@ -8,7 +8,7 @@ using Mediator.Core.Diagnostics;
 using Mediator.Core.Files;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Core.Connectors;
 using Mediator.Core.Tools;
 
 namespace Mediator.CliHost;
@@ -34,7 +34,9 @@ public static class Commands
               mediator-cli resolve  <folder> --request "60 s teaser, music under"            (FCPXML + EDL for DaVinci Resolve)
               mediator-cli blender  <folder> --request "red car through a neon city"        (scene .blend + preview frames)
               mediator-cli tutor    <folder> --request "chapter 3, pages 41-58"              (study pack + exact matrix checks)
-              mediator-cli matrix   "[[2,1,1],[1,2,1],[1,1,2]]" [--b "<matrix>"]            (exact det/inverse/RREF/eigenvalues; no AI)
+              mediator-cli connectors                                                  (the installed connectors and their tools)
+            """ + string.Concat(ConnectorCatalog.All.SelectMany(c => c.Commands).Select(c => "\n  " + c.Usage)) + """
+
 
             Common options
               --simulate         use a simulated SolidWorks (no COM; builds write <output>.simulated.json)
@@ -64,6 +66,9 @@ public static class Commands
         var paths = cli.Get("data-dir") is { } dir ? new MediatorPaths(Path.GetFullPath(dir)) : MediatorPaths.Default();
         ComponentCommand? Locate(string name, string? path) =>
             path is null ? null : ComponentLocator.Find(name, path) ?? throw new UsageException($"{path} not found.");
+        // V18: the SolidWorks connector reads the worker path from the environment (the CLI does not know the connector).
+        if (cli.Get("worker") is { } worker && Locate("mediator-swx-worker", worker) is not null)
+            Environment.SetEnvironmentVariable("MEDIATOR_SWX_WORKER", Path.GetFullPath(worker));
         return new RuntimeOptions
         {
             Paths = paths,
@@ -71,10 +76,9 @@ public static class Commands
             // Each job's MCP config carries the endpoint, so nothing else needs to know the name.
             Bus = new BusOptions { PipeName = string.Create(CultureInfo.InvariantCulture, $"mediator-cli-{Environment.ProcessId}") },
             Bridge = Locate(ComponentLocator.Bridge, cli.Get("bridge")),
-            SwxWorker = Locate(ComponentLocator.SwxWorker, cli.Get("worker")),
             ClaudeExecutable = cli.Get("claude"),
             GeminiExecutable = cli.Get("agy"),
-            SwxBackend = cli.Has("simulate") ? new SimulatedSwxBackend() : null,
+            Simulate = cli.Has("simulate"),
             Log = new StderrLog("mediator"),
         };
     }
@@ -194,7 +198,7 @@ public static class Commands
         if (!Directory.Exists(folder)) throw new UsageException($"{folder} is not a folder.");
         if (cli.Has("headless") && cli.Has("interactive")) throw new UsageException("Choose --headless or --interactive, not both.");
         var launch = cli.Has("interactive") ? LaunchMode.Interactive : LaunchMode.Headless;
-        return RunModelJobAsync(cli, JobSpecFactory.Assemble(folder, launch, cli.Get("output")));
+        return RunModelJobAsync(cli, Recipe("assemble", new RecipeRequest(folder, "", launch, cli.Get("output"))));
     }
 
     // ── cad / resolve / blender / tutor ──────────────────────────────────────────────────────────────
@@ -206,52 +210,35 @@ public static class Commands
         string request = cli.Get("request") ?? throw new UsageException("Say what you want with --request \"...\".");
         if (cli.Has("headless") && cli.Has("interactive")) throw new UsageException("Choose --headless or --interactive, not both.");
         var launch = cli.Has("interactive") ? LaunchMode.Interactive : LaunchMode.Headless;
-        var spec = cli.Command switch
-        {
-            "cad" => JobSpecFactory.CodeCad(folder, request, launch),
-            "resolve" => JobSpecFactory.ResolveEdit(folder, request, launch),
-            "blender" => JobSpecFactory.BlenderScene(folder, request, launch),
-            _ => JobSpecFactory.Tutor(folder, request, launch),
-        };
-        return RunModelJobAsync(cli, spec);
+        return RunModelJobAsync(cli, Recipe(cli.Command == "cad" ? "codecad" : cli.Command, new RecipeRequest(folder, request, launch)));
     }
 
-    // ── matrix (deterministic) ───────────────────────────────────────────────────────────────────────
+    /// <summary>V18: a connector's recipe, or a usage error naming the missing connector.</summary>
+    private static JobSpec Recipe(string id, RecipeRequest request) => JobSpecFactory.Recipe(id, request)
+        ?? throw new UsageException($"'{id}' needs a connector that is not installed (see `mediator-cli connectors`).");
 
-    public static int Matrix(CliArgs cli)
+    // ── connectors ───────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>V18: what is installed: each connector, its folder's tools, recipes and programs.</summary>
+    public static int Connectors(CliArgs cli)
     {
-        string a = cli.RequirePositional(0, "a matrix, e.g. \"[[2,1],[1,2]]\"");
-        try
+        if (cli.Has("json")) { Console.WriteLine(ConnectorCatalog.Describe().ToJsonString(new JsonSerializerOptions { WriteIndented = true })); return 0; }
+        if (ConnectorCatalog.All.Count == 0) Console.WriteLine("No connectors are installed (the connectors folder next to mediator-cli is missing or empty).");
+        foreach (var c in ConnectorCatalog.All)
         {
-            using var docA = JsonDocument.Parse(a);
-            var A = Mediator.Core.Tutor.ExactMatrix.From(docA.RootElement);
-            Console.WriteLine($"A is {A.Rows}×{A.Cols}, rank {A.Rank}");
-            var (rref, pivots, det) = A.Reduce();
-            if (det is { } d) Console.WriteLine($"det(A) = {d}");
-            Console.WriteLine("rref(A) = " + rref.ToJson().ToJsonString());
-            if (A.IsSquare)
-            {
-                Console.WriteLine(A.Inverse() is { } inv ? "A⁻¹ = " + inv.ToJson().ToJsonString() : "A is singular (no inverse).");
-                if (A.Rows <= 8)
-                {
-                    var cp = A.CharacteristicPolynomial();
-                    Console.WriteLine("det(λI − A) coefficients = " + string.Join(", ", cp));
-                    Console.WriteLine("eigenvalues ≈ " + string.Join(", ", Mediator.Core.Tutor.ExactMatrix.NumericRoots(cp).Select(r =>
-                        Math.Abs(r.Imaginary) < 1e-9 ? r.Real.ToString("0.######", CultureInfo.InvariantCulture)
-                            : string.Create(CultureInfo.InvariantCulture, $"{r.Real:0.######}{(r.Imaginary < 0 ? "-" : "+")}{Math.Abs(r.Imaginary):0.######}i"))));
-                }
-            }
-            if (cli.Get("b") is { } b)
-            {
-                using var docB = JsonDocument.Parse(b);
-                Console.WriteLine("A·B = " + A.Multiply(Mediator.Core.Tutor.ExactMatrix.From(docB.RootElement)).ToJson().ToJsonString());
-            }
-            return 0;
+            Console.WriteLine($"{c.DisplayName} ({c.Id}, {c.Category}): {c.Summary}");
+            Console.WriteLine($"    tools: {string.Join(", ", c.ChatTools)}");
+            if (c.Recipes.Count > 0) Console.WriteLine($"    actions: {string.Join(", ", c.Recipes.Select(r => r.Id))}");
+            if (c.Programs.Count > 0) Console.WriteLine($"    programs: {string.Join(", ", c.Programs.Select(p => p.Name))}");
         }
-        catch (Exception ex) when (ex is JsonException or FormatException)
-        {
-            throw new UsageException(ex.Message);
-        }
+        return 0;
+    }
+
+    /// <summary>V18: a command a connector added (`matrix`).</summary>
+    public static int ConnectorCommand(ConnectorCommand command, CliArgs cli)
+    {
+        try { return command.Run(cli.Positional, cli.Get); }
+        catch (ArgumentException ex) { throw new UsageException(ex.Message); }
     }
 
     // ── organize ──────────────────────────────────────────────────────────────────────────────────────
@@ -317,7 +304,7 @@ public static class Commands
     public static async Task<int> RollbackAsync(CliArgs cli)
     {
         string jobId = cli.RequirePositional(0, "<jobId>");
-        var options = Options(cli) with { SwxBackend = new SimulatedSwxBackend() }; // rollback never needs SolidWorks
+        var options = Options(cli) with { Simulate = true }; // rollback never needs SolidWorks
         await using var runtime = await MediatorRuntime.CreateAsync(options);
 
         var batches = await runtime.Journal.ListBatchesAsync(jobId);
@@ -419,11 +406,9 @@ public static class Commands
             runtime = await MediatorRuntime.CreateAsync(Options(cli));
             Add("state folder", "ok", runtime.Paths.DataDirectory);
             Add("bus", "ok", runtime.Bus.PipeEndpoint.ToString());
-            // V16.1: every SolidWorks tool a CAD chat is given must be registered (an old build lacks the V16 ones).
-            var missing = JobSpecFactory.CadTools.Where(t => !runtime.Tools.TryGet(t, out _, out _)).ToList();
-            Add("SolidWorks tools", missing.Count == 0 ? "ok" : "fail", missing.Count == 0
-                ? $"{JobSpecFactory.CadTools.Count(t => t.StartsWith("swx_", StringComparison.Ordinal))} swx_ tools registered (inspect, edit, drawing, views, documents, export, parts, assemblies)"
-                : "not registered: " + string.Join(", ", missing));
+            Add("connectors", ConnectorCatalog.All.Count > 0 ? "ok" : "warn", ConnectorCatalog.All.Count > 0
+                ? $"{ConnectorCatalog.All.Count} installed: {string.Join(", ", ConnectorCatalog.All.Select(c => c.DisplayName))}"
+                : "none installed: Mediator answers chats but drives no program (the connectors folder next to mediator-cli is missing)");
             var tray = RunningInstance.Read(runtime.Paths.DataDirectory);
             if (tray is not null && !tray.IsThisBuild && System.Diagnostics.Process.GetProcesses().Any(p => p.Id == tray.ProcessId))
                 Add("overlay", "warn", $"the Mediator in the tray is a different build ({RunningInstance.Describe(tray)}); quit it from the tray and start this build's Mediator.exe");
@@ -449,28 +434,18 @@ public static class Commands
                     await BridgeSelfTestAsync(runtime, Add);
                 }
 
-                if (cli.Has("simulate") || cli.Has("check-swx"))
+                // V18: each installed connector checks itself (its tools, its program, its helpers).
+                foreach (var connector in ConnectorCatalog.All)
                 {
-                    try
-                    {
-                        var health = await runtime.Swx.CallAsync("health", new JsonObject(), TimeSpan.FromSeconds(90), CancellationToken.None);
-                        Add("SolidWorks", "ok", health?.ToString() ?? "?");
-                    }
-                    catch (Exception ex) when (ex is SwxWorkerException or InvalidOperationException or System.ComponentModel.Win32Exception)
-                    {
-                        Add("SolidWorks", "fail", ex.Message);
-                    }
-                }
-                else
-                {
-                    var worker = cli.Get("worker") is { } w ? ComponentLocator.Find(ComponentLocator.SwxWorker, w) : ComponentLocator.Find(ComponentLocator.SwxWorker);
-                    Add("SolidWorks worker", worker is null ? "warn" : "ok", worker?.Display ?? "mediator-swx-worker not found (SolidWorks jobs will fail). Build src/Mediator.SwxWorker on Windows.");
+                    var instance = runtime.ConnectorInstances.FirstOrDefault(i => ReferenceEquals(i.Connector, connector));
+                    foreach (var c in await connector.DoctorAsync(instance, cli.Has("simulate") || cli.Has("check-swx"), CancellationToken.None))
+                        Add(c.Name, c.Status, c.Detail);
                 }
             }
         }
 
         if (OperatingSystem.IsWindows()) WindowsChecks(Add);
-        else Add("SolidWorks install", "warn", "not Windows: SolidWorks, WSL and Windows Sandbox checks skipped");
+        else Add("Windows checks", "warn", "not Windows: WSL and Windows Sandbox checks skipped");
 
         string? claude = cli.Get("claude") ?? CliLaunchBuilder.ResolveOnPath("claude");
         if (claude is null) Add("Claude Code", "fail", "claude not on PATH. Install Claude Code, then run `claude` once and /login with your Pro account.");
@@ -507,7 +482,7 @@ public static class Commands
         return checks.Any(c => c.Status == "fail") ? 1 : 0;
     }
 
-    /// <summary>The programs the V5 tools call: Python modules, Blender, ffmpeg, Resolve's scripting folder.</summary>
+    /// <summary>Python and the modules the connectors' scripts use (Blender, ffmpeg and Resolve are checked by their connectors).</summary>
     private static async Task HelperChecksAsync(Action<string, string, string> add)
     {
         var python = LocalPythonRunner.Detect();
@@ -525,18 +500,6 @@ public static class Commands
                     add("  " + module, (bool?)found?[module] == true ? "ok" : "warn", (bool?)found?[module] == true ? "installed" : "missing: " + purpose);
             }
             finally { File.Delete(probe); }
-        }
-        var blender = BlenderRunner.Detect();
-        add("Blender", blender.IsAvailable ? "ok" : "warn", blender.IsAvailable ? blender.Describe : blender.Describe + " — scenes are written as scripts only");
-        add("ffprobe / ffmpeg", ToolLocator.Ffprobe() is not null ? "ok" : "warn", ToolLocator.Ffprobe() is not null
-            ? $"{ToolLocator.Ffprobe()} / {ToolLocator.Ffmpeg() ?? "(no ffmpeg: no preview MP4)"}"
-            : "not on PATH — clip probing uses the built-in MP4/MOV/WAV reader; no preview MP4");
-        if (OperatingSystem.IsWindows())
-        {
-            string api = Mediator.Core.Resolve.ResolveScript.Environment().GetValueOrDefault("RESOLVE_SCRIPT_API") ?? "";
-            add("Resolve scripting", Directory.Exists(api) ? "ok" : "warn", Directory.Exists(api)
-                ? api + " (external scripting needs Resolve Studio with Preferences > General > External scripting: Local)"
-                : "DaVinci Resolve not found — timelines are still exported as FCPXML/EDL");
         }
     }
 
@@ -613,19 +576,6 @@ public static class Commands
     [SupportedOSPlatform("windows")]
     private static void WindowsChecks(Action<string, string, string> add)
     {
-        using (var clsid = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"SldWorks.Application\CLSID"))
-            add("SolidWorks COM", clsid is null ? "warn" : "ok", clsid is null ? "SldWorks.Application is not registered (SolidWorks not installed?)" : $"SldWorks.Application → {clsid.GetValue(null)}");
-
-        // V8: installations found through the registry and the standard folders, not just PATH.
-        foreach (var app in new[] { DesktopApp.SolidWorks, DesktopApp.Resolve, DesktopApp.Blender })
-        {
-            var install = ComponentLocator.FindDesktopApp(app);
-            add($"{DesktopAppLocator.DisplayName(app)} install", install is null ? "warn" : "ok", DesktopAppLocator.Default.Summary(app));
-        }
-
-        string? redist = SolidWorksInteropDirectory();
-        add("SolidWorks interop", redist is null ? "warn" : "ok", redist ?? "api\\redist not found: mediator-swx-worker is built without SolidWorks support and reports \"SolidWorks assemblies not installed on this machine\"");
-
         string system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
         add("WSL", File.Exists(Path.Combine(system32, "wsl.exe")) ? "ok" : "warn", File.Exists(Path.Combine(system32, "wsl.exe")) ? "wsl.exe present" : "wsl.exe not found (Linux isolation unavailable)");
         add("Windows Sandbox", File.Exists(Path.Combine(system32, "WindowsSandbox.exe")) ? "ok" : "warn",
@@ -633,12 +583,4 @@ public static class Commands
         string? wt = CliLaunchBuilder.ResolveOnPath("wt");
         add("Windows Terminal", wt is null ? "warn" : "ok", wt ?? "wt.exe not found: interactive jobs open a plain PowerShell window");
     }
-
-    /// <summary>
-    /// &lt;SolidWorks folder&gt;\api\redist with the interop assemblies, newest install first (HKLM\SOFTWARE\SolidWorks\SOLIDWORKS
-    /// &lt;year&gt;\Setup, the COM registration, Apps &amp; features, the default folder; see DesktopAppLocator).
-    /// </summary>
-    [SupportedOSPlatform("windows")]
-    public static string? SolidWorksInteropDirectory() =>
-        DesktopAppLocator.Default.FindAll(DesktopApp.SolidWorks).Select(i => i.InteropDirectory).FirstOrDefault(d => d is not null);
 }

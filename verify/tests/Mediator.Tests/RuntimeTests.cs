@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -22,7 +22,8 @@ static class RuntimeTests
             Paths = new MediatorPaths(TempDir()),
             Bus = new BusOptions { PipeName = "mediator-rt-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = swx,
+            Simulate = true,
+            Connectors = TestConnectors.All(swx: swx),
         });
         runtime.Approvals.Target = prompt;
         return runtime;
@@ -69,7 +70,7 @@ static class RuntimeTests
         runtime.ToolCallActivity += e => { lock (activity) activity.Add(e); };
 
         string output = Path.Combine(parts, "out.SLDASM");
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(parts, LaunchMode.None, output) with { JobId = "asm-it" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(parts, LaunchMode.None, output) with { JobId = "asm-it" });
         Check.Equal(JobState.Running, job.State, "job running");
         Check.True(File.Exists(job.Workspace.ClaudeMcpConfigPath), "MCP config written");
 
@@ -77,7 +78,7 @@ static class RuntimeTests
         {
             var tools = await client.ListToolsAsync();
             // V10: an assembly job may build missing parts first, so it sees the whole CAD toolset (and nothing else).
-            var expected = JobSpecFactory.CadTools.Append("mediator_operation_status").Order(StringComparer.Ordinal);
+            var expected = SolidWorksConnector.Tools.Append("mediator_operation_status").Order(StringComparer.Ordinal);
             Check.True(tools.OrderBy(t => t, StringComparer.Ordinal).SequenceEqual(expected), "only the CAD tools (+ operation status) are visible: " + string.Join(",", tools));
 
             var cards = await client.CallToolAsync("swx_part_cards", new JsonObject { ["folder"] = parts }, TimeSpan.FromSeconds(30));
@@ -128,7 +129,7 @@ static class RuntimeTests
         File.WriteAllText(housing, "p");
         var prompt = new HangingPrompt();
         await using var runtime = await Runtime(bridgeDll, prompt, new SimulatedSwxBackend());
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(parts, LaunchMode.None, Path.Combine(parts, "k.SLDASM")) with { JobId = "kill-it" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(parts, LaunchMode.None, Path.Combine(parts, "k.SLDASM")) with { JobId = "kill-it" });
         await using var client = await runtime.ConnectClientAsync(job);
         await client.CallToolAsync("swx_part_cards", new JsonObject { ["paths"] = new JsonArray(shaft, housing) }, TimeSpan.FromSeconds(30));
 

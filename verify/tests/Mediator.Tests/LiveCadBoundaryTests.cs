@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
-using Mediator.Core.CadCode;
+using Mediator.Connectors.PartsFromCode;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.Core.Tools;
 
 namespace Mediator.Tests;
@@ -38,11 +38,11 @@ static class LiveCadBoundaryTests
             Paths = new MediatorPaths(Path.Combine(folder, "data")),
             Bus = new BusOptions { PipeName = "mediator-lcad-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
             Python = new LocalPythonRunner(LiveTests.Python, [], DefaultProcessRunner.Instance),
         });
         runtime.Approvals.Target = new AutoApprovalPrompt(ToolRisk.Destructive);
-        var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "bounds", LaunchMode.None) with { JobId = "live-bounds" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "bounds", LaunchMode.None) with { JobId = "live-bounds" });
         await using var client = await runtime.ConnectClientAsync(job);
 
         var rng = new Random(20261023);

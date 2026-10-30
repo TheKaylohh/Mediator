@@ -96,9 +96,10 @@ static partial class XamlChecker
         var themes = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal); // theme → key → kind
         foreach (var name in themeNames)
         {
-            string path = Path.Combine(wpfFolder, "Themes", name + ".xaml");
-            if (!docs.TryGetValue(path, out var doc)) { errors.Add($"Themes/{name}.xaml is missing (MediatorTheme.{name})"); continue; }
-            if (doc.Root!.Name.LocalName != "ResourceDictionary") { errors.Add($"Themes/{name}.xaml: root must be a ResourceDictionary"); continue; }
+            string rel = ThemePath(name);
+            string path = Path.Combine([wpfFolder, .. rel.Split('/')]);
+            if (!docs.TryGetValue(path, out var doc)) { errors.Add($"{rel} is missing (MediatorTheme.{name})"); continue; }
+            if (doc.Root!.Name.LocalName != "ResourceDictionary") { errors.Add($"{rel}: root must be a ResourceDictionary"); continue; }
             var keys = new Dictionary<string, string>(StringComparer.Ordinal);
             var defined = new HashSet<string>(StringComparer.Ordinal);
             foreach (var el in doc.Root.Descendants())
@@ -107,11 +108,11 @@ static partial class XamlChecker
                     foreach (Match m in StaticResource().Matches(attr.Value))
                     {
                         resources++;
-                        if (!defined.Contains(m.Groups[1].Value)) errors.Add($"Themes/{name}.xaml:{Line(el)} StaticResource '{m.Groups[1].Value}' is not defined earlier in the theme");
+                        if (!defined.Contains(m.Groups[1].Value)) errors.Add($"{rel}:{Line(el)} StaticResource '{m.Groups[1].Value}' is not defined earlier in the theme");
                     }
                 if (el.Parent == doc.Root && el.Attribute(X + "Key") is { } k)
                 {
-                    if (!keys.TryAdd(k.Value, KindOf(el))) errors.Add($"Themes/{name}.xaml:{Line(el)} key '{k.Value}' is defined twice");
+                    if (!keys.TryAdd(k.Value, KindOf(el))) errors.Add($"{rel}:{Line(el)} key '{k.Value}' is defined twice");
                     defined.Add(k.Value);
                 }
             }
@@ -121,7 +122,7 @@ static partial class XamlChecker
         foreach (var (name, keys) in themes)
         {
             foreach (var missing in themeKeys.Where(k => !keys.ContainsKey(k)).OrderBy(k => k, StringComparer.Ordinal))
-                errors.Add($"Themes/{name}.xaml does not define '{missing}' (another theme does)");
+                errors.Add($"{ThemePath(name)} does not define '{missing}' (another theme does)");
             foreach (var (key, kind) in keys)
                 foreach (var (other, otherKeys) in themes)
                     if (string.CompareOrdinal(name, other) < 0 && otherKeys.TryGetValue(key, out var otherKind) && otherKind != kind)
@@ -310,7 +311,7 @@ static partial class XamlChecker
                 if (!uri.StartsWith("pack://application:,,,/", StringComparison.Ordinal)) { errors.Add($"ThemeSources.PackUri({name}) = '{uri}' is not absolute"); continue; }
                 if (ResolvePack(uri, $"ThemeSources.PackUri({name})") is { } file &&
                     (!docs.TryGetValue(file, out var doc) || doc.Root!.Name.LocalName != "ResourceDictionary" || Path.GetFileNameWithoutExtension(file) != name))
-                    errors.Add($"ThemeSources.PackUri({name}) does not point at Themes/{name}.xaml");
+                    errors.Add($"ThemeSources.PackUri({name}) does not point at {ThemePath(name)}");
             }
         }
 
@@ -340,20 +341,23 @@ static partial class XamlChecker
         }
 
         // Loose fallback: copied next to the exe, and loadable without compilation.
-        if (!Regex.IsMatch(csproj, @"Include=""[^""]*Themes\\\*\.xaml""") || !csproj.Contains("DestinationFolder=\"$(OutDir)Themes\"", StringComparison.Ordinal) ||
-            !csproj.Contains("DestinationFolder=\"$(PublishDir)Themes\"", StringComparison.Ordinal))
-            errors.Add("Mediator.Wpf.csproj does not copy Themes\\*.xaml to the build and publish output (ThemeManager's loose fallback)");
+        if (!Regex.IsMatch(csproj, @"Include=""[^""]*Themes\\\*\*\\\*\.xaml""") || !csproj.Contains("'$(OutDir)Themes\\%(RecursiveDir)", StringComparison.Ordinal) ||
+            !csproj.Contains("'$(PublishDir)Themes\\%(RecursiveDir)", StringComparison.Ordinal))
+            errors.Add("Mediator.Wpf.csproj does not copy Themes\\**\\*.xaml to the build and publish output (ThemeManager's loose fallback)");
         if (Regex.IsMatch(csproj, @"<Page\s+Remove=""[^""]*Themes", RegexOptions.IgnoreCase))
             errors.Add("Mediator.Wpf.csproj removes Themes from Page: the dictionaries would not be compiled into the assembly");
         foreach (var name in themeNames)
         {
-            if (!docs.TryGetValue(Path.Combine(wpfFolder, "Themes", name + ".xaml"), out var doc)) continue;
-            if (doc.Root!.Attribute(X + "Class") is not null) errors.Add($"Themes/{name}.xaml has x:Class: it could not be loaded loose");
+            if (!docs.TryGetValue(Path.Combine([wpfFolder, .. ThemePath(name).Split('/')]), out var doc)) continue;
+            if (doc.Root!.Attribute(X + "Class") is not null) errors.Add($"{ThemePath(name)} has x:Class: it could not be loaded loose");
             foreach (var ns in doc.Root.Attributes().Where(at => at.IsNamespaceDeclaration && at.Value.StartsWith("clr-namespace:", StringComparison.Ordinal) && !at.Value.Contains(";assembly=", StringComparison.Ordinal)))
-                errors.Add($"Themes/{name}.xaml: xmlns {ns.Value} has no ;assembly=, so the loose fallback could not load it");
+                errors.Add($"{ThemePath(name)}: xmlns {ns.Value} has no ;assembly=, so the loose fallback could not load it");
         }
         return count;
     }
+
+    /// <summary>V18: "Themes/Dark.xaml", "Themes/Legacy/HoloHud.xaml" (from ThemeSources, as the app loads them).</summary>
+    static string ThemePath(string name) => Mediator.UI.ThemeSources.RelativePath(Enum.Parse<Mediator.UI.MediatorTheme>(name));
 
     /// <summary>Type names that legitimately appear before .BeginAnimation and friends in code-behind.</summary>
     static bool IsKnownType(string s) => s is "RotateTransform" or "ScaleTransform" or "UIElement" or "Keyboard" or "FocusManager";

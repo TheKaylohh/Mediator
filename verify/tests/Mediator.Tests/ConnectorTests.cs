@@ -274,8 +274,8 @@ static class ConnectorTests
         Check.Equal(CredentialState.FilePresent, probe.Credentials("claude"), "credential file found without reading it");
         Check.True(probe.CredentialFile("agy").EndsWith(Path.Combine(".gemini", "antigravity-cli", "cache", "onboarding.json"), StringComparison.Ordinal), "agy sign-in record path");
 
-        Check.True(!probe.SolidWorks().Available && !probe.Resolve().Available, "Windows-only apps unavailable on Linux");
-        Check.True(!probe.Blender().Available, "blender missing");
+        Check.True(!probe.App("solidworks").Available && !probe.App("resolve").Available, "Windows-only apps unavailable on Linux");
+        Check.True(!probe.App("blender").Available, "blender missing");
 
         Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-test-not-real");
         try

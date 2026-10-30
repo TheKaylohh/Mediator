@@ -40,17 +40,20 @@ public abstract class ScriptCadApp(string? overrideFolder = null) : ICadApp
     public Task EnsureReadyAsync(CancellationToken ct) => Task.CompletedTask;
 
     /// <summary>The connector's script: the override file when there is one, else the embedded copy.</summary>
-    public string LoadScript() => LoadEmbedded(ScriptName, overrideFolder);
+    public string LoadScript() => LoadEmbedded(GetType().Assembly, ScriptName, overrideFolder);
 
-    /// <summary>A connector script: <paramref name="overrideFolder"/>/<paramref name="name"/> when present, else the embedded copy.</summary>
-    public static string LoadEmbedded(string name, string? overrideFolder)
+    /// <summary>
+    /// A connector script: <paramref name="overrideFolder"/>/<paramref name="name"/> when present, else the copy embedded in
+    /// the connector's own assembly (resource "Mediator.Cad.Scripts.&lt;name&gt;").
+    /// </summary>
+    public static string LoadEmbedded(System.Reflection.Assembly connector, string name, string? overrideFolder)
     {
         if (overrideFolder is not null)
         {
             string local = Path.Combine(overrideFolder, name);
             if (File.Exists(local)) return File.ReadAllText(local);
         }
-        using var s = typeof(ScriptCadApp).Assembly.GetManifestResourceStream("Mediator.Cad.Scripts." + name)
+        using var s = connector.GetManifestResourceStream("Mediator.Cad.Scripts." + name)
             ?? throw new CadAppException($"The automation script {name} is missing from this build.");
         using var reader = new StreamReader(s);
         return reader.ReadToEnd();

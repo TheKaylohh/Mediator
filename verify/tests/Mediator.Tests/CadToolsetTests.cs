@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -76,7 +76,7 @@ static class CadToolsetTests
     public static void ToolsetAndReadRoots()
     {
         foreach (var t in SolidWorksCadApp.ToolNames)
-            Check.True(JobSpecFactory.CadTools.Contains(t), t + " is in every CAD job");
+            Check.True(SolidWorksConnector.Tools.Contains(t), t + " is in every CAD job");
         var cad = new Mediator.Core.Cad.CadAppToolProvider(new SolidWorksCadApp());
         Check.True(cad.ToolNames.SetEquals(SolidWorksCadApp.ToolNames), "the SolidWorks app offers every CAD tool: " + string.Join(", ", cad.ToolNames));
         var all = cad.Tools.Concat(new SwxPartToolProvider().Tools).ToDictionary(t => t.Name);

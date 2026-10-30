@@ -14,7 +14,10 @@
     <MediatorSimulateNoSolidWorks>true</MediatorSimulateNoSolidWorks>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(MediatorRoot)src/Mediator.SwxWorker/*.cs" />
-    <ProjectReference Include="$(MediatorRoot)src/Mediator.Protocol/Mediator.Protocol.csproj" />
+    <Compile Include="$(MediatorRoot)src/Connectors/SolidWorks/Worker/*.cs" />
+    <!-- V18: the worker belongs to the SolidWorks connector and needs only the stdio framing from the core protocol, compiled in:
+         one project reference (more breaks MEDIATOR001's warning-not-error under -warnaserror on parallel MSBuild nodes). -->
+    <Compile Include="$(MediatorRoot)src/Mediator.Protocol/StdioJsonLines.cs" Link="Shared/StdioJsonLines.cs" />
+    <ProjectReference Include="$(MediatorRoot)src/Connectors/SolidWorks/Contracts/Mediator.Connector.SolidWorks.Contracts.csproj" />
   </ItemGroup>
 </Project>

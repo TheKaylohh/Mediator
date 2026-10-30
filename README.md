@@ -25,13 +25,13 @@ Start with [CHANGELOG.md](CHANGELOG.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/R
 
 | Project | What it is |
 | --- | --- |
-| `src/Mediator.Protocol` | Framing, handshake, JSON-RPC helpers, SolidWorks DTOs (shared, AOT-safe) |
-| `src/Mediator.Core` | Bus, grants, gate, leases, audit, journal; Claude/Gemini launch, stream parsers, usage ledger, provider router; tool providers (`Swx`, `Files`, `Resolve`, `Blender`, `CadCode`, `Tutor`, `Office`, `CadFiles`, `Browser`); `Cad` (V16: CAD-neutral tools any CAD program plugs into, see [docs/v16/CAD_CONNECTORS.md](docs/v16/CAD_CONNECTORS.md)); `MediatorRuntime` |
+| `src/Mediator.Protocol` | Framing, handshake, JSON-RPC helpers (shared, AOT-safe) |
+| `src/Mediator.Core` | Bus, grants, gate, leases, audit, journal; Claude/Gemini launch, stream parsers, usage ledger, provider router; `Files` and `Browser` tools; `Connectors` (V18: the connector contract, catalog and loader); `Cad` (the CAD-neutral layer every CAD connector uses); `MediatorRuntime` |
+| `src/Connectors/<Name>` | V18: one project per connector (SolidWorks with its `Worker` and `Contracts`, FreeCAD, AutoCAD, Inventor, NX, Creo, CATIA, PartsFromCode, CadFiles, Office, Resolve, Blender, Tutor), built into `<app>\connectors\<Name>`; see [docs/v18/CONNECTORS.md](docs/v18/CONNECTORS.md) |
 | `src/Mediator.Bridge` | `mediator-mcp-bridge`: the stdio MCP server each CLI session spawns |
-| `src/Mediator.SwxWorker` | `mediator-swx-worker`: the STA COM host that talks to SolidWorks |
-| `src/Mediator.CliHost` | `mediator-cli`: doctor, assemble, cad, organize, resolve, blender, tutor, matrix, rollback |
+| `src/Mediator.CliHost` | `mediator-cli`: doctor, connectors, assemble, cad, organize, resolve, blender, tutor, rollback, plus connector commands (matrix) |
 | `src/Mediator.UI` | Overlay ViewModels (no WPF; tested on any OS): overlay, approvals, Connectors, first-run card, settings, hotkey parser |
-| `src/Mediator.Wpf` | `Mediator`: the tray + Ctrl+Shift+Space overlay (Windows only); `Themes/` (3 dictionaries), `Controls/HudOrbControl` |
+| `src/Mediator.Wpf` | `Mediator`: the tray + Ctrl+Shift+Space overlay and the full-screen app (`--workspace`) (Windows only); `Themes/` (Dark, Light; the V7–V17 themes in `Themes/Legacy`), `Controls/HudOrbControl` |
 | `scripts/publish-release.ps1` | Release package (V8): Release builds of all four executables (the worker with or without SolidWorks), Native AOT bridge, loose themes, `dist\Mediator\` with `launch.bat`, `install-shortcut.vbs`, `Create-Desktop-Shortcut.ps1`, checksums, a required-files check and a doctor smoke test |
 | `chrome-extension/` | V13 Mediator for Chrome (MV3, sideloaded): Connectors > Mediator for Chrome > Set up; paired to the app over 127.0.0.1 |
 | `scripts/launch-mediator.bat`, `scripts/install-shortcut.vbs` | V8 double-click launcher and shortcut installer (published as `launch.bat` / `install-shortcut.vbs`; no PowerShell, no admin) |

@@ -5,7 +5,7 @@ using Mediator.Core.Cad;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -252,7 +252,7 @@ static class CadRoutingTests
     /// <summary>While SolidWorks is open, requests about the model get the whole toolset; old chats get the V16 tools.</summary>
     public static void OpenModelRequestsAndOldChats()
     {
-        var saved = JobSpecFactory.SolidWorksOpen;
+        var saved = SolidWorksConnector.SolidWorksOpen;
         try
         {
             string[] prompts =
@@ -261,7 +261,7 @@ static class CadRoutingTests
                 "set the material to 6061 Alloy", "suppress Fillet1 and set PartNo to BR-100", "list the BOM and check for interference",
                 "make an A3 drawing with a PDF", "show me the model from the front", "save this as bracket-v2",
             ];
-            JobSpecFactory.SolidWorksOpen = () => true;
+            SolidWorksConnector.SolidWorksOpen = () => true;
             foreach (var p in prompts)
             {
                 var (tools, category) = JobSpecFactory.InferToolsAndCategory(p, null);
@@ -269,16 +269,17 @@ static class CadRoutingTests
                     $"SolidWorks open: \"{p}\" → the SolidWorks tools ({category})");
             }
             Check.True(JobSpecFactory.InferToolsAndCategory("what is the capital of France?", null).Category == TaskCategory.Chat, "a plain question stays a chat");
-            JobSpecFactory.SolidWorksOpen = () => false;
+            SolidWorksConnector.SolidWorksOpen = () => false;
             Check.True(JobSpecFactory.InferToolsAndCategory("what does the open part weigh?", null).Category != TaskCategory.Cad, "SolidWorks closed: a question does not start it");
         }
-        finally { JobSpecFactory.SolidWorksOpen = saved; }
+        finally { SolidWorksConnector.SolidWorksOpen = saved; }
 
         // A chat saved by V15 had only the V15 SolidWorks tools: reopened or continued, it has today's.
         string[] v15 = ["swx_build_parametric_part", "swx_set_part_globals", "swx_session", "swx_document_ops", "swx_export_neutral", "swx_part_cards"];
         var upgraded = JobSpecFactory.WithCurrentToolset(v15);
-        Check.True(JobSpecFactory.CadTools.All(upgraded.Contains), "an old SolidWorks chat gets every current SolidWorks tool");
-        Check.True(JobSpecFactory.WithCurrentToolset([Mediator.Core.CadFiles.CadFileToolProvider.InspectTool]).Count == 1, "a CAD-file chat does not gain SolidWorks");
+        Check.True(SolidWorksConnector.Tools.All(upgraded.Contains), "an old SolidWorks chat gets every current SolidWorks tool");
+        Check.True(!JobSpecFactory.WithCurrentToolset([Mediator.Connectors.CadFiles.CadFileToolProvider.InspectTool]).Any(t => t.StartsWith("swx_", StringComparison.Ordinal)),
+            "a CAD-file chat does not gain SolidWorks (V18: only its own connector's tools)");
         var reopened = new SavedResume("s1", AiProvider.ClaudeCode, Path.GetTempPath(), "j1", true, "what's open in SolidWorks?", "a part") { Tools = [.. v15], Roots = [], Category = TaskCategory.Cad }
             .ToSession(DateTimeOffset.Now);
         Check.True(reopened.Spec.Tools.Contains(SolidWorksCadApp.InspectTool) && reopened.Spec.Tools.Contains(SolidWorksCadApp.DrawingTool), "a reopened V15 chat has the V16 tools");
@@ -298,10 +299,10 @@ static class CadRoutingTests
             Paths = new MediatorPaths(TempDir("rt")),
             Bus = new BusOptions { PipeName = "mediator-cadr-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
-            ActiveCadDocument = _ => Task.FromResult<string?>(active),
+            Simulate = true,
+            Connectors = TestConnectors.All(activeDocument: _ => Task.FromResult<string?>(active)),
         });
-        var cad = JobSpecFactory.Assistant(null, "what does the open part weigh?", LaunchMode.None, JobSpecFactory.CadTools, TaskCategory.Cad, runtime.ChatDirectory);
+        var cad = JobSpecFactory.Assistant(null, "what does the open part weigh?", LaunchMode.None, SolidWorksConnector.Tools, TaskCategory.Cad, runtime.ChatDirectory);
         var job = await runtime.StartJobAsync(cad);
         Check.True(job.Spec.Roots.Contains(models, StringComparer.OrdinalIgnoreCase) && job.Spec.Prompt.Contains(part, StringComparison.Ordinal),
             "a CAD chat with no folder gets the open document's folder and is told the file: " + string.Join(";", job.Spec.Roots));

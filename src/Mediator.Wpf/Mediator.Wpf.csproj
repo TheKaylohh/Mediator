@@ -38,16 +38,17 @@
 
   <!--
     V8: the theme dictionaries are compiled into Mediator.exe (Page items, loaded by pack URI) AND copied loose to
-    <output>\Themes\ for ThemeManager's fallback. Both copies come from the same files, so they cannot drift.
+    <output>\Themes\ (and Themes\Legacy\) for ThemeManager's fallback. Both copies come from the same files, so they cannot drift.
   -->
   <ItemGroup Condition="'$(MediatorVerify)' != 'true'">
-    <MediatorLooseTheme Include="$(MSBuildProjectDirectory)\Themes\*.xaml" />
+    <!-- V18: Themes\Dark.xaml, Themes\Light.xaml and the classics in Themes\Legacy\. -->
+    <MediatorLooseTheme Include="$(MSBuildProjectDirectory)\Themes\**\*.xaml" />
   </ItemGroup>
   <Target Name="MediatorCopyLooseThemes" AfterTargets="Build" Condition="'$(MediatorVerify)' != 'true'">
-    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFolder="$(OutDir)Themes" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFiles="@(MediatorLooseTheme->'$(OutDir)Themes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="MediatorPublishLooseThemes" AfterTargets="Publish" Condition="'$(MediatorVerify)' != 'true'">
-    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFolder="$(PublishDir)Themes" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MediatorLooseTheme)" DestinationFiles="@(MediatorLooseTheme->'$(PublishDir)Themes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
   <!--
@@ -76,6 +77,8 @@
     <MediatorXamlPage Include="**/*.xaml" Exclude="bin/**;obj/**" />
   </ItemGroup>
   <Import Project="$(MediatorRoot)verify/stubs/WpfCompileStub/XamlPartials.targets" Condition="'$(MediatorVerify)' == 'true'" />
+  <!-- V18: the connectors are built and copied to <output>\connectors (they are not referenced). -->
+  <Import Project="$(MediatorRoot)src/Connectors/Connectors.targets" Condition="'$(MediatorVerify)' != 'true'" />
   <ItemGroup>
     <InternalsVisibleTo Include="Mediator.Tests" />
   </ItemGroup>

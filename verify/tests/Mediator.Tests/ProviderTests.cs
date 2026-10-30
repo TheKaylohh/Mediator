@@ -6,15 +6,15 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
-using Mediator.Core.Blender;
+using Mediator.Connectors.Blender;
 using Mediator.Core.Bus;
-using Mediator.Core.CadCode;
+using Mediator.Connectors.PartsFromCode;
 using Mediator.Core.Jobs;
-using Mediator.Core.Resolve;
+using Mediator.Connectors.Resolve;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.Core.Tools;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Tutor;
 
 namespace Mediator.Tests;
 
@@ -100,11 +100,9 @@ static class ProviderTests
             Paths = new MediatorPaths(TempDir()),
             Bus = new BusOptions { PipeName = "mediator-pv-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = swx ?? new SimulatedSwxBackend(),
-            MediaProbe = probe ?? new FakeMediaProbe(new()),
+            Simulate = true,
             Python = python ?? new FakePythonRunner((_, _) => new ProcessResult(1, "", "no python", false), available: false),
-            Blender = blender ?? new FakeBlender(),
-            Ffmpeg = null,
+            Connectors = TestConnectors.All(swx: swx, mediaProbe: probe ?? new FakeMediaProbe(new()), blender: blender ?? new FakeBlender(), noFfmpeg: true),
         }).ContinueWith(t => { t.Result.Approvals.Target = prompt; return t.Result; }, TaskScheduler.Default);
 
     /// <summary>Python's own parser, when a python3 is around: proves a generated script is syntactically valid.</summary>
@@ -140,7 +138,7 @@ static class ProviderTests
         });
         var prompt = new UntickPrompt("k2");
         await using var runtime = await Runtime(bridgeDll, prompt, probe);
-        var job = await runtime.StartJobAsync(JobSpecFactory.ResolveEdit(folder, "a 10 second teaser", LaunchMode.None) with { JobId = "res-1" });
+        var job = await runtime.StartJobAsync(ResolveConnector.ResolveEdit(folder, "a 10 second teaser", LaunchMode.None) with { JobId = "res-1" });
         await using var client = await runtime.ConnectClientAsync(job);
 
         var probed = await client.CallToolAsync(ResolveToolProvider.ProbeTool, new JsonObject { ["folder"] = folder }, TimeSpan.FromSeconds(30));
@@ -261,7 +259,7 @@ static class ProviderTests
         var blender = new FakeBlender();
         var prompt = new UntickPrompt();
         await using var runtime = await Runtime(bridgeDll, prompt, blender: blender);
-        var job = await runtime.StartJobAsync(JobSpecFactory.BlenderScene(folder, "a red car through a city at night", LaunchMode.None) with { JobId = "bl-1" });
+        var job = await runtime.StartJobAsync(BlenderConnector.BlenderScene(folder, "a red car through a city at night", LaunchMode.None) with { JobId = "bl-1" });
         await using var client = await runtime.ConnectClientAsync(job);
 
         var args = new JsonObject
@@ -313,7 +311,7 @@ static class ProviderTests
         var prompt = new UntickPrompt("strut");
         var swx = new SimulatedSwxBackend();
         await using var runtime = await Runtime(bridgeDll, prompt, python: python, swx: swx);
-        var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "front suspension corner", LaunchMode.None) with { JobId = "cad-1" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "front suspension corner", LaunchMode.None) with { JobId = "cad-1" });
         await using var client = await runtime.ConnectClientAsync(job);
 
         JsonObject Part(string key, string template, JsonObject p, params double[] env) => new()
@@ -382,7 +380,7 @@ static class ProviderTests
     {
         await using var runtime = await Runtime(bridgeDll, new UntickPrompt());
         string folder = TempDir();
-        var job = await runtime.StartJobAsync(JobSpecFactory.Tutor(folder, "chapter 3", LaunchMode.None) with { JobId = "tut-1" });
+        var job = await runtime.StartJobAsync(TutorConnector.Tutor(folder, "chapter 3", LaunchMode.None) with { JobId = "tut-1" });
         await using var client = await runtime.ConnectClientAsync(job);
         JsonArray M(params int[][] rows) => new(rows.Select(r => (JsonNode)new JsonArray(r.Select(x => (JsonNode)x).ToArray())).ToArray());
 
@@ -445,7 +443,7 @@ static class ProviderTests
         string pdf = Path.Combine(folder, "book.pdf");
         File.WriteAllBytes(pdf, TestPdf.Build());
         await using var runtime = await Runtime(bridgeDll, new UntickPrompt());
-        var job = await runtime.StartJobAsync(JobSpecFactory.Tutor(folder, "chapter 3", LaunchMode.None) with { JobId = "tut-2" });
+        var job = await runtime.StartJobAsync(TutorConnector.Tutor(folder, "chapter 3", LaunchMode.None) with { JobId = "tut-2" });
         await using var client = await runtime.ConnectClientAsync(job);
         var r = await client.CallToolAsync(TutorToolProvider.ExtractTool, new JsonObject { ["pdfPath"] = pdf, ["firstPage"] = 2, ["lastPage"] = 3 }, TimeSpan.FromSeconds(30));
         Check.True(!r.IsError, "extract: " + r.Text);

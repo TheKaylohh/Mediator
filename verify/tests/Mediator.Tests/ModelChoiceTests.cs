@@ -136,7 +136,7 @@ static class ModelChoiceTests
         Check.True(PromptPaths.TargetFolder("no path here") is null, "no path → null");
 
         var (tools, category) = JobSpecFactory.InferToolsAndCategory(prompt, null);
-        Check.True(category == TaskCategory.Cad && JobSpecFactory.CadTools.All(tools.Contains), "F40 prompt → Cad with every CAD tool: " + string.Join(",", tools));
+        Check.True(category == TaskCategory.Cad && SolidWorksConnector.Tools.All(tools.Contains), "F40 prompt → Cad with every CAD tool: " + string.Join(",", tools));
         var (cadTools, cadCat) = JobSpecFactory.InferToolsAndCategory("make me a CAD model of a bracket", null);
         Check.True(cadCat == TaskCategory.Cad && cadTools.Contains("swx_build_parametric_part"), "\"cad\" → Cad");
         Check.True(JobSpecFactory.InferToolsAndCategory("a decade of cadence", null).Category != TaskCategory.Cad, "cadence / decade are not CAD");
@@ -160,19 +160,19 @@ static class ModelChoiceTests
         var json = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
         string folder = Path.Combine(Path.GetTempPath(), "mediator-tests", "f40-" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(folder);
-        var spec = JobSpecFactory.Assistant(folder, "Create a ferrari F40 in solidworks", LaunchMode.Headless, JobSpecFactory.CadTools, TaskCategory.Cad);
+        var spec = JobSpecFactory.Assistant(folder, "Create a ferrari F40 in solidworks", LaunchMode.Headless, SolidWorksConnector.Tools, TaskCategory.Cad);
         var session = new ContinuableSession("abc123", AiProvider.ClaudeCode, folder, "assistant-1", spec, DateTimeOffset.Now) { NativeResume = true };
 
         var saved = JsonSerializer.Deserialize<SavedResume>(JsonSerializer.Serialize(SavedResume.From(session), json), json)!;
         var back = saved.ToSession(DateTimeOffset.Now);
-        Check.True(back.Spec.Tools.SequenceEqual(JobSpecFactory.CadTools) && back.Spec.Category == TaskCategory.Cad && back.Spec.Roots.SequenceEqual([folder]),
+        Check.True(back.Spec.Tools.SequenceEqual(SolidWorksConnector.Tools) && back.Spec.Category == TaskCategory.Cad && back.Spec.Roots.SequenceEqual([folder]),
             "tools, category and folder survive a save and reopen");
 
         var old = new SavedResume("abc123", AiProvider.ClaudeCode, folder, "assistant-1", true, "Create a ferrari F40 in solidworks that I can 3d print", null);
         var oldBack = old.ToSession(DateTimeOffset.Now);
         Check.True(oldBack.Spec.Tools.Contains("swx_build_parametric_part") && oldBack.Spec.Category == TaskCategory.Cad, "old chat: tools inferred from its prompt");
 
-        var asm = new ContinuableSession("abc123", AiProvider.ClaudeCode, folder, "assemble-1", JobSpecFactory.Assemble(folder, LaunchMode.Headless), DateTimeOffset.Now) { NativeResume = true };
+        var asm = new ContinuableSession("abc123", AiProvider.ClaudeCode, folder, "assemble-1", SolidWorksConnector.Assemble(folder, LaunchMode.Headless), DateTimeOffset.Now) { NativeResume = true };
         var next = JobSpecFactory.Continue(asm, "now create an F40 in solidworks I can 3d print");
         Check.True(next.Tools.Contains("swx_build_parametric_part") && next.Tools.Contains("swx_build_assembly"), "follow-up adds the part-building tools");
         return Task.CompletedTask;

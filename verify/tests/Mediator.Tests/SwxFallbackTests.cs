@@ -1,9 +1,10 @@
+extern alias worker;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
-using Mediator.SwxWorker;
+using Mediator.Connectors.SolidWorks;
+using worker::Mediator.SwxWorker;
 
 namespace Mediator.Tests;
 
@@ -69,16 +70,14 @@ static class SwxFallbackTests
             Paths = new MediatorPaths(TempDir("data")),
             Bus = new BusOptions { PipeName = "mediator-swxfb-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxWorker = new ComponentCommand(ComponentLocator.DotnetHost(), [worker]),
             Python = new FakePythonRunner((_, _) => new Mediator.Core.Tools.ProcessResult(1, "", "no python", false), available: false),
-            Blender = new FakeBlender(),
-            Ffmpeg = null,
+            Connectors = TestConnectors.All(worker: new ComponentCommand(ComponentLocator.DotnetHost(), [worker]), blender: new FakeBlender(), noFfmpeg: true),
         });
         runtime.Approvals.Target = new ApproveAll();
 
         try
         {
-            await runtime.Swx.CallAsync("health", new JsonObject(), TimeSpan.FromSeconds(30), CancellationToken.None);
+            await runtime.Connector<SolidWorksInstance>()!.Backend.CallAsync("health", new JsonObject(), TimeSpan.FromSeconds(30), CancellationToken.None);
             throw new Exception("health should fail without SolidWorks");
         }
         catch (SwxWorkerException ex)
@@ -86,7 +85,7 @@ static class SwxFallbackTests
             Check.True(ex.Code == SwxWorkerException.SolidWorksNotInstalled && ex.Message.StartsWith(Expected, StringComparison.Ordinal), $"health: {ex.Code}: {ex.Message}");
         }
 
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.None) with { JobId = "swx-none-1" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.None) with { JobId = "swx-none-1" });
         await using var client = await runtime.ConnectClientAsync(job);
         for (int attempt = 1; attempt <= 2; attempt++)
         {
@@ -111,7 +110,7 @@ static class SwxFallbackTests
         string copy = TempDir("ship");
         foreach (var f in new[] { "Directory.Build.props", "Directory.Build.targets" }) File.Copy(Path.Combine(root, f), Path.Combine(copy, f));
         Directory.CreateDirectory(Path.Combine(copy, "verify", "local-feed"));
-        foreach (var project in new[] { "Mediator.Protocol", "Mediator.SwxWorker" })
+        foreach (var project in new[] { "Mediator.Protocol", Path.Combine("Connectors", "SolidWorks", "Worker"), Path.Combine("Connectors", "SolidWorks", "Contracts") })
         {
             string from = Path.Combine(root, "src", project);
             foreach (var f in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories)
@@ -122,7 +121,7 @@ static class SwxFallbackTests
                 File.Copy(f, to);
             }
         }
-        string csproj = Path.Combine(copy, "src", "Mediator.SwxWorker", "Mediator.SwxWorker.csproj");
+        string csproj = Path.Combine(copy, "src", "Connectors", "SolidWorks", "Worker", "Mediator.SwxWorker.csproj");
         if (!OperatingSystem.IsWindows())
         {
             string text = File.ReadAllText(csproj);

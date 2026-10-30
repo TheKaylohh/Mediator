@@ -1,13 +1,13 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
-using Mediator.Core.Blender;
+using Mediator.Connectors.Blender;
 using Mediator.Core.Bus;
-using Mediator.Core.CadCode;
-using Mediator.Core.Resolve;
+using Mediator.Connectors.PartsFromCode;
+using Mediator.Connectors.Resolve;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.Core.Tools;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Tutor;
 
 namespace Mediator.Tests;
 
@@ -51,10 +51,9 @@ static class LiveTests
             Paths = new MediatorPaths(TempDir()),
             Bus = new BusOptions { PipeName = "mediator-live-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
             Python = python ?? new LocalPythonRunner(Python, [], DefaultProcessRunner.Instance),
-            Blender = blender ?? new BpyModuleRunner(Python!),
-            Ffmpeg = null,
+            Connectors = TestConnectors.All(blender: blender ?? new BpyModuleRunner(Python!), noFfmpeg: true),
         }).ContinueWith(t => { t.Result.Approvals.Target = new AutoApprovalPrompt(ToolRisk.Destructive); return t.Result; }, TaskScheduler.Default);
 
     /// <summary>All seven build123d templates with their defaults → valid STEP files inside their envelopes; an oversize part is refused.</summary>
@@ -62,7 +61,7 @@ static class LiveTests
     {
         string folder = TempDir();
         await using var runtime = await Runtime(bridgeDll);
-        var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "kit", LaunchMode.None) with { JobId = "live-cad" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "kit", LaunchMode.None) with { JobId = "live-cad" });
         await using var client = await runtime.ConnectClientAsync(job);
         var parts = new JsonArray(CodeCadToolProvider.Templates.Keys.Select(t => (JsonNode)new JsonObject
         {
@@ -91,7 +90,7 @@ static class LiveTests
     {
         string folder = TempDir();
         await using var runtime = await Runtime(bridgeDll);
-        var job = await runtime.StartJobAsync(JobSpecFactory.BlenderScene(folder, "night drive", LaunchMode.None) with { JobId = "live-bl" });
+        var job = await runtime.StartJobAsync(BlenderConnector.BlenderScene(folder, "night drive", LaunchMode.None) with { JobId = "live-bl" });
         await using var client = await runtime.ConnectClientAsync(job);
         var r = await client.CallToolAsync(BlenderToolProvider.BuildTool, new JsonObject { ["outputFolder"] = folder, ["durationSec"] = 3, ["fps"] = 24, ["buildingCount"] = 30 }, TimeSpan.FromMinutes(5));
         Check.True(!r.IsError, "bpy ran the scene script: " + r.Text);
@@ -150,7 +149,7 @@ static class LiveTests
         Check.True(make.Ok && File.Exists(pdf), "PyMuPDF wrote a test PDF: " + make.Tail());
 
         await using var runtime = await Runtime(bridgeDll);
-        var job = await runtime.StartJobAsync(JobSpecFactory.Tutor(folder, "ch3", LaunchMode.None) with { JobId = "live-tut" });
+        var job = await runtime.StartJobAsync(TutorConnector.Tutor(folder, "ch3", LaunchMode.None) with { JobId = "live-tut" });
         await using var client = await runtime.ConnectClientAsync(job);
         var r = await client.CallToolAsync(TutorToolProvider.ExtractTool, new JsonObject { ["pdfPath"] = pdf, ["firstPage"] = 2, ["lastPage"] = 3 }, TimeSpan.FromMinutes(2));
         Check.True((string)r.Structured!["engine"]! == "PyMuPDF" && r.Text.Contains("det(A) = 0 iff A is singular", StringComparison.Ordinal), "PyMuPDF extraction: " + r.Text[..Math.Min(300, r.Text.Length)]);

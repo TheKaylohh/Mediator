@@ -27,7 +27,7 @@ public static class ComponentLocator
     private static readonly Dictionary<string, string> ProjectOf = new(StringComparer.Ordinal)
     {
         [Bridge] = "Mediator.Bridge",
-        [SwxWorker] = "Mediator.SwxWorker",
+        [SwxWorker] = "Connectors/SolidWorks/Worker",
     };
 
     /// <summary>

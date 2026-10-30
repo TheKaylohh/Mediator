@@ -167,6 +167,15 @@ public sealed class WorkspaceViewModel : ObservableObject
     internal IReadOnlyList<string> PinnedSoftware => _prefs.PinnedSoftware;
     internal void SetPinnedSoftware(IEnumerable<string> ids) => Update(_prefs with { PinnedSoftware = ids.Distinct().ToList() });
 
+    /// <summary>V18: where the full-screen app opens (its last place), or null for centred and maximized.</summary>
+    public WindowBounds? WindowPlacement => _prefs.Window;
+
+    /// <summary>V18: the window reports where it is when it closes, so it reopens there.</summary>
+    public void SaveWindowPlacement(WindowBounds bounds)
+    {
+        if (bounds.Width >= WindowBounds.MinWidth && bounds.Height >= WindowBounds.MinHeight && bounds != _prefs.Window) Update(_prefs with { Window = bounds });
+    }
+
     // ── Left sidebar ─────────────────────────────────────────────────────────────────────────────────
 
     public RelayCommand NewChatCommand { get; }

@@ -7,7 +7,7 @@ using Mediator.Core.Bus;
 using Mediator.Core.Files;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Tutor;
 
 namespace Mediator.Tests;
 

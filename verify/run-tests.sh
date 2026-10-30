@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # V8: src/Mediator.Wpf compiles its WPF-free Win32 placement code here; verify/stubs/SwxWorkerNoInterop is the worker
 # built with no SolidWorks interop at all (SOLIDWORKS_NOT_INSTALLED), exercised by the "swx V8" tests.
-for p in src/Mediator.Bridge src/Mediator.SwxWorker verify/stubs/SwxWorkerNoInterop src/Mediator.CliHost src/Mediator.Wpf verify/tests/Mediator.Tests "$@"; do
+for p in src/Mediator.Bridge src/Connectors/SolidWorks/Worker verify/stubs/SwxWorkerNoInterop src/Mediator.CliHost src/Mediator.Wpf verify/tests/Mediator.Tests "$@"; do
   dotnet build "$p" -nologo -v q -p:MediatorVerify=true -p:TreatWarningsAsErrors=true
 done
 dotnet verify/tests/Mediator.Tests/bin/Debug/net8.0/Mediator.Tests.dll \

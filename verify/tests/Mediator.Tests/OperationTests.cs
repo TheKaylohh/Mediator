@@ -48,10 +48,9 @@ static class OperationTests
         Paths = new MediatorPaths(dataDir ?? TempDir("data")),
         Bus = new BusOptions { PipeName = "mediator-ops-" + Guid.NewGuid().ToString("N")[..10] },
         Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-        SwxBackend = new Mediator.Core.Swx.SimulatedSwxBackend(),
-        MediaProbe = new FakeMediaProbe(new()),
+        Simulate = true,
         Python = new FakePythonRunner(FakeCad.Run, available: false),
-        Blender = new FakeBlender(),
+        Connectors = TestConnectors.All(mediaProbe: new FakeMediaProbe(new()), blender: new FakeBlender()),
     });
 
     public static JobSpec Spec(string jobId, string dir) => new()

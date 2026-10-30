@@ -139,10 +139,10 @@ static class DesktopAppTests
         var merged = m2.Locator().FindAll(DesktopApp.Resolve);
         Check.True(merged.Count == 1 && merged[0].ProductName == "DaVinci Resolve Studio", "registry and Apps & features entries for one exe are merged (Studio name kept)");
         var probe = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m2.Locator(), runningProcess: n => n == "Resolve" ? 777 : null);
-        var status = probe.Resolve();
+        var status = probe.App("resolve");
         Check.True(status.Available && status.Detail.Contains("running (PID 777)", StringComparison.Ordinal) && status.Detail.StartsWith("running", StringComparison.Ordinal)
             && status.Detail.Contains("Studio: the scripting bridge", StringComparison.Ordinal) && status.Detail.Contains(custom, StringComparison.Ordinal), $"probe: running Studio at the custom folder ({status.Detail})");
-        var missing = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: NewMachine().Locator(), runningProcess: _ => null).Resolve();
+        var missing = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: NewMachine().Locator(), runningProcess: _ => null).App("resolve");
         Check.True(!missing.Available && missing.Detail.Contains(DesktopAppLocator.ResolveKey, StringComparison.Ordinal), $"not installed: says where it looked ({missing.Detail})");
         return Task.CompletedTask;
     }
@@ -174,18 +174,18 @@ static class DesktopAppTests
         Check.Equal(def, m3.Locator().Find(DesktopApp.SolidWorks)?.Executable, "PATH is not used for SolidWorks");
 
         // ConnectorProbe: installed + running, installed + not running, not installed.
-        var running = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: n => n == "SLDWORKS" ? 4242 : null).SolidWorks();
+        var running = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: n => n == "SLDWORKS" ? 4242 : null).App("solidworks");
         Check.True(running.Available && running.Detail.Contains("PID 4242", StringComparison.Ordinal) && running.Detail.Contains(sw24, StringComparison.Ordinal), $"running ({running.Detail})");
-        var idle = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: _ => null).SolidWorks();
+        var idle = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: m.Locator(), runningProcess: _ => null).App("solidworks");
         Check.True(idle.Available && idle.Detail.Contains("installed: SOLIDWORKS 2024", StringComparison.Ordinal) && idle.Detail.Contains("not running", StringComparison.Ordinal), $"installed, not running ({idle.Detail})");
-        var absent = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: NewMachine().Locator(), runningProcess: _ => null).SolidWorks();
+        var absent = new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home"), apps: NewMachine().Locator(), runningProcess: _ => null).App("solidworks");
         Check.True(!absent.Available && absent.Detail.StartsWith("not installed", StringComparison.Ordinal) && absent.Detail.Contains(@"SOLIDWORKS <year>\Setup", StringComparison.Ordinal), $"not installed ({absent.Detail})");
 
         // Off Windows with the real locator: nothing is looked up in a registry, and the probe says Windows only.
         if (!OperatingSystem.IsWindows())
         {
             Check.True(DesktopAppLocator.Default.Find(DesktopApp.SolidWorks) is null && DesktopAppLocator.Default.Find(DesktopApp.Resolve) is null, "real locator off Windows: no SolidWorks/Resolve");
-            Check.Equal("Windows only", new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home")).SolidWorks().Detail, "probe without a locator off Windows");
+            Check.Equal("Windows only", new ConnectorProbe(DefaultProcessRunner.Instance, TempDir("home")).App("solidworks").Detail, "probe without a locator off Windows");
         }
         return Task.CompletedTask;
     }

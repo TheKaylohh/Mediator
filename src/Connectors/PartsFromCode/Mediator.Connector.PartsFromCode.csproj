@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: parametric parts as build123d code, run in a sandbox, exported as STEP. Built on its own and shipped in <app>\connectors\PartsFromCode (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.PartsFromCode</RootNamespace>
+    <AssemblyName>Mediator.Connector.PartsFromCode</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+</Project>

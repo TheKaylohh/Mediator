@@ -54,6 +54,11 @@
                 ToolTip="Usage, providers, connections, shortcuts, appearance, settings, logs, about" AutomationProperties.Name="Profile menu">
           <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE77B;" />
         </Button>
+        <!-- V18: light / dark mode (the same toggle as in the quick panel) -->
+        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="10,0" Command="{Binding Main.ToggleLightDarkCommand}"
+                ToolTip="{Binding Main.LightDarkText}" AutomationProperties.Name="Light or dark mode">
+          <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="{Binding Main.LightDarkGlyph}" />
+        </Button>
         <!-- Notifications -->
         <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="10,0" Command="{Binding OpenNotificationsCommand}"
                 ToolTip="{Binding NotificationText}" AutomationProperties.Name="Notifications">

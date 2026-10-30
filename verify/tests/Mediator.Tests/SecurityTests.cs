@@ -2,11 +2,11 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Files;
-using Mediator.Core.Resolve;
+using Mediator.Connectors.Resolve;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
 using Mediator.Core.Tools;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Tutor;
 
 namespace Mediator.Tests;
 
@@ -302,19 +302,18 @@ static class SecurityTests
             Paths = new MediatorPaths(TempDir("data")),
             Bus = new BusOptions { PipeName = "mediator-sec-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            MediaProbe = new FakeMediaProbe(new()),
             Python = new FakePythonRunner((_, _) => new ProcessResult(1, "", "", false), available: false),
-            Blender = new FakeBlender(),
+            Connectors = TestConnectors.All(mediaProbe: new FakeMediaProbe(new()), blender: new FakeBlender()),
         });
         runtime.Approvals.Target = new AutoApprovalPrompt();
 
-        var tutor = await runtime.StartJobAsync(JobSpecFactory.Tutor(l.Root, "chapter 1", LaunchMode.None) with { JobId = "sec-tutor" });
+        var tutor = await runtime.StartJobAsync(TutorConnector.Tutor(l.Root, "chapter 1", LaunchMode.None) with { JobId = "sec-tutor" });
         await using (var client = await runtime.ConnectClientAsync(tutor))
         {
             var r = await client.CallToolAsync(TutorToolProvider.ExtractTool, new JsonObject { ["pdfPath"] = Path.Combine(l.Root, "book.pdf"), ["firstPage"] = 1, ["lastPage"] = 1 }, TimeSpan.FromSeconds(30));
             Check.True(r.IsError && r.Text.Contains("[path:reparse_point]", StringComparison.Ordinal), "PDF behind a symlink refused: " + r.Text);
         }
-        var resolve = await runtime.StartJobAsync(JobSpecFactory.ResolveEdit(l.Root, "x", LaunchMode.None) with { JobId = "sec-resolve" });
+        var resolve = await runtime.StartJobAsync(ResolveConnector.ResolveEdit(l.Root, "x", LaunchMode.None) with { JobId = "sec-resolve" });
         await using (var client = await runtime.ConnectClientAsync(resolve))
         {
             var r = await client.CallToolAsync(ResolveToolProvider.ApplyTool, new JsonObject { ["fcpxmlPath"] = fcpxml, ["projectName"] = "p" }, TimeSpan.FromSeconds(30));

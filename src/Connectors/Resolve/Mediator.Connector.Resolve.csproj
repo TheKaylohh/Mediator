@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: DaVinci Resolve rough cuts (FCPXML/EDL timelines). Built on its own and shipped in <app>\connectors\Resolve (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.Resolve</RootNamespace>
+    <AssemblyName>Mediator.Connector.Resolve</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+</Project>

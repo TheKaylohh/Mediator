@@ -1,9 +1,10 @@
+extern alias worker;
 // VERIFY ONLY. A strict, in-memory stand-in for the parts of the SolidWorks object model the worker uses.
 // It enforces the rules that break real automation: AddMate5 needs exactly two pre-selected entities that are
 // assembly-context proxies (from Component2.GetCorrespondingEntity) selected with mark 1; parts must be
 // loaded before AddComponent5; surfaces expose the documented CylinderParams / PlaneParams array layouts.
 using System.Text;
-using Mediator.SwxWorker;
+using worker::Mediator.SwxWorker;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 

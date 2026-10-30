@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: SolidWorks (parts, assemblies, drawings; live COM and the out-of-process worker). Built on its own and shipped in <app>\connectors\SolidWorks (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.SolidWorks</RootNamespace>
+    <AssemblyName>Mediator.Connector.SolidWorks</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Contracts/ and Worker/ are their own projects. -->
+    <Compile Remove="Contracts/**;Worker/**" />
+    <None Remove="Contracts/**;Worker/**" />
+    <EmbeddedResource Include="Scripts\*.ps1" LogicalName="Mediator.Cad.Scripts.%(Filename)%(Extension)" />
+    <ProjectReference Include="Contracts/Mediator.Connector.SolidWorks.Contracts.csproj" />
+  </ItemGroup>
+</Project>

@@ -2,7 +2,7 @@ using Mediator.Core.Bus;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
 using Mediator.Core.Security;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.UI;
 
 namespace Mediator.Tests;
@@ -27,7 +27,7 @@ static class FolderPermissionTests
             Paths = new MediatorPaths(TempDir("perm-data")),
             Bus = new BusOptions { PipeName = "mediator-perm-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
         });
         string work = TempDir("perm-work");
         var job = await runtime.StartJobAsync(JobSpecFactory.Organize(work, "by type", LaunchMode.None));

@@ -8,7 +8,7 @@ namespace Mediator.Core.Runtime;
 /// <summary>Which Mediator this is: the version name, and a build id that changes with every compile.</summary>
 public static class MediatorVersion
 {
-    public const string Name = "V17";
+    public const string Name = "V18";
     /// <summary>The Core assembly's module id: different for every build, so an old and a new build never look alike.</summary>
     public static string Build { get; } = typeof(MediatorVersion).Assembly.ManifestModule.ModuleVersionId.ToString("N")[..12];
     public static string Display => $"{Name} (build {Build})";

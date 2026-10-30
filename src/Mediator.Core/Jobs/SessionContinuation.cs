@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Mediator.Core.Attachments;
+using Mediator.Core.Connectors;
 using Mediator.Core.Jobs;
 
 namespace Mediator.Core.Jobs
@@ -170,7 +171,7 @@ public static partial class JobSpecFactory
     {
         // V11: asking for the browser by name wins over everything ("open Khan Academy in chrome and answer the matrix MCQ").
         if (IsBrowserRequest(prompt)) return ([], TaskCategory.Browser);
-        var (tools, category) = InferAppTools(prompt, activeApp);
+        var (tools, category) = MatchConnectors(prompt, activeApp);
         if (category != TaskCategory.Chat) return (tools, category);
         string t = (prompt ?? "").ToLowerInvariant();
         if (LocalPath().IsMatch(t) || FileIntent.Any(k => HasWord(t, k))) return (FileTools, TaskCategory.Files);
@@ -211,123 +212,30 @@ public static partial class JobSpecFactory
     /// <summary>A Browser job without the extension: Claude Code with --chrome (Claude in Chrome), Claude only.</summary>
     public static bool UsesClaudeInChrome(JobSpec spec) => UsesChrome(spec) && !UsesExtension(spec);
 
-    private static readonly string[] CreateIntent = ["create", "make", "model", "design", "build", "3d print", "stl", "print"];
-
-    /// <summary>"mate" as a CAD word only: mate, mates, mated, mating (not "material", "matey").</summary>
-    [GeneratedRegex(@"\bmat(?:e|es|ed|ing)\b")]
-    private static partial Regex MateWord();
-
-    /// <summary>
-    /// What makes "assembly" mean a SolidWorks assembly and not a .NET assembly or assembly language: a part, SolidWorks,
-    /// a mate or CAD in the same request ("assemble the parts in this folder").
-    /// </summary>
-    [GeneratedRegex(@"\b(?:parts?|solidworks|sldprt|sldasm|cad|bolts?|brackets?|shafts?|housing)\b")]
-    private static partial Regex AssemblyContext();
-
-    /// <summary>"stl" as a print file (".stl", "stl file"), not C++'s STL.</summary>
-    [GeneratedRegex(@"\.stl\b|\bstls?\s+files?\b|\bstls\b")]
-    private static partial Regex StlFile();
-
     /// <summary>
     /// V16.1: a chat saved by an earlier version keeps the tool list it started with, so a SolidWorks chat from V15 never saw
-    /// the V16 tools. A chat that had any SolidWorks tool gets today's whole SolidWorks toolset; one with Office tools, all of them.
+    /// the V16 tools. V18: a chat holding any tool a connector owns gets that connector's whole toolset as it is today.
     /// </summary>
     public static List<string> WithCurrentToolset(IEnumerable<string> tools)
     {
         var list = tools.Distinct(StringComparer.Ordinal).ToList();
-        if (list.Any(t => t.StartsWith("swx_", StringComparison.Ordinal))) list = list.Concat(CadTools).Distinct(StringComparer.Ordinal).ToList();
-        foreach (var (prefix, appTools) in CadToolsByPrefix)
-            if (list.Any(t => t.StartsWith(prefix + "_", StringComparison.Ordinal))) list = list.Concat(appTools).Distinct(StringComparer.Ordinal).ToList();
-        if (list.Any(OfficeTools.Contains)) list = list.Concat(OfficeTools).Distinct(StringComparer.Ordinal).ToList();
+        foreach (var connector in ConnectorCatalog.All)
+            if (list.Any(connector.OwnsTool)) list = list.Concat(connector.ChatTools).Distinct(StringComparer.Ordinal).ToList();
         return list;
     }
 
+    /// <summary>Organizing words: the built-in Files route (between the connectors' CAD/Office routes and their app routes).</summary>
+    private static ConnectorRoute FilesRoute => new(60, TaskCategory.Files, FileTools,
+        r => r.AnyWord(["organi", "sort my", "tidy", "declutter", "move files", "rename files"]));
+
     /// <summary>
-    /// V16.1: whether SolidWorks is running (checked at most every 5 s). While it is, a request about parts, features,
-    /// dimensions, materials... is about the model on screen, even without the word "SolidWorks". Tests replace it.
+    /// V18: the connectors (and the built-in Files route) a request reaches: by name, file type, intent, or the program in
+    /// front. The tools of every match are united; the first match (lowest order) decides the category.
     /// </summary>
-    public static Func<bool> SolidWorksOpen { get; set; } = ProbeSolidWorks;
-
-    private static long _swCheckedAt = long.MinValue / 2;
-    private static volatile bool _swOpen;
-
-    private static bool ProbeSolidWorks()
+    public static (IReadOnlyList<string> Tools, TaskCategory Category) MatchConnectors(string? prompt, string? activeApp)
     {
-        if (!OperatingSystem.IsWindows()) return false;
-        long now = Environment.TickCount64;
-        if (now - Interlocked.Read(ref _swCheckedAt) > 5000)
-        {
-            _swOpen = Swx.SolidWorksLauncher.IsRunning();
-            Interlocked.Exchange(ref _swCheckedAt, now);
-        }
-        return _swOpen;
-    }
-
-    /// <summary>Words that, while SolidWorks is open, mean the model on screen (start of a word: "part" also matches "parts").</summary>
-    private static readonly string[] OpenModelWords =
-        ["part", "assembl", "drawing", "feature", "dimension", "sketch", "extrude", "fillet", "chamfer", "hole", "material", "mass", "weigh",
-         "bom", "bill of material", "interference", "configuration", "mate", "face", "edge", "suppress", "custom propert", "propert",
-         "export", "save as", "save it", "save this", "save the", "screenshot", "picture", "the model", "this model", "open model", "selected", "selection", "thickness",
-         "diameter", "radius", "rebuild", "volume", "center of mass", "centre of mass", "equation", "global variable", "iso view", "isometric"];
-
-    /// <summary>True when the request itself asks for SolidWorks work (used to start SolidWorks early only for those).</summary>
-    public static bool AsksForSolidWorks(string? prompt) => InferAppTools(prompt ?? "", null).Tools.Contains(CadTools[0], StringComparer.Ordinal);
-
-    /// <summary>V15: a CAD file named by type or extension (".stl", "step file", "the 3mf"), not words like "step" or C++'s STL.</summary>
-    [GeneratedRegex(@"\.(?:stl|obj|ply|3mf|step|stp|iges|igs|dxf)\b|\b(?:stl|step|stp|iges|igs|3mf|obj|ply|dxf)\s+(?:files?|models?|meshes?)\b|\bstls\b|\b3mf\b")]
-    private static partial Regex CadFileWord();
-
-    /// <summary>V15: Word, Excel and PowerPoint files by extension.</summary>
-    [GeneratedRegex(@"\.(?:docx|xlsx|pptx|docm|xlsm|pptm|doc|xls|ppt|csv)\b|\b(?:docx|xlsx|pptx)\b")]
-    private static partial Regex OfficeFileWord();
-
-    /// <summary>V15: asking for Office apps, documents, mail or the calendar (phrases, so "email validation" in code is not mail).</summary>
-    private static readonly string[] OfficeIntent =
-        ["word document", "word doc", "word file", "inbox", "my email", "my emails", "my mail", "unread email", "email to", "email from", "draft an email",
-         "write an email", "reply to the email", "my calendar", "on my calendar", "meeting invite", "my meetings"];
-
-    /// <summary>V15: app and document names that mean Office work only with a doing word ("make a spreadsheet", "turn this into a
-    /// PowerPoint"); a question about PowerPoint or Excel ("the links in my powerpoint go blank") is a search, not a file job.</summary>
-    private static readonly string[] OfficeNames = ["excel", "spreadsheet", "workbook", "powerpoint", "slide deck", "slides", "presentation", "outlook", "in word", "an email"];
-    private static readonly string[] OfficeAction = ["create", "make", "build", "write", "draft", "turn", "convert", "summari", "generate", "export", "fill in", "put", "list"];
-
-    /// <summary>"cad" as a whole word only ("cadence", "decade" are not CAD).</summary>
-    [GeneratedRegex(@"\bcad\b")]
-    private static partial Regex CadWord();
-
-    private static (IReadOnlyList<string> Tools, TaskCategory Category) InferAppTools(string prompt, string? activeApp)
-    {
-        string t = (prompt ?? "").ToLowerInvariant(), app = (activeApp ?? "").ToLowerInvariant();
-        var groups = new (string[] Keys, string? App, string[] Tools, TaskCategory Category)[]
-        {
-            (["solidworks", "sldprt", "sldasm", "slddrw"], "sldworks", CadTools, TaskCategory.Cad),
-            // V17: the other CAD programs, by name, file type, or the program in front (process name).
-            (["freecad", "fcstd"], "freecad", CadToolsByPrefix["fc"], TaskCategory.Cad),
-            (["autocad", "dwg", "acad"], "acad", CadToolsByPrefix["acad"], TaskCategory.Cad),
-            (["inventor", "ipt", "iam", "idw"], "inventor", CadToolsByPrefix["inv"], TaskCategory.Cad),
-            (["siemens nx", "nx open", "nx part", "ugraf"], "ugraf", CadToolsByPrefix["nx"], TaskCategory.Cad),
-            (["creo", "pro/engineer", "proe"], "xtop", CadToolsByPrefix["creo"], TaskCategory.Cad),
-            (["catia", "catpart", "catproduct", "catdrawing"], "cnext", CadToolsByPrefix["catia"], TaskCategory.Cad),
-            (["parametric", "build123d", "3d print", "generate part", "make part"], null, CadTools, TaskCategory.Cad),
-            ([], null, CadFileTools, TaskCategory.Cad),       // V15: CAD files (matched by CadFileWord below)
-            (OfficeIntent, null, OfficeTools, TaskCategory.Office), // V15: Word, Excel, PowerPoint, Outlook (and OfficeFileWord)
-            (["organi", "sort my", "tidy", "declutter", "move files", "rename files"], null, FileTools, TaskCategory.Files),
-            (["davinci", "rough cut", "footage", "timeline"], "resolve", ResolveTools, TaskCategory.Resolve),
-            (["blender", "render", "3d scene"], "blender", BlenderTools, TaskCategory.Blender),
-            (["tutor", "chapter", "eigen", "determinant", "matrix"], null, TutorTools, TaskCategory.Tutor),
-        };
-        // Every SolidWorks job gets the whole CAD toolset (parts AND assemblies), so "make the parts and mate them" works in
-        // one job. "cad" as a word counts only with a make/create word: "explain what a fillet is in CAD" is a question.
-        // V14.1: "assembly", "mate" and "stl" only in their CAD sense, so a coding request ("load the assembly", "the
-        // material", "C++ STL") is not a SolidWorks job (which started SolidWorks).
-        bool create = CreateIntent.Any(k => HasWord(t, k));
-        bool cad = (create && CadWord().IsMatch(t)) || MateWord().IsMatch(t)
-            || (HasWord(t, "assembl") && AssemblyContext().IsMatch(t))
-            || (OpenModelWords.Any(k => HasWord(t, k)) && SolidWorksOpen()); // V16.1: about the model open in SolidWorks
-        bool cadFile = CadFileWord().IsMatch(t) || StlFile().IsMatch(t);
-        bool officeFile = OfficeFileWord().IsMatch(t) || (OfficeNames.Any(k => HasWord(t, k)) && OfficeAction.Any(k => HasWord(t, k)));
-        bool Special(int i) => (i == 0 && cad) || (i == 8 && cadFile) || (i == 9 && officeFile);
-        var hits = groups.Where((g, i) => Special(i) || g.Keys.Any(k => HasWord(t, k)) || (g.App is not null && app.Contains(g.App, StringComparison.Ordinal))).ToList();
+        var input = new RouteInput((prompt ?? "").ToLowerInvariant(), (activeApp ?? "").ToLowerInvariant());
+        var hits = ConnectorCatalog.Routes.Append(FilesRoute).OrderBy(r => r.Order).Where(r => r.Match(input)).ToList();
         if (hits.Count == 0) return ([], TaskCategory.Chat);
         return (hits.SelectMany(h => h.Tools).Distinct(StringComparer.Ordinal).ToList(), hits[0].Category);
     }
@@ -341,7 +249,7 @@ public static partial class JobSpecFactory
         // Chat and Search never get a folder, even one selected in Explorer or set with Save to…: a general question
         // must not give the model the user's files.
         // V15: an Office job with no folder named saves new documents in Documents\Mediator.
-        if (folder is null && category == TaskCategory.Office) folder = DefaultOfficeFolder();
+        if (folder is null && category == TaskCategory.Office) folder = MediatorDocumentsFolder();
         string? full = folder is null || IsNoLocalAccess(category) ? null : Path.GetFullPath(folder);
         string work = full ?? chatDirectory ?? Path.Combine(Path.GetTempPath(), "Mediator-chat");
         Directory.CreateDirectory(work);
@@ -361,7 +269,6 @@ public static partial class JobSpecFactory
             Prompt = category == TaskCategory.Browser ? Browser.ClaudeInChrome.Guidance + "\n\nUser: " + prompt
                 : "Answer the user's request directly and clearly." + (tools.Count > 0
                 ? " If it needs their files or desktop apps, use the Mediator tools you were granted (only those); otherwise just answer."
-                  + (category == TaskCategory.Cad ? " For \"this part\", \"the open model\" or what is on screen in SolidWorks, start with swx_session and swx_inspect_model (sections selection for what they selected); look at it with swx_capture_views before judging a shape." : "")
                 : category == TaskCategory.Search
                     ? " Use web search to find current, specific information, then answer concisely and name your sources. Do not read, list or search local files: none are shared with you."
                     : " No tools are needed or granted; answer from your knowledge. Do not read, list or search local files or run commands.")
@@ -371,8 +278,8 @@ public static partial class JobSpecFactory
 
     public const string FollowUpPrefix = "Follow-up: ";
 
-    /// <summary>V15: Documents\Mediator (created), where Office jobs without a folder save what they make.</summary>
-    public static string DefaultOfficeFolder()
+    /// <summary>V15: Documents\Mediator (created), where Office jobs without a folder save what they make (and exports go).</summary>
+    public static string MediatorDocumentsFolder()
     {
         string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         if (docs.Length == 0) docs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");

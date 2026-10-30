@@ -1,0 +1,43 @@
+<Project>
+  <!--
+    V18: the hosts (Mediator.exe, mediator-cli) know no connector at compile time. After a host builds, this builds every
+    connector project (src/Connectors/<Name>/Mediator.Connector.<Name>.csproj) and copies each one's output into
+    <output>\connectors\<Name>; mediator-swx-worker goes into connectors\SolidWorks with the connector that starts it.
+    At start the host loads whatever folders are there (ConnectorLoader). Removing a folder removes that feature.
+    -p:MediatorSkipConnectors=true builds a host with no connectors.
+  -->
+  <ItemGroup>
+    <MediatorConnectorProject Include="$(MSBuildThisFileDirectory)*/Mediator.Connector.*.csproj" />
+  </ItemGroup>
+
+  <Target Name="MediatorBuildConnectors" AfterTargets="Build" Condition="'$(MediatorSkipConnectors)' != 'true'">
+    <!-- Not project references, so the host's restore does not cover them: restore first (its own evaluation), then build. -->
+    <MSBuild Projects="@(MediatorConnectorProject);$(MSBuildThisFileDirectory)SolidWorks/Worker/Mediator.SwxWorker.csproj" Targets="Restore"
+             Properties="Configuration=$(Configuration);MediatorConnectorRestore=true" />
+    <!-- Connectors are framework-dependent libraries whatever the host's publish mode. -->
+    <MSBuild Projects="@(MediatorConnectorProject)" Targets="Build" Properties="Configuration=$(Configuration);SelfContained=false;PublishAot=false" BuildInParallel="true">
+      <Output TaskParameter="TargetOutputs" ItemName="_MediatorConnectorDll" />
+    </MSBuild>
+    <!-- publish-release.ps1 publishes the worker itself (self-contained) and passes MediatorConnectorWorker=false. -->
+    <MSBuild Projects="$(MSBuildThisFileDirectory)SolidWorks/Worker/Mediator.SwxWorker.csproj" Targets="Build" Properties="Configuration=$(Configuration)"
+             Condition="'$(MediatorConnectorWorker)' != 'false'">
+      <Output TaskParameter="TargetOutputs" ItemName="_MediatorSwxWorkerDll" />
+    </MSBuild>
+    <ItemGroup>
+      <_MediatorConnectorFile Include="%(_MediatorConnectorDll.RootDir)%(_MediatorConnectorDll.Directory)**/*"
+                              ConnectorName="$([System.String]::Copy('%(_MediatorConnectorDll.Filename)').Replace('Mediator.Connector.', ''))" />
+      <_MediatorConnectorFile Include="%(_MediatorSwxWorkerDll.RootDir)%(_MediatorSwxWorkerDll.Directory)**/*" ConnectorName="SolidWorks" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_MediatorConnectorFile)" SkipUnchangedFiles="true"
+          DestinationFiles="@(_MediatorConnectorFile->'$(OutDir)connectors/%(ConnectorName)/%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+  <!-- dotnet publish: the same folders next to the published host. -->
+  <Target Name="MediatorPublishConnectors" AfterTargets="Publish" Condition="'$(MediatorSkipConnectors)' != 'true'" DependsOnTargets="MediatorBuildConnectors">
+    <ItemGroup>
+      <_MediatorConnectorBuilt Include="$(OutDir)connectors/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_MediatorConnectorBuilt)" SkipUnchangedFiles="true"
+          DestinationFiles="@(_MediatorConnectorBuilt->'$(PublishDir)connectors/%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+</Project>

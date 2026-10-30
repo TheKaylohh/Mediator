@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 using Mediator.Core.Jobs;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.UI;
 
 namespace Mediator.Tests;

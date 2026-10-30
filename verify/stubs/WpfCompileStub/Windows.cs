@@ -155,6 +155,8 @@ namespace System.Windows
         public double Top => Y;
         public double Right => X + Width;
         public double Bottom => Y + Height;
+        public static Rect Empty => new() { Width = double.NegativeInfinity, Height = double.NegativeInfinity };
+        public bool IsEmpty => Width < 0;
     }
 
     public class SizeChangedEventArgs : RoutedEventArgs
@@ -243,6 +245,10 @@ namespace System.Windows
         public static double PrimaryScreenWidth => 1920;
         public static double PrimaryScreenHeight => 1080;
         public static Thickness WindowResizeBorderThickness => new(8);
+        public static double VirtualScreenLeft => 0;
+        public static double VirtualScreenTop => 0;
+        public static double VirtualScreenWidth => 1920;
+        public static double VirtualScreenHeight => 1080;
     }
 
     public enum MessageBoxButton { OK = 0, OKCancel = 1, YesNoCancel = 3, YesNo = 4 }
@@ -310,6 +316,7 @@ namespace System.Windows
         public double Opacity { get => (double)GetValue(OpacityProperty); set => SetValue(OpacityProperty, value); }
         public Visibility Visibility { get => (Visibility)GetValue(VisibilityProperty); set => SetValue(VisibilityProperty, value); }
         public bool IsVisible { get; internal set; }
+        public event DependencyPropertyChangedEventHandler IsVisibleChanged;
         public bool IsHitTestVisible { get; set; } = true;
         public bool AllowDrop { get; set; }
         public bool Focusable { get; set; }
@@ -382,6 +389,8 @@ namespace System.Windows
     public enum ShutdownMode { OnLastWindowClose = 0, OnMainWindowClose = 1, OnExplicitShutdown = 2 }
     public enum SizeToContent { Manual = 0, Width = 1, Height = 2, WidthAndHeight = 3 }
     public enum WindowState { Normal = 0, Minimized = 1, Maximized = 2 }
+    public enum WindowStartupLocation { Manual = 0, CenterScreen = 1, CenterOwner = 2 }
+    public delegate void DependencyPropertyChangedEventHandler(object sender, DependencyPropertyChangedEventArgs e);
 
     public class StartupEventArgs : EventArgs
     {
@@ -427,6 +436,8 @@ namespace System.Windows
         public Window Owner { get; set; }
         public SizeToContent SizeToContent { get; set; }
         public WindowState WindowState { get; set; }
+        public WindowStartupLocation WindowStartupLocation { get; set; }
+        public Rect RestoreBounds => Rect.Empty;
         public event EventHandler Activated;
         public event EventHandler Deactivated;
         public event EventHandler SourceInitialized;

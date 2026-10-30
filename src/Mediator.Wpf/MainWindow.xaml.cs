@@ -42,11 +42,9 @@ public partial class MainWindow : Window, Mediator.UI.Workspace.IWorkspaceHost
         vm.BrowseForAttachmentsRequested += BrowseForAttachments;
         vm.BrowseForSaveFolderRequested += BrowseForSaveFolder;
         vm.BrowseForAllowFolderRequested += BrowseForAllowFolder;
-        vm.OpenFullViewRequested += () =>
-        {
-            _chat ??= new ChatWindow(vm, OnDragOver, OnDragLeave, OnDrop);
-            _chat.Open();
-        };
+        vm.OpenFullViewRequested += OpenWorkspace;
+        vm.WorkspaceActivationRequested += OpenWorkspace;      // V18: the hotkey or tray while the full-screen app is open
+        vm.WorkspaceCloseRequested += () => _chat?.Hide();     // V18: it asked for a quick-panel tab
         Deactivated += (_, _) =>
         {
             LastDeactivatedUtc = DateTime.UtcNow;
@@ -172,6 +170,13 @@ public partial class MainWindow : Window, Mediator.UI.Workspace.IWorkspaceHost
 
     private ChatWindow? _chat;
 
+    /// <summary>V18: opens the full-screen app (or brings it forward, restoring it if minimized).</summary>
+    public void OpenWorkspace()
+    {
+        _chat ??= new ChatWindow(_vm, OnDragOver, OnDragLeave, OnDrop);
+        _chat.Open();
+    }
+
     // ── V16.2: what the workspace window asks of the app ────────────────────────────────────────────
 
     /// <summary>The data folder (logs, audit, chats), opened by Profile > Logs &amp; Diagnostics.</summary>
@@ -179,11 +184,7 @@ public partial class MainWindow : Window, Mediator.UI.Workspace.IWorkspaceHost
 
     void Mediator.UI.Workspace.IWorkspaceHost.ActivateComposer() => _chat?.FocusPrompt();
 
-    void Mediator.UI.Workspace.IWorkspaceHost.OpenOverlayTab(int tab)
-    {
-        _vm.SelectedTab = tab;
-        _vm.Show();
-    }
+    void Mediator.UI.Workspace.IWorkspaceHost.OpenOverlayTab(int tab) => _vm.ShowPanelTab(tab);
 
     void Mediator.UI.Workspace.IWorkspaceHost.OpenDataFolder()
     {

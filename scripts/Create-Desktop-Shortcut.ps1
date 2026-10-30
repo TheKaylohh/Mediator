@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Creates an "Mediator" shortcut on your desktop (and optionally in the Start menu) pointing at Mediator.exe.
+  Creates "Mediator" and "Mediator Workspace" shortcuts on your desktop (and optionally in the Start menu) pointing at Mediator.exe.
 
 .DESCRIPTION
   Run it from the packaged folder (dist\Mediator), where it sits next to Mediator.exe, or pass -Target.
@@ -34,6 +34,16 @@ foreach ($folder in $places) {
     $shortcut.WorkingDirectory = Split-Path $Target
     $shortcut.IconLocation = "$Target,0"
     $shortcut.Description = 'Mediator: Ctrl+Shift+Space opens the panel'
+    $shortcut.Save()
+    Write-Host "Created $link"
+    # V18: the full-screen app as its own shortcut (a second start hands over to the running Mediator).
+    $link = Join-Path $folder "$Name Workspace.lnk"
+    $shortcut = $shell.CreateShortcut($link)
+    $shortcut.TargetPath = $Target
+    $shortcut.Arguments = '--workspace'
+    $shortcut.WorkingDirectory = Split-Path $Target
+    $shortcut.IconLocation = "$Target,0"
+    $shortcut.Description = 'Mediator Workspace: the full-screen app'
     $shortcut.Save()
     Write-Host "Created $link"
 }

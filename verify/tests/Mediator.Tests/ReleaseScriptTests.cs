@@ -61,15 +61,15 @@ static class ReleaseScriptTests
         string ps = File.ReadAllText(Path.Combine(Scripts, "publish-release.ps1"));
         var projects = Regex.Match(ps, @"Projects\s*=\s*\[ordered\]@\{(?<body>.*?)\n\s*\}", RegexOptions.Singleline);
         Check.True(projects.Success, "the Projects table is found");
-        foreach (var p in new[] { "Mediator.Wpf", "Mediator.CliHost", "Mediator.SwxWorker", "Mediator.Bridge" })
+        foreach (var p in new[] { "Mediator.Wpf", "Mediator.CliHost", "Connectors\\SolidWorks\\Worker", "Mediator.Bridge" })
             Check.True(projects.Groups["body"].Value.Contains($"'src\\{p}'", StringComparison.Ordinal), $"{p} is always published (V8: the worker too)");
         Check.True(!Regex.IsMatch(ps, @"if\s*\(\s*\$\w+\s*\)\s*\{\s*\$projects\[", RegexOptions.IgnoreCase), "no project is added conditionally");
 
         var required = Regex.Match(ps, @"\$required\s*=\s*@\((?<list>.*?)\)", RegexOptions.Singleline).Groups["list"].Value;
-        foreach (var f in new[] { "Mediator.exe", "mediator-cli.exe", "mediator-mcp-bridge.exe", "mediator-swx-worker.exe", "launch.bat", "install-shortcut.vbs" })
+        foreach (var f in new[] { "Mediator.exe", "mediator-cli.exe", "mediator-mcp-bridge.exe", "connectors\\SolidWorks\\mediator-swx-worker.exe", "launch.bat", "install-shortcut.vbs" })
             Check.True(required.Contains($"'{f}'", StringComparison.Ordinal), $"package check requires {f}");
         foreach (var theme in Enum.GetNames<Mediator.UI.MediatorTheme>())
-            Check.True(required.Contains($"'Themes\\{theme}.xaml'", StringComparison.Ordinal), $"package check requires Themes\\{theme}.xaml");
+            Check.True(required.Contains($"'{Mediator.UI.ThemeSources.RelativePath(Enum.Parse<Mediator.UI.MediatorTheme>(theme)).Replace('/', '\\')}'", StringComparison.Ordinal), $"package check requires the {theme} theme");
 
         Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$(?:PSScriptRoot|scriptDir) 'launch-mediator\.bat'\) \(Join-Path \$OutDir 'launch\.bat'\)"), "launch-mediator.bat is published as launch.bat");
         Check.True(Regex.IsMatch(ps, @"Copy-Item \(Join-Path \$(?:PSScriptRoot|scriptDir) 'install-shortcut\.vbs'\)"), "install-shortcut.vbs is published");

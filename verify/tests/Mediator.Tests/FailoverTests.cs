@@ -149,7 +149,7 @@ static class FailoverTests
         Paths = new MediatorPaths(TempDir()),
         Bus = new BusOptions { PipeName = "mediator-fo-" + Guid.NewGuid().ToString("N")[..10] },
         Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-        SwxBackend = new Mediator.Core.Swx.SimulatedSwxBackend(),
+        Simulate = true,
         ClaudeExecutable = "/opt/fake/claude",
         GeminiExecutable = "/opt/fake/gemini",
         Launcher = launcher,
@@ -173,7 +173,7 @@ static class FailoverTests
         // 1. Rate limit before any side effect → Gemini, same grant.
         launcher.Script.Enqueue([limited, "exit=1"]);
         launcher.Script.Enqueue([gemini]);
-        var job = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-1" });
+        var job = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-1" });
         var tools = job.Grant.AllowedTools.Order(StringComparer.Ordinal).ToList();
         string token = job.Grant.Token;
         Check.Equal(JobState.Succeeded, await job.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "the job finished on the other subscription: " + job.Detail);
@@ -190,7 +190,7 @@ static class FailoverTests
         string gate = Path.Combine(TempDir(), "go");
         launcher.Script.Enqueue([limited, "exit=1", "gate=" + gate]);
         int before = launcher.Headless.Count;
-        var job2 = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-2" });
+        var job2 = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-2" });
         var (op, _) = await rt.Operations.BeginAsync("fo-2", "swx_build_assembly", "k", "{}");
         foreach (var s in new[] { OperationState.Validated, OperationState.Approved, OperationState.Executing, OperationState.Committed })
             await rt.Operations.TransitionAsync(op!.OperationId, s);
@@ -201,7 +201,7 @@ static class FailoverTests
 
         // 3. NeverDowngrade mid-job → no switch.
         launcher.Script.Enqueue([limited, "exit=1"]);
-        var job3 = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-3", NeverDowngrade = true });
+        var job3 = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-3", NeverDowngrade = true });
         Check.Equal(JobState.Failed, await job3.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "NeverDowngrade holds after launch too");
         Check.True((await Routes(rt, "fo-3")).Any(r => r.ArgumentsJson.Contains("RefusedNeverDowngrade", StringComparison.Ordinal)), "audited");
 
@@ -209,7 +209,7 @@ static class FailoverTests
         string geminiQuota = Fixture(LaunchTests.GeminiQuota);
         launcher.Script.Enqueue([limited, "exit=1"]);
         launcher.Script.Enqueue([geminiQuota, "exit=1"]);
-        var job4 = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-4" });
+        var job4 = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-4" });
         Check.Equal(JobState.Failed, await job4.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "second limit ends the job");
         var r4 = await Routes(rt, "fo-4");
         Check.True(r4.Count(r => r.ArgumentsJson.Contains("SwitchedAfterRateLimit", StringComparison.Ordinal)) == 1
@@ -218,7 +218,7 @@ static class FailoverTests
         // 5. Pre-launch refusal is audited too (no job is issued).
         await rt.Usage.SetCooldownAsync("claude-code", DateTimeOffset.UtcNow.AddHours(2), "limit");
         await rt.Usage.SetCooldownAsync("gemini-cli", DateTimeOffset.UtcNow.AddHours(2), "limit");
-        try { await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-5" }); throw new Exception("Assertion failed: started"); }
+        try { await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "fo-5" }); throw new Exception("Assertion failed: started"); }
         catch (ProviderUnavailableException) { }
         Check.True((await Routes(rt, "fo-5")).Any(r => r.ArgumentsJson.Contains("RefusedBothUnavailable", StringComparison.Ordinal)) && !rt.Registry.TryGet("fo-5", out _),
             "both cooling: refusal audited, nothing issued");
@@ -235,12 +235,12 @@ static class FailoverTests
         rt.BillingAlarm += (_, source) => { lock (alarms) alarms.Add(source); };
 
         launcher.Script.Enqueue([claude, "exit=1"]);
-        var guarded = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-1" });
+        var guarded = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-1" });
         Check.Equal(JobState.Killed, await guarded.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "apiKeySource ANTHROPIC_API_KEY without opt-in → job killed (fail closed)");
         lock (alarms) Check.True(alarms.Contains("ANTHROPIC_API_KEY"), "billing alarm raised from the real init event");
 
         launcher.Script.Enqueue([claude, "exit=1"]);
-        var metered = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-2", AllowMeteredBilling = true });
+        var metered = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-2", AllowMeteredBilling = true });
         Check.Equal(JobState.Failed, await metered.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "invalid key → failed");
         Check.True(metered.Outcome == RunOutcome.AuthFailed && metered.Detail!.Contains("not signed in", StringComparison.Ordinal), "outcome AuthFailed with an actionable message: " + metered.Detail);
         Check.True(await rt.GetCooldownAsync("claude-code") is null && launcher.Headless.Count == 2, "no cooldown, no failover for an auth failure");
@@ -258,7 +258,7 @@ static class FailoverTests
 
         // Result, then abnormal exit.
         launcher.Script.Enqueue([Fixture(StreamTests.SuccessRun), "exit=3"]);
-        var abnormal = await rt.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-4" });
+        var abnormal = await rt.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "auth-4" });
         Check.Equal(JobState.Failed, await abnormal.Completion.WaitAsync(TimeSpan.FromSeconds(30)), "result then exit 3 is not success");
         Check.True(abnormal.Outcome == RunOutcome.ResultThenAbnormalExit && abnormal.LastResult is { IsError: false }, "distinct outcome; the result is kept");
     }

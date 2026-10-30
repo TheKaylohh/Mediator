@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- V18 connector: FreeCAD (headless FreeCADCmd + Python). Built on its own and shipped in <app>\connectors\FreeCAD (see docs/v18/CONNECTORS.md). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mediator.Connectors.FreeCAD</RootNamespace>
+    <AssemblyName>Mediator.Connector.FreeCAD</AssemblyName>
+    <MediatorConnector>true</MediatorConnector>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The automation script, embedded; a copy in <data>\connectors\<id> overrides it without a rebuild. -->
+    <EmbeddedResource Include="Scripts\*.py;Scripts\*.ps1" LogicalName="Mediator.Cad.Scripts.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

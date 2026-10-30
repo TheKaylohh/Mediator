@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 
 namespace Mediator.Tests;
 
@@ -36,8 +36,8 @@ static class AppSessionTests
             Paths = new MediatorPaths(TempDir()),
             Bus = new BusOptions { PipeName = "mediator-app-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
-            SolidWorksSession = session,
+            Simulate = true,
+            Connectors = TestConnectors.All(session: session),
         });
         runtime.Approvals.Target = new AutoApprovalPrompt();
         string parts = TempDir();
@@ -46,7 +46,7 @@ static class AppSessionTests
         await runtime.StartJobAsync(JobSpecFactory.Organize(TempDir(), "by type", LaunchMode.None));
         Check.Equal(0, session.WarmUps, "a job without SolidWorks tools does not start SolidWorks");
 
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(parts, LaunchMode.None, Path.Combine(parts, "x.SLDASM")));
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(parts, LaunchMode.None, Path.Combine(parts, "x.SLDASM")));
         Check.Equal(1, session.WarmUps, "a CAD job starts SolidWorks as it begins, before any tool call");
 
         await using var client = await runtime.ConnectClientAsync(job);
@@ -99,12 +99,12 @@ static class AppSessionTests
 
         string dir = Path.Combine(Path.GetTempPath(), "mediator-tests", "asm-" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(dir);
-        var assemble = JobSpecFactory.Assemble(dir, LaunchMode.None);
+        var assemble = SolidWorksConnector.Assemble(dir, LaunchMode.None);
         Check.True(both.All(assemble.Tools.Contains) && assemble.MaxTurns == JobSpecFactory.CadMaxTurns && assemble.Prompt.Contains("swx_build_parametric_part", StringComparison.Ordinal),
             "the Assemble action can build missing parts first, with the CAD turn budget");
-        var codeCad = JobSpecFactory.CodeCad(dir, "a gearbox", LaunchMode.None);
+        var codeCad = SolidWorksConnector.CodeCad(dir, "a gearbox", LaunchMode.None);
         Check.True(codeCad.Prompt.Contains("swx_part_cards on", StringComparison.Ordinal) && codeCad.MaxTurns == JobSpecFactory.CadMaxTurns, "the CAD prompt chains parts → cards → assembly");
-        var asked = JobSpecFactory.Assistant(dir, "make two parts and mate them", LaunchMode.None, JobSpecFactory.CadTools, TaskCategory.Cad);
+        var asked = JobSpecFactory.Assistant(dir, "make two parts and mate them", LaunchMode.None, SolidWorksConnector.Tools, TaskCategory.Cad);
         Check.True(asked.MaxTurns == JobSpecFactory.CadMaxTurns && JobSpecFactory.Assistant(null, "hi", LaunchMode.None, [], TaskCategory.Chat).MaxTurns == 20,
             "CAD chat jobs get the CAD turn budget; plain answers keep theirs");
     }

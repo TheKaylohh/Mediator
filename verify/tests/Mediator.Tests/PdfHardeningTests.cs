@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using Mediator.Core.Runtime;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Tutor;
 
 namespace Mediator.Tests;
 
@@ -184,7 +184,7 @@ static class TutorExactnessTests
         await using var runtime = await ProviderTests.Runtime(bridgeDll, new UntickPrompt());
         string folder = Path.Combine(Path.GetTempPath(), "mediator-tutor", Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
-        var job = await runtime.StartJobAsync(JobSpecFactory.Tutor(folder, "ch 3", LaunchMode.None) with { JobId = "tut-x" });
+        var job = await runtime.StartJobAsync(TutorConnector.Tutor(folder, "ch 3", LaunchMode.None) with { JobId = "tut-x" });
         await using var client = await runtime.ConnectClientAsync(job);
         async Task<McpToolCallResult> V(System.Text.Json.Nodes.JsonObject args) => await client.CallToolAsync(TutorToolProvider.VerifyTool, args, TimeSpan.FromSeconds(30));
         System.Text.Json.Nodes.JsonObject Args(System.Text.Json.Nodes.JsonArray a, params string[] ops) => new()

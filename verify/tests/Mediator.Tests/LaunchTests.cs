@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
+using Mediator.Connectors.SolidWorks;
 using Mediator.Protocol;
 
 namespace Mediator.Tests;
@@ -77,7 +77,7 @@ static class LaunchTests
             Paths = new MediatorPaths(TempDir()),
             Bus = new BusOptions { PipeName = "mediator-ln-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new SimulatedSwxBackend(),
+            Simulate = true,
             ClaudeExecutable = "/opt/fake/claude",
             GeminiExecutable = "/opt/fake/gemini",
             Launcher = launcher,
@@ -98,7 +98,7 @@ static class LaunchTests
         File.WriteAllText(Path.Combine(folder, "a.sldprt"), "p");
 
         // ── 1. launcher exits, bridge connects later, done file ends the job ──
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-1" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-1" });
         Check.Equal(0, launcher.LauncherExitCode, "the stand-in wt.exe already exited");
         string script = File.ReadAllText(Path.Combine(job.Workspace.Root, "launch-claude.ps1"));
         Check.True(script.Contains(InteractiveSession.PidFileName, StringComparison.Ordinal) && script.Contains("finally", StringComparison.Ordinal)
@@ -134,7 +134,7 @@ static class LaunchTests
         terminal.Kill();
 
         // ── 2. kill ends the terminal process tree too ──
-        var job2 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-2" });
+        var job2 = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-2" });
         using var terminal2 = launcher.StartTerminal();
         job2.Interactive!.WritePid(terminal2);
         await Task.Delay(150);
@@ -145,7 +145,7 @@ static class LaunchTests
         // ── 3. tab closed without done → Ended ──
         var notices = new List<string>();
         runtime.Notice += (_, m) => { lock (notices) notices.Add(m); };
-        var job3 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-3" });
+        var job3 = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-3" });
         using (var terminal3 = launcher.StartTerminal())
         {
             job3.Interactive!.WritePid(terminal3);
@@ -156,14 +156,14 @@ static class LaunchTests
         lock (notices) Check.True(notices.Any(n => n.Contains("closed", StringComparison.Ordinal)), "the user is told the tab was closed");
 
         // ── 4. a recycled PID is not mistaken for the terminal ──
-        var job4 = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-4" });
+        var job4 = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-4" });
         File.WriteAllText(job4.Interactive!.PidPath, InteractiveSession.FormatPid(job4.Interactive.Nonce, Environment.ProcessId, DateTime.UtcNow.AddHours(-3)));
         Check.Equal(JobState.Ended, await job4.Completion.WaitAsync(TimeSpan.FromSeconds(5)), "same PID, different start time → treated as gone");
 
         // ── 5. terminal never starts ──
         var quick = new FakeLauncher(testsDll);
         await using var rt2 = await Runtime(bridgeDll, quick, startupGrace: TimeSpan.FromMilliseconds(400));
-        var job5 = await rt2.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-5" });
+        var job5 = await rt2.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Interactive) with { JobId = "int-5" });
         Check.Equal(JobState.Failed, await job5.Completion.WaitAsync(TimeSpan.FromSeconds(5)), "no interactive.pid within the grace → Failed");
         Check.True(job5.Detail!.Contains("did not start", StringComparison.Ordinal), "reason given");
     }
@@ -262,7 +262,7 @@ static class LaunchTests
         string saved = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? "";
         Environment.SetEnvironmentVariable("GEMINI_API_KEY", "must-not-reach-gemini");
         RunningJob job;
-        try { job = await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "route-a" }); }
+        try { job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "route-a" }); }
         finally { Environment.SetEnvironmentVariable("GEMINI_API_KEY", saved.Length == 0 ? null : saved); }
 
         Check.Equal(AiProvider.GeminiCli, job.Provider, "cad job switched to Gemini while Claude is cooling down");
@@ -291,7 +291,7 @@ static class LaunchTests
 
         // (b) never downgrade
         ProviderUnavailableException? refused = null;
-        try { await runtime.StartJobAsync(JobSpecFactory.Assemble(folder, LaunchMode.Headless) with { JobId = "route-b", NeverDowngrade = true }); }
+        try { await runtime.StartJobAsync(SolidWorksConnector.Assemble(folder, LaunchMode.Headless) with { JobId = "route-b", NeverDowngrade = true }); }
         catch (ProviderUnavailableException ex) { refused = ex; }
         Check.True(refused is not null && refused.Message.Contains("never switch subscriptions", StringComparison.Ordinal) && refused.Message.Contains("usage limit until", StringComparison.Ordinal),
             "NeverDowngrade refuses with the reason: " + refused?.Message);

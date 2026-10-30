@@ -68,11 +68,11 @@ jobs:
           dotnet build src/Mediator.CliHost -c Release -p:TreatWarningsAsErrors=true
           dotnet build src/Mediator.Wpf -c Release -p:TreatWarningsAsErrors=true
           # V8: no SolidWorks on the runner, so the worker builds with SOLIDWORKS_NOT_INSTALLED (warning MEDIATOR001, not an error)
-          dotnet build src/Mediator.SwxWorker -c Release -p:TreatWarningsAsErrors=true -warnaserror
+          dotnet build src/Connectors/SolidWorks/Worker -c Release -p:TreatWarningsAsErrors=true -warnaserror
       - name: V9 offline build (MediatorUseShims=true, no NuGet) of the real WPF overlay and every executable
         shell: pwsh
         run: |
-          foreach ($p in 'src/Mediator.Wpf', 'src/Mediator.CliHost', 'src/Mediator.Bridge', 'src/Mediator.SwxWorker') {
+          foreach ($p in 'src/Mediator.Wpf', 'src/Mediator.CliHost', 'src/Mediator.Bridge', 'src/Connectors/SolidWorks/Worker') {
             dotnet build $p -c Release -p:MediatorUseShims=true -p:TreatWarningsAsErrors=true
             if ($LASTEXITCODE -ne 0) { throw "offline build failed: $p" }
           }

@@ -73,6 +73,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         KillAllCommand = new RelayCommand(KillAll, () => Jobs.Any(j => j.IsActive));
         DismissBannerCommand = new RelayCommand(() => BillingBanner = null);
         CycleThemeCommand = new RelayCommand(CycleTheme);
+        ToggleLightDarkCommand = new RelayCommand(ToggleLightDark);
         AcknowledgeFaultCommand = new RelayCommand(() => SetFault(null), () => _fault is not null);
         AttachCommand = new RelayCommand(() => BrowseForAttachmentsRequested?.Invoke());
         ChooseSaveFolderCommand = new RelayCommand(() => BrowseForSaveFolderRequested?.Invoke());
@@ -237,6 +238,9 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
             UpdateSettings(_settings with { Theme = value });
             OnPropertyChanged();
             OnPropertyChanged(nameof(ThemeDisplayName));
+            OnPropertyChanged(nameof(IsLightTheme));
+            OnPropertyChanged(nameof(LightDarkGlyph));
+            OnPropertyChanged(nameof(LightDarkText));
             ThemeChanged?.Invoke(value);
         }
     }
@@ -244,17 +248,33 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
     public string ThemeDisplayName => ThemeName(CurrentTheme);
     public static string ThemeName(MediatorTheme t) => t switch
     {
-        MediatorTheme.HoloHud => "Holo HUD",
-        MediatorTheme.ProDark => "Pro Dark",
-        MediatorTheme.CleanLight => "Clean Light",
+        MediatorTheme.Dark => "Dark",
+        MediatorTheme.Light => "Light",
+        MediatorTheme.HoloHud => "Holo HUD (classic)",
+        MediatorTheme.ProDark => "Pro Dark (classic)",
+        MediatorTheme.CleanLight => "Clean Light (classic)",
         _ => t.ToString(),
     };
     public static IReadOnlyList<MediatorTheme> Themes { get; } = Enum.GetValues<MediatorTheme>();
 
     public event Action<MediatorTheme>? ThemeChanged;
 
-    /// <summary>The header button: Holo HUD → Pro Dark → Clean Light → Holo HUD.</summary>
+    /// <summary>Cycles every theme, the classics included: Dark → Light → Holo HUD → Pro Dark → Clean Light → Dark.</summary>
     public void CycleTheme() => CurrentTheme = (MediatorTheme)(((int)CurrentTheme + 1) % Themes.Count);
+
+    /// <summary>V18: the light theme (or the Clean Light classic) is on.</summary>
+    public bool IsLightTheme => ThemeSources.IsLight(CurrentTheme);
+
+    /// <summary>V18: the sun/moon button in both windows: a light theme goes to Dark, anything else to Light.</summary>
+    public void ToggleLightDark() => CurrentTheme = IsLightTheme ? MediatorTheme.Dark : MediatorTheme.Light;
+
+    public RelayCommand ToggleLightDarkCommand { get; }
+
+    /// <summary>The toggle's glyph: a moon in a light theme (go dark), a sun in a dark one (go light).</summary>
+    public string LightDarkGlyph => IsLightTheme ? "\uE708" : "\uE706";
+
+    /// <summary>The toggle's tooltip.</summary>
+    public string LightDarkText => IsLightTheme ? "Switch to dark mode" : "Switch to light mode";
 
     public MediatorSettings Settings => _settings;
 
@@ -455,10 +475,53 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         Show();
     }
 
+    /// <summary>
+    /// Shows the quick panel, unless the full-screen app is open: V18, the two are never on screen together, so the hotkey,
+    /// the tray icon and an approval bring the full-screen app forward instead.
+    /// </summary>
     public void Show()
     {
+        if (IsWorkspaceOpen)
+        {
+            IsVisible = false;
+            WorkspaceActivationRequested?.Invoke();
+            return;
+        }
         IsVisible = true;
         _ = RefreshProvidersAsync();
+    }
+
+    private bool _isWorkspaceOpen;
+
+    /// <summary>
+    /// V18: the full-screen app is open (shown, even minimized). Set by its window. Opening it hides the quick panel; while it is
+    /// open the quick panel does not show (see <see cref="Show"/>).
+    /// </summary>
+    public bool IsWorkspaceOpen
+    {
+        get => _isWorkspaceOpen;
+        set
+        {
+            if (!SetProperty(ref _isWorkspaceOpen, value)) return;
+            if (value) IsVisible = false;
+        }
+    }
+
+    /// <summary>V18: bring the full-screen app forward (restore it if minimized).</summary>
+    public event Action? WorkspaceActivationRequested;
+    /// <summary>V18: close the full-screen app (it hides; Mediator keeps running in the tray).</summary>
+    public event Action? WorkspaceCloseRequested;
+
+    /// <summary>
+    /// V18: the full-screen app asked for one of the quick panel's tabs (settings, usage, connectors): it closes, and the quick
+    /// panel opens on that tab. "Open full view" there brings the full-screen app back.
+    /// </summary>
+    public void ShowPanelTab(int tab)
+    {
+        SelectedTab = tab;
+        WorkspaceCloseRequested?.Invoke();
+        IsWorkspaceOpen = false; // the window reports it too; a host without one must not keep the panel hidden
+        Show();
     }
 
     private bool _isPinned;
@@ -729,7 +792,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         if (!terminal && ProviderRouter.ParsePrefix(text) is { Category: TaskCategory.Search or TaskCategory.Chat or TaskCategory.Office } ask)
         {
             // V15: "/office …" and "/outlook …" have no tile: an assistant job with the Office tools.
-            if (ask.Remainder.Length > 0) _ = RunAssistantAsync(ask.Remainder, provider, ask.Category == TaskCategory.Office ? JobSpecFactory.OfficeTools : [], ask.Category);
+            if (ask.Remainder.Length > 0) _ = RunAssistantAsync(ask.Remainder, provider, ask.Category == TaskCategory.Office ? Mediator.Core.Connectors.ConnectorCatalog.Find("office")?.ChatTools ?? [] : [], ask.Category);
             return;
         }
         var tile = Route(text);
@@ -1267,18 +1330,10 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         return job;
     }
 
-    /// <summary>The job recipe behind each tile.</summary>
-    public static JobSpec SpecFor(string actionId, string? folder, string prompt, LaunchMode launch) => actionId switch
-    {
-        "assemble" => JobSpecFactory.Assemble(folder!, launch, JobSpecFactory.RequestedAssemblyPath(prompt, folder!)),
-        "codecad" => JobSpecFactory.CodeCad(folder!, prompt.Length > 0 ? prompt : "the parts described in this folder's notes", launch),
-        "organize" => JobSpecFactory.Organize(folder!, prompt.Length > 0 ? prompt : "group by file type into Documents, Pictures, Archives, Installers", launch),
-        "resolve" => JobSpecFactory.ResolveEdit(folder!, prompt.Length > 0 ? prompt : "a short rough cut in a sensible order", launch),
-        "blender" => JobSpecFactory.BlenderScene(folder!, prompt.Length > 0 ? prompt : "a car driving through a city at night", launch),
-        "tutor" => JobSpecFactory.Tutor(folder, prompt.Length > 0 ? prompt : "help me study a topic", launch),
-        "claude-terminal" => JobSpecFactory.ClaudeCodeSession(folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), prompt),
-        _ => throw new InvalidOperationException($"No job recipe for action '{actionId}'."),
-    };
+    /// <summary>The job recipe behind each tile (built in, or from the connector that offers it).</summary>
+    public static JobSpec SpecFor(string actionId, string? folder, string prompt, LaunchMode launch) =>
+        JobSpecFactory.Recipe(actionId, new Mediator.Core.Connectors.RecipeRequest(folder, prompt, launch))
+        ?? throw new InvalidOperationException($"No job recipe for action '{actionId}' (is its connector installed?).");
 
     // ── Approvals (IApprovalPrompt) ──────────────────────────────────────────────────────────────────
 
@@ -1496,22 +1551,17 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
 
     // ── The action catalogue ─────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Glyphs are Segoe Fluent Icons code points (Windows 11; Segoe MDL2 Assets on Windows 10). Every action is live in V5.</summary>
+    /// <summary>
+    /// Glyphs are Segoe Fluent Icons code points (Windows 11; Segoe MDL2 Assets on Windows 10). V18: Organize and Claude Code
+    /// are built in; every other tile comes from an installed connector, in each recipe's order.
+    /// </summary>
     public static IEnumerable<ActionTileViewModel> DefaultActions() =>
-    [
-        new("assemble", "\uE7B8", "Assemble SolidWorks parts", "Read the parts in a folder, propose mates, review them, build a new .SLDASM.",
-            TaskCategory.Cad, ["assembl", "solidworks", "sldprt", "mate"], needsFolder: true, JobSpecFactory.CadTools),
-        new("codecad", "\uE8B9", "Design parametric parts", "Hubs, discs, springs, arms as build123d code → STEP → SolidWorks parts, checked against size envelopes.",
-            TaskCategory.Cad, ["design", "parametric", "generate part", "make part", "model a", "step", "build123d", "create", "3d print", "stl", "solidworks", "cad ", " cad", "suspension", "hub", "brake", "spring", "bracket"], needsFolder: true, JobSpecFactory.CadTools),
-        new("organize", "\uE8B7", "Organize a folder", "Plan moves from your description, review the batch, run it. Every move can be rolled back.",
-            TaskCategory.Files, ["organi", "sort", "tidy", "clean up", "declutter", "move files", "folder"], needsFolder: true, JobSpecFactory.FileTools),
-        new("resolve", "\uE714", "Rough cut for DaVinci Resolve", "Probe the clips, plan the cut, review it, export FCPXML + EDL to import in one step.",
-            TaskCategory.Resolve, ["davinci", "resolve", "video", "clips", "edit my", "timeline", "rough cut", "footage"], needsFolder: true, JobSpecFactory.ResolveTools),
-        new("blender", "\uF158", "Blender car scene", "A car driving through a procedural city with a chase camera; renders a preview.",
-            TaskCategory.Blender, ["blender", "scene", "3d", "render", "animat", "car driving"], needsFolder: true, JobSpecFactory.BlenderTools),
-        new("tutor", "\uE82D", "Ask & learn", "Ask any question or learn a topic. Reads PDFs you attach or select; math results are checked exactly.",
-            TaskCategory.Tutor, ["tutor", "teach me", "study", "chapter", "textbook", "linear algebra", "matrix", "eigen", "determinant"], needsFolder: false, JobSpecFactory.TutorTools),
-        new("claude-terminal", "\uE756", "Claude Code in a terminal", "Open Claude Code in this folder with your prompt. You drive it; billing stays on your Pro login.",
-            TaskCategory.Code, ["code", "app", "poc", "finish", "fix", "terminal", "repo", "bug"], needsFolder: false, []),
-    ];
+        Mediator.Core.Connectors.ConnectorCatalog.Recipes
+            .Select(r => (r.Order, Tile: new ActionTileViewModel(r.Id, r.Glyph, r.Title, r.Description, r.Category, [.. r.Keywords], r.NeedsFolder, r.Tools)))
+            .Append((30, new ActionTileViewModel("organize", "\uE8B7", "Organize a folder", "Plan moves from your description, review the batch, run it. Every move can be rolled back.",
+                TaskCategory.Files, ["organi", "sort", "tidy", "clean up", "declutter", "move files", "folder"], needsFolder: true, JobSpecFactory.FileTools)))
+            .Append((100, new ActionTileViewModel("claude-terminal", "\uE756", "Claude Code in a terminal", "Open Claude Code in this folder with your prompt. You drive it; billing stays on your Pro login.",
+                TaskCategory.Code, ["code", "app", "poc", "finish", "fix", "terminal", "repo", "bug"], needsFolder: false, [])))
+            .OrderBy(t => t.Item1).Select(t => t.Item2).ToList();
+
 }

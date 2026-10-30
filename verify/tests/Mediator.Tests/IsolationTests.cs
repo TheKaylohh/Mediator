@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Mediator.Core.Bus;
-using Mediator.Core.CadCode;
+using Mediator.Connectors.PartsFromCode;
 using Mediator.Core.Isolation;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
@@ -108,12 +108,9 @@ static class IsolationTests
             Paths = new MediatorPaths(TempDir("data")),
             Bus = new BusOptions { PipeName = "mediator-iso-" + Guid.NewGuid().ToString("N")[..10] },
             Bridge = new ComponentCommand(ComponentLocator.DotnetHost(), [bridgeDll]),
-            SwxBackend = new Mediator.Core.Swx.SimulatedSwxBackend(),
-            MediaProbe = new FakeMediaProbe(new()),
+            Simulate = true,
             Python = host ?? new FakePythonRunner(FakeCad.Run),
-            Blender = new FakeBlender(),
-            CadSandbox = sandbox,
-            CadSandboxPython = sp,
+            Connectors = TestConnectors.All(mediaProbe: new FakeMediaProbe(new()), blender: new FakeBlender(), sandbox: sandbox, sandboxPython: sp),
         });
         rt.Approvals.Target = prompt;
         return rt;
@@ -132,7 +129,7 @@ static class IsolationTests
         var prompt = new UntickPrompt();
         await using (var runtime = await Runtime(bridgeDll, prompt, sandbox, new SandboxPython("/usr/bin/python3", [])))
         {
-            var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-1" });
+            var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-1" });
             await using var client = await runtime.ConnectClientAsync(job);
             var r = await client.CallToolAsync(CodeCadToolProvider.CustomTool, Custom(folder, "br", "result = Box(10, 20, 30)", 11, 21, 31), TimeSpan.FromSeconds(30));
             Check.True(!r.IsError && (bool)r.Structured!["isolated"]!, "custom code ran in the sandbox: " + r.Text);
@@ -158,7 +155,7 @@ static class IsolationTests
         var sandbox2 = new FakeSandbox();
         await using (var runtime = await Runtime(bridgeDll, new TamperingPrompt(), sandbox2, new SandboxPython("/usr/bin/python3", [])))
         {
-            var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-2" });
+            var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-2" });
             await using var client = await runtime.ConnectClientAsync(job);
             var r = await client.CallToolAsync(CodeCadToolProvider.CustomTool, Custom(folder, "br2", "result = Box(1, 2, 3)", 5, 5, 5), TimeSpan.FromSeconds(30));
             Check.True(r.IsError && r.Text.Contains("not exactly what was approved", StringComparison.Ordinal) && sandbox2.Requests.Count == 0, "binding mismatch refused before anything ran: " + r.Text);
@@ -179,7 +176,7 @@ static class IsolationTests
             var sb = new FakeSandbox(act);
             await using var runtime = await Runtime(bridgeDll, new UntickPrompt(), sb, new SandboxPython("/usr/bin/python3", []));
             string f = TempDir("out-" + name);
-            var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(f, "x", LaunchMode.None) with { JobId = "iso-" + name });
+            var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(f, "x", LaunchMode.None) with { JobId = "iso-" + name });
             await using var client = await runtime.ConnectClientAsync(job);
             var r = await client.CallToolAsync(CodeCadToolProvider.CustomTool, Custom(f, "bad", "result = Box(4, 4, 4)", 5, 5, 5), TimeSpan.FromSeconds(30));
             if (name == "extra")
@@ -393,7 +390,7 @@ time.sleep(600)
         File.WriteAllText(Path.Combine(secretDir, "secret.txt"), "PRIVATE");
         await using var runtime = await Runtime(bridgeDll, new UntickPrompt(), new BubblewrapSandbox(), sp,
             new LocalPythonRunner(LiveTests.Python, [], DefaultProcessRunner.Instance));
-        var job = await runtime.StartJobAsync(JobSpecFactory.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-live" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.CodeCad(folder, "bracket", LaunchMode.None) with { JobId = "iso-live" });
         await using var client = await runtime.ConnectClientAsync(job);
 
         var ok = await client.CallToolAsync(CodeCadToolProvider.CustomTool, Custom(folder, "plate",

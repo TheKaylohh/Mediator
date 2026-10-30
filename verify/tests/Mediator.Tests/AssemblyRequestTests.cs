@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
 using Mediator.Core.Bus;
 using Mediator.Core.Runtime;
-using Mediator.Core.Swx;
-using Mediator.Protocol.Swx;
+using Mediator.Connectors.SolidWorks;
+using Mediator.Connectors.SolidWorks.Contracts;
 
 namespace Mediator.Tests;
 
@@ -13,11 +13,11 @@ static class AssemblyRequestTests
     {
         string folder = Path.Combine(Path.GetTempPath(), "mediator-tests", "asm-name");
         Check.Equal(Path.Combine(folder, "Train_Master_Assembly.SLDASM"),
-            JobSpecFactory.RequestedAssemblyPath("Create a new assembly file named Train_Master_Assembly.SLDASM. Insert the parts", folder), "a named file goes in the job's folder");
-        Check.Equal(@"D:\Out\Car.sldasm", JobSpecFactory.RequestedAssemblyPath(@"save it as D:\Out\Car.sldasm please", folder), "a full path is kept");
-        Check.True(JobSpecFactory.RequestedAssemblyPath("assemble the parts", folder) is null, "no name: the default is used");
-        Check.True(JobSpecFactory.Assemble(folder, LaunchMode.None, JobSpecFactory.RequestedAssemblyPath("named Gearbox.SLDASM", folder)).Prompt.Contains("Gearbox.SLDASM", StringComparison.Ordinal)
-            && !JobSpecFactory.Assemble(folder, LaunchMode.None, JobSpecFactory.RequestedAssemblyPath("named Gearbox.SLDASM", folder)).Prompt.Contains("Mediator-Assembly-", StringComparison.Ordinal),
+            SolidWorksConnector.RequestedAssemblyPath("Create a new assembly file named Train_Master_Assembly.SLDASM. Insert the parts", folder), "a named file goes in the job's folder");
+        Check.Equal(@"D:\Out\Car.sldasm", SolidWorksConnector.RequestedAssemblyPath(@"save it as D:\Out\Car.sldasm please", folder), "a full path is kept");
+        Check.True(SolidWorksConnector.RequestedAssemblyPath("assemble the parts", folder) is null, "no name: the default is used");
+        Check.True(SolidWorksConnector.Assemble(folder, LaunchMode.None, SolidWorksConnector.RequestedAssemblyPath("named Gearbox.SLDASM", folder)).Prompt.Contains("Gearbox.SLDASM", StringComparison.Ordinal)
+            && !SolidWorksConnector.Assemble(folder, LaunchMode.None, SolidWorksConnector.RequestedAssemblyPath("named Gearbox.SLDASM", folder)).Prompt.Contains("Mediator-Assembly-", StringComparison.Ordinal),
             "the Assemble prompt asks for the user's name, not the default");
         foreach (var (text, index) in new[] { ("front", 0), ("Top Plane", 1), ("plane:right", 2), ("RIGHT", 2), ("p1", -1), ("c2", -1) })
             Check.Equal(index, StandardPlanes.IndexOf(text), "plane id " + text);
@@ -35,7 +35,7 @@ static class AssemblyRequestTests
         var swx = new SimulatedSwxBackend();
         await using var runtime = await RuntimeTests.Runtime(bridgeDll, new AutoApprovalPrompt(), swx);
         string output = Path.Combine(parts, "Train_Master_Assembly.SLDASM");
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(parts, LaunchMode.None, output) with { JobId = "asm-planes" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(parts, LaunchMode.None, output) with { JobId = "asm-planes" });
         await using var client = await runtime.ConnectClientAsync(job);
         Check.True(!(await client.CallToolAsync("swx_part_cards", new JsonObject { ["folder"] = parts }, TimeSpan.FromSeconds(30))).IsError, "cards");
         JsonObject Mate(string key, string a, string b, string type = "Coincident") => new()

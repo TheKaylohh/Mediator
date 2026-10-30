@@ -1,5 +1,6 @@
 '---------------------------------------------------------------------------------------------------------
-' Mediator: creates "Mediator" shortcuts on the Desktop and in the Start menu for Mediator.exe in this folder.
+' Mediator: creates "Mediator" and "Mediator Workspace" (V18: the full-screen app, Mediator.exe --workspace)
+' shortcuts on the Desktop and in the Start menu for Mediator.exe in this folder.
 ' Double-click it. Per-user only (no administrator rights), and no PowerShell execution policy involved.
 '   install-shortcut.vbs                 Desktop + Start menu, then offers to start Mediator
 '   install-shortcut.vbs /nostartmenu    Desktop only
@@ -46,6 +47,15 @@ For Each folder In places
             link.WorkingDirectory = here
             link.IconLocation = target & ",0"
             link.Description = "Mediator: Ctrl+Shift+Space opens the panel"
+            link.Save
+            made = made & vbCrLf & "  " & linkPath
+            linkPath = fso.BuildPath(folder, "Mediator Workspace.lnk")
+            Set link = shell.CreateShortcut(linkPath)
+            link.TargetPath = target
+            link.Arguments = "--workspace"
+            link.WorkingDirectory = here
+            link.IconLocation = target & ",0"
+            link.Description = "Mediator Workspace: the full-screen app"
             link.Save
             made = made & vbCrLf & "  " & linkPath
         End If

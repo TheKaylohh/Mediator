@@ -14,7 +14,7 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
-foreach ($p in 'src/Mediator.Bridge', 'src/Mediator.SwxWorker', 'verify/stubs/SwxWorkerNoInterop', 'src/Mediator.CliHost', 'src/Mediator.Wpf', 'verify/tests/Mediator.Tests') {
+foreach ($p in 'src/Mediator.Bridge', 'src/Connectors/SolidWorks/Worker', 'verify/stubs/SwxWorkerNoInterop', 'src/Mediator.CliHost', 'src/Mediator.Wpf', 'verify/tests/Mediator.Tests') {
     dotnet build $p -nologo -v q -p:MediatorVerify=true -p:TreatWarningsAsErrors=true
     if ($LASTEXITCODE -ne 0) { throw "build failed: $p" }
 }

@@ -103,17 +103,16 @@ public sealed class AttachmentToolProvider : IToolProvider
     private static ToolResult ReadFile(JobGrant job, string path, string name, string? mediaType)
     {
         // V15: Word/Excel/PowerPoint come back as their text, CAD files as a description (size, triangles, units…).
-        if (mediaType is null && (Office.OfficeDocuments.IsOfficeFile(path) || CadFiles.CadFileInspector.IsCadFile(path)))
+        // V18: read by the connector that knows the file type (Office, CAD files), when it is installed.
+        if (mediaType is null && Connectors.ConnectorCatalog.AttachmentReader(path) is { } connector)
         {
             var verdict = job.Paths.VerifyExisting(path, PathAccess.Read);
             if (!verdict.Allowed) return ToolResult.Fail(verdict.Message);
             try
             {
-                return ToolResult.Ok(Office.OfficeDocuments.IsOfficeFile(path)
-                    ? Office.OfficeDocuments.ReadText(verdict.FullPath, MaxTextChars)
-                    : CadFiles.CadFileInspector.Describe(verdict.FullPath));
+                return ToolResult.Ok(connector.DescribeAttachment(verdict.FullPath, MaxTextChars));
             }
-            catch (Exception ex) when (ex is Office.OfficeDocumentException or CadFiles.CadFileException or System.Xml.XmlException or FormatException or EndOfStreamException or InvalidDataException)
+            catch (Exception ex) when (ex is Connectors.ConnectorFileException or System.Xml.XmlException or FormatException or EndOfStreamException or InvalidDataException)
             {
                 return ToolResult.Fail($"{name}: {ex.Message}");
             }

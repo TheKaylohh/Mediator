@@ -15,7 +15,7 @@ namespace Mediator.Wpf;
 ///   1. the compiled resource through its absolute pack URI (<see cref="ThemeSources.PackUri"/>);
 ///   2. if that throws (IOException "Cannot locate resource": unusual hosts, trimmed or repackaged builds), the loose
 ///      copy that the build publishes next to the exe (<see cref="ThemeSources.LooseFile"/>);
-///   3. if both fail, the current dictionary stays (at startup that is HoloHud, merged by App.xaml) and
+///   3. if both fail, the current dictionary stays (at startup that is Dark, merged by App.xaml) and
 ///      <see cref="LoadFailed"/> reports why. A theme problem never stops the app.
 /// </summary>
 public static class ThemeManager

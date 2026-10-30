@@ -4,11 +4,11 @@ using Mediator.Core.Bus;
 using Mediator.Core.Context;
 using Mediator.Core.Jobs;
 using Mediator.Core.Runtime;
-using Mediator.Core.Blender;
-using Mediator.Core.CadCode;
-using Mediator.Core.Resolve;
-using Mediator.Core.Swx;
-using Mediator.Core.Tutor;
+using Mediator.Connectors.Blender;
+using Mediator.Connectors.PartsFromCode;
+using Mediator.Connectors.Resolve;
+using Mediator.Connectors.SolidWorks;
+using Mediator.Connectors.Tutor;
 using Mediator.UI;
 
 namespace Mediator.Tests;
@@ -64,7 +64,7 @@ static class OverlayTests
         int attention = 0;
         vm.AttentionRequested += () => attention++;
 
-        var job = await runtime.StartJobAsync(JobSpecFactory.Assemble(parts, LaunchMode.None, Path.Combine(parts, "x.SLDASM")) with { JobId = "ui-job" });
+        var job = await runtime.StartJobAsync(SolidWorksConnector.Assemble(parts, LaunchMode.None, Path.Combine(parts, "x.SLDASM")) with { JobId = "ui-job" });
         await Until(() => vm.Jobs.Any(j => j.JobId == "ui-job" && j.IsActive), "job row in the Jobs tab");
         Check.Equal("Jobs (1)", vm.JobsTabHeader, "tab header counts active jobs");
 
@@ -320,21 +320,36 @@ static class OverlayTests
         string dir = TempDir();
         string path = Path.Combine(dir, "settings.json");
         var vm = new MediatorOverlayViewModel(new FakeRuntime(), new InlineDispatcher(), new JsonSettingsStore(path));
-        Check.Equal(MediatorTheme.HoloHud, vm.CurrentTheme, "Holo HUD is the default");
-        Check.Equal("Holo HUD", vm.ThemeDisplayName, "display name");
+        Check.Equal(MediatorTheme.Dark, vm.CurrentTheme, "V18: Dark is the default");
+        Check.Equal("Dark", vm.ThemeDisplayName, "display name");
         var changes = new List<MediatorTheme>();
         var props = new List<string?>();
         vm.ThemeChanged += changes.Add;
         vm.PropertyChanged += (_, e) => props.Add(e.PropertyName);
 
+        // V18: the sun/moon toggle in both windows goes between Light and Dark; from a classic it goes by lightness.
+        vm.ToggleLightDarkCommand.Execute(null);
+        Check.True(vm.CurrentTheme == MediatorTheme.Light && vm.IsLightTheme && vm.LightDarkText == "Switch to dark mode", "Dark → Light");
+        vm.ToggleLightDarkCommand.Execute(null);
+        Check.True(vm.CurrentTheme == MediatorTheme.Dark && !vm.IsLightTheme, "Light → Dark");
+        changes.Clear();
+        props.Clear();
         for (int i = 0; i < 4; i++) vm.CycleThemeCommand.Execute(null);
-        Check.True(changes.SequenceEqual([MediatorTheme.ProDark, MediatorTheme.CleanLight, MediatorTheme.HoloHud, MediatorTheme.ProDark]), "cycle Holo HUD → Pro Dark → Clean Light → Holo HUD → Pro Dark");
-        Check.True(props.Count(p => p == nameof(MediatorOverlayViewModel.CurrentTheme)) == 4 && props.Contains(nameof(MediatorOverlayViewModel.ThemeDisplayName)), "bindings notified");
+        Check.True(changes.SequenceEqual([MediatorTheme.Light, MediatorTheme.HoloHud, MediatorTheme.ProDark, MediatorTheme.CleanLight]), "cycle Dark → Light → the classics");
+        Check.True(props.Count(p => p == nameof(MediatorOverlayViewModel.CurrentTheme)) == 4 && props.Contains(nameof(MediatorOverlayViewModel.ThemeDisplayName))
+            && props.Contains(nameof(MediatorOverlayViewModel.LightDarkGlyph)), "bindings notified");
+        vm.ToggleLightDark();
+        Check.Equal(MediatorTheme.Dark, vm.CurrentTheme, "the Clean Light classic toggles to Dark");
+        vm.CurrentTheme = MediatorTheme.HoloHud;
+        vm.ToggleLightDark();
+        Check.Equal(MediatorTheme.Light, vm.CurrentTheme, "a dark classic toggles to Light");
+        vm.CurrentTheme = MediatorTheme.ProDark;
+        changes.Clear();
         Check.Equal("ProDark", (string?)JsonNode.Parse(File.ReadAllText(path))!["theme"], "saved to settings.json");
 
         vm.CurrentTheme = MediatorTheme.ProDark;
         vm.CurrentTheme = (MediatorTheme)99;
-        Check.Equal(4, changes.Count, "same or undefined theme: no change, no event");
+        Check.Equal(0, changes.Count, "same or undefined theme: no change, no event");
 
         var reloaded = new MediatorOverlayViewModel(new FakeRuntime(), new InlineDispatcher(), new JsonSettingsStore(path));
         Check.Equal(MediatorTheme.ProDark, reloaded.CurrentTheme, "theme survives a restart");
@@ -345,7 +360,7 @@ static class OverlayTests
         // Bad values fall back to defaults; a malformed file is kept as .bad.
         File.WriteAllText(path, """{"theme":"Neon","hotkey":"Shift+A","firstRunCompleted":true}""");
         var odd = new JsonSettingsStore(path).Load();
-        Check.True(odd.Theme == MediatorTheme.HoloHud && odd.Hotkey == "Ctrl+Shift+Space" && odd.FirstRunCompleted, "unknown theme and unsafe hotkey ignored, the rest kept");
+        Check.True(odd.Theme == MediatorTheme.Dark && odd.Hotkey == "Ctrl+Shift+Space" && odd.FirstRunCompleted, "unknown theme and unsafe hotkey ignored, the rest kept");
         File.WriteAllText(path, "{ broken");
         var store = new JsonSettingsStore(path);
         var broken = store.Load();
@@ -510,9 +525,13 @@ static class OverlayTests
         public Task<Mediator.Core.Connectors.ToolProbe> ProbeToolAsync(string id, CancellationToken ct = default) =>
             Task.FromResult(Tools.TryGetValue(id, out var t) ? t : new Mediator.Core.Connectors.ToolProbe(id, id, null, null, "not found on PATH"));
         public Mediator.Core.Connectors.CredentialState Credentials(string cliId) => Creds.GetValueOrDefault(cliId);
-        public Mediator.Core.Connectors.AppStatus SolidWorks() => new("solidworks", "SolidWorks", true, "running (PID 4242); the worker attaches to it");
-        public Mediator.Core.Connectors.AppStatus Resolve() => new("resolve", "DaVinci Resolve", true, "not running; Studio");
-        public Mediator.Core.Connectors.AppStatus Blender() => new("blender", "Blender", false, "not found");
+        public Mediator.Core.Connectors.AppStatus App(string id) => id switch
+        {
+            "solidworks" => new("solidworks", "SolidWorks", true, "running (PID 4242); the worker attaches to it"),
+            "resolve" => new("resolve", "DaVinci Resolve", true, "not running; Studio"),
+            "blender" => new("blender", "Blender", false, "not found"),
+            _ => new(id, id, false, "not checked"),
+        };
         public (ProcessStartInfo? StartInfo, string? Problem) SignIn(string cliId) =>
             Tools.ContainsKey(cliId) ? (new ProcessStartInfo("terminal", [cliId]), null) : (null, $"{cliId} is not installed.");
     }
@@ -661,7 +680,7 @@ static class OverlayTests
             Check.True(i >= 0, $"mutation anchor '{from}' found in {rel}");
             File.WriteAllText(p, text[..i] + to + text[(i + from.Length)..]);
         }
-        Mutate("Themes/CleanLight.xaml", "<SolidColorBrush x:Key=\"OrbErrorBrush\"", "<SolidColorBrush x:Key=\"OrbErrorBrushRenamed\"");
+        Mutate("Themes/Legacy/CleanLight.xaml", "<SolidColorBrush x:Key=\"OrbErrorBrush\"", "<SolidColorBrush x:Key=\"OrbErrorBrushRenamed\"");
         Mutate("MainWindow.xaml", "Foreground=\"{DynamicResource WarningBrush}\" Text=\"{Binding RouteText}\"", "Foreground=\"{StaticResource WarningBrush}\" Text=\"{Binding RouteText}\"");
         Mutate("MainWindow.xaml", "<TextBlock Text=\"MEDIATOR\"", "<TextBlock Foreground=\"#FF00FF00\" Text=\"MEDIATOR\"");
         Mutate("MainWindow.xaml", "<TextBlock Text=\"{Binding ReactorCaption}\"", "<TextBlock Style=\"{StaticResource TechLabel}\" Text=\"{Binding ReactorCaption}\"");
@@ -672,15 +691,15 @@ static class OverlayTests
 
         // V8 pack-URI rules
         Mutate("ThemeManager.cs", "new(ThemeSources.PackUri(theme), UriKind.Absolute)", "new($\"/Mediator;component/Themes/{theme}.xaml\", UriKind.Relative)");
-        Mutate("App.xaml", "pack://application:,,,/Mediator;component/Themes/HoloHud.xaml", "pack://application:,,,/Mediator.Wpf;component/Themes/HoloHud.xaml");
-        Mutate("Themes/ProDark.xaml", "xmlns:sys=\"clr-namespace:System;assembly=mscorlib\"", "xmlns:sys=\"clr-namespace:System\"");
-        Mutate("Mediator.Wpf.csproj", "DestinationFolder=\"$(PublishDir)Themes\"", "DestinationFolder=\"$(PublishDir)\"");
+        Mutate("App.xaml", "pack://application:,,,/Mediator;component/Themes/Dark.xaml", "pack://application:,,,/Mediator.Wpf;component/Themes/Dark.xaml");
+        Mutate("Themes/Legacy/ProDark.xaml", "xmlns:sys=\"clr-namespace:System;assembly=mscorlib\"", "xmlns:sys=\"clr-namespace:System\"");
+        Mutate("Mediator.Wpf.csproj", "'$(PublishDir)Themes\\%(RecursiveDir)", "'$(PublishDir)%(RecursiveDir)");
 
         var report = XamlChecker.Check(copy, typeof(MediatorOverlayViewModel).Assembly);
         string all = string.Join("\n", report.Errors);
         foreach (var (needle, what) in new[]
         {
-            ("Themes/CleanLight.xaml does not define 'OrbErrorBrush'", "a theme missing a key"),
+            ("Themes/Legacy/CleanLight.xaml does not define 'OrbErrorBrush'", "a theme missing a key"),
             ("DynamicResource 'OrbErrorBrush' is not defined by theme CleanLight", "a DynamicResource one theme lacks"),
             ("StaticResource 'WarningBrush' is a theme key", "StaticResource to a theme key"),
             ("colour literal Foreground=\"#FF00FF00\"", "a hard-coded colour"),
@@ -691,8 +710,8 @@ static class OverlayTests
             ("ThemeManager does not build its Uri from ThemeSources.PackUri(theme) with UriKind.Absolute", "a theme URI that is not absolute"),
             ("code builds a relative component URI", "a relative ;component/ URI"),
             ("names assembly 'Mediator.Wpf', but the overlay is 'Mediator'", "a pack URI to the wrong assembly"),
-            ("Themes/ProDark.xaml: xmlns clr-namespace:System has no ;assembly=", "a theme the loose fallback could not load"),
-            ("does not copy Themes\\*.xaml to the build and publish output", "a missing loose-theme copy"),
+            ("Themes/Legacy/ProDark.xaml: xmlns clr-namespace:System has no ;assembly=", "a theme the loose fallback could not load"),
+            ("does not copy Themes\\**\\*.xaml to the build and publish output", "a missing loose-theme copy"),
         })
             Check.True(all.Contains(needle, StringComparison.Ordinal), $"checker catches {what}; errors were:\n{all}");
         return Task.CompletedTask;
@@ -847,12 +866,12 @@ static class OverlayTests
         Check.True(JobSpecFactory.InferToolsAndCategory("estimate the climate impact, mostly in summer", null).Category == TaskCategory.Chat, "word-start keywords: estimate/mostly are not mate/stl");
         // V14.1: code talk is not CAD (each of these started SolidWorks): .NET assemblies, materials, C++'s STL.
         foreach (string code in new[] { "load the plugin assembly at startup and update the code", "change the material colour in the theme", "use an stl vector instead of the array" })
-            Check.True(JobSpecFactory.InferToolsAndCategory(code, null).Category != TaskCategory.Cad && !JobSpecFactory.AsksForSolidWorks(code), $"'{code}' is not a CAD request");
+            Check.True(JobSpecFactory.InferToolsAndCategory(code, null).Category != TaskCategory.Cad && !SolidWorksConnector.AsksForSolidWorks(code), $"'{code}' is not a CAD request");
         Check.True(JobSpecFactory.InferToolsAndCategory("export the bracket as an stl file", null).Category == TaskCategory.Cad, "an STL file is still CAD");
         // SolidWorks is started early only when this request asks for it, not because an earlier turn used CAD.
-        var cadChat = JobSpecFactory.Assistant(null, "mate the bracket to the plate in solidworks", LaunchMode.Headless, JobSpecFactory.CadTools, TaskCategory.Cad);
-        Check.True(MediatorRuntime.WarmsSolidWorks(cadChat) && !MediatorRuntime.WarmsSolidWorks(cadChat with { UserText = "now fix the null check in my C# code" })
-            && !MediatorRuntime.WarmsSolidWorks(JobSpecFactory.Assistant(null, "what is a fillet", LaunchMode.Headless, [], TaskCategory.Chat)), "SolidWorks warm-up only for SolidWorks requests");
+        var cadChat = JobSpecFactory.Assistant(null, "mate the bracket to the plate in solidworks", LaunchMode.Headless, SolidWorksConnector.Tools, TaskCategory.Cad);
+        Check.True(SolidWorksConnector.WarmsSolidWorks(cadChat) && !SolidWorksConnector.WarmsSolidWorks(cadChat with { UserText = "now fix the null check in my C# code" })
+            && !SolidWorksConnector.WarmsSolidWorks(JobSpecFactory.Assistant(null, "what is a fillet", LaunchMode.Headless, [], TaskCategory.Chat)), "SolidWorks warm-up only for SolidWorks requests");
         Check.True(JobSpecFactory.InferToolsAndCategory("organize my downloads", null).Category == TaskCategory.Files
             && JobSpecFactory.InferToolsAndCategory(@"summarise C:\reports\q3", null).Category == TaskCategory.Files, "explicit files or a path → Files");
         Check.True(ProviderRouter.ParsePrefix("/search excel links blank") == (TaskCategory.Search, "excel links blank") && ProviderRouter.ParsePrefix("/ask hi") == (TaskCategory.Chat, "hi"), "/search and /ask");
