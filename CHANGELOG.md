@@ -2,6 +2,16 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V16.2: workspace window (2026-10-30)
+
+Details, what works now and what is still a skeleton: [docs/v16/WORKSPACE.md](docs/v16/WORKSPACE.md).
+
+- **Full view is now a three-region workspace**: top bar (project, search and command palette, six mode buttons, notifications, profile menu), left sidebar (new chat, search, active jobs, pinned and recent chats, projects), the conversation, and a right sidebar with six modes (Cockpit, Artifacts, Access, Activity, Knowledge, Software) as separate controls sharing one panel.
+- **Layout rules** in a tested view model: the conversation keeps ≥ 50% of a large window, sidebars resize within limits, shrink and hide on narrow windows (right first) and come back; sizes, visibility, mode and pins are saved.
+- **Settings fix**: custom actions and the Save to folder are saved (they were lost at every restart).
+- Verify builds: the XAML partial generator handles views with no named elements; the WPF stub gained the members the window uses.
+- 3 new tests (168; 157 run here, all pass; XAML checker: 13 files, 583 bindings).
+
 ## V16.1: SolidWorks test battery fixes (2026-10-30)
 
 Diagnosis per test: [docs/v16/RELEASE_NOTES.md](docs/v16/RELEASE_NOTES.md#v161-fixes-from-the-windows-test-battery).

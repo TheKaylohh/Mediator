@@ -21,7 +21,7 @@ namespace Mediator.Wpf;
 /// anchored whenever SizeToContent or a DPI change resizes it (no frame where it hangs off the screen), MaxHeight is
 /// capped to the monitor's usable height, and work-area / display changes re-place it (see MonitorPlacement).
 /// </summary>
-public partial class MainWindow : Window
+public partial class MainWindow : Window, Mediator.UI.Workspace.IWorkspaceHost
 {
     private readonly MediatorOverlayViewModel _vm;
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -171,6 +171,38 @@ public partial class MainWindow : Window
     // ── [ + Attach ] ─────────────────────────────────────────────────────────────────────────────────
 
     private ChatWindow? _chat;
+
+    // ── V16.2: what the workspace window asks of the app ────────────────────────────────────────────
+
+    /// <summary>The data folder (logs, audit, chats), opened by Profile > Logs &amp; Diagnostics.</summary>
+    public string? DataDirectory { get; set; }
+
+    void Mediator.UI.Workspace.IWorkspaceHost.ActivateComposer() => _chat?.FocusPrompt();
+
+    void Mediator.UI.Workspace.IWorkspaceHost.OpenOverlayTab(int tab)
+    {
+        _vm.SelectedTab = tab;
+        _vm.Show();
+    }
+
+    void Mediator.UI.Workspace.IWorkspaceHost.OpenDataFolder()
+    {
+        if (DataDirectory is { } dir) ShellOpen(dir);
+    }
+
+    void Mediator.UI.Workspace.IWorkspaceHost.OpenPath(string path) => ShellOpen(path);
+
+    void Mediator.UI.Workspace.IWorkspaceHost.Launch(string executable) => ShellOpen(executable);
+
+    /// <summary>Opens a file or folder with its default program, or starts a program; a failure is shown, never thrown.</summary>
+    private void ShellOpen(string path)
+    {
+        try { using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or FileNotFoundException)
+        {
+            _vm.NotifyStatus($"Could not open {path}: {ex.Message}");
+        }
+    }
 
     /// <summary>[ Save to… ]: a Windows folder picker; the choice is where every job saves until cleared.</summary>
     private void BrowseForSaveFolder()

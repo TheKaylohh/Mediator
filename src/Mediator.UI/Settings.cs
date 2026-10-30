@@ -34,6 +34,8 @@ public sealed record MediatorSettings
     public string? ModelId { get; init; }
     /// <summary>V10: the effort picked in the prompt bar (low|medium|high|xhigh|max); null = Auto (the CLI's default).</summary>
     public string? Effort { get; init; }
+    /// <summary>V16.2: the workspace window's sidebars (sizes, shown or hidden, right-panel mode, pinned software).</summary>
+    public Workspace.WorkspacePrefs Workspace { get; init; } = new();
 }
 
 /// <summary>A user-made action: a saved instruction that runs as an assistant job, with the prompt as its input.</summary>
@@ -69,6 +71,10 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
                 ModelProvider = (string?)o["modelProvider"],
                 ModelId = (string?)o["modelId"],
                 Effort = Mediator.Core.Jobs.ModelCatalog.IsEffort((string?)o["effort"]) ? (string?)o["effort"] : null,
+                // V16.2: these two were never written, so custom actions and the Save to folder were lost at every restart.
+                SaveFolder = (string?)o["saveFolder"],
+                CustomActions = ReadActions(o["customActions"] as JsonArray),
+                Workspace = Workspace.WorkspacePrefs.FromJson(o["workspace"] as JsonObject),
             };
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or IOException)
@@ -89,7 +95,23 @@ public sealed class JsonSettingsStore(string path) : ISettingsStore
         ["modelProvider"] = settings.ModelProvider,
         ["modelId"] = settings.ModelId,
         ["effort"] = settings.Effort,
+        ["saveFolder"] = settings.SaveFolder,
+        ["customActions"] = new JsonArray((settings.CustomActions ?? []).Select(a => (JsonNode)new JsonObject
+        {
+            ["id"] = a.Id, ["title"] = a.Title, ["description"] = a.Description, ["instructions"] = a.Instructions, ["needsFolder"] = a.NeedsFolder,
+        }).ToArray()),
+        ["workspace"] = settings.Workspace.ToJson(),
     }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+    private static List<CustomActionDef>? ReadActions(JsonArray? list)
+    {
+        if (list is null) return null;
+        var actions = new List<CustomActionDef>();
+        foreach (var a in list.OfType<JsonObject>())
+            if ((string?)a["id"] is { Length: > 0 } id && (string?)a["title"] is { Length: > 0 } title)
+                actions.Add(new CustomActionDef(id, title, (string?)a["description"] ?? "", (string?)a["instructions"] ?? "", (bool?)a["needsFolder"] ?? false));
+        return actions;
+    }
 }
 
 /// <summary>For tests and hosts without a data folder.</summary>

@@ -1,0 +1,52 @@
+<UserControl x:Class="Mediator.Wpf.Modes.KnowledgeModeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ws="clr-namespace:Mediator.UI.Workspace;assembly=Mediator.UI"
+             mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=ws:KnowledgeModeViewModel}">
+  <!-- 6.5 Knowledge: what the AI has for this chat, and exactly what it read for the latest answer. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+      <TextBlock Text="RETRIEVED FOR THE LATEST ANSWER" Style="{StaticResource TechLabel}" Margin="2,4,0,4" />
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="Nothing was read: the answer came from the conversation and the model's own knowledge."
+                     Visibility="{Binding HasRetrieved, Converter={StaticResource InverseBoolToVisibility}}" />
+          <ItemsControl ItemsSource="{Binding Retrieved}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,2" ToolTip="{Binding Detail}">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding TimeText}" />
+                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                  </DockPanel>
+                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" MaxHeight="34" Text="{Binding Detail}" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="SOURCES" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <ItemsControl ItemsSource="{Binding Sources}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <DockPanel Margin="0,2">
+                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
+                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
+              </DockPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <TextBlock Text="MEMORY AND INDEXING" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding MemoryNote}" />
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

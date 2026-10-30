@@ -81,7 +81,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         {
             Conversation.Clear(); _turns.Clear(); _chatId = null; _lastSession = null;
             _chatTitle = null; _chatPinned = false; OnPropertyChanged(nameof(ChatTitle)); OnPropertyChanged(nameof(IsChatPinned));
-            ChatFolders.Clear(); ClearFolderRequest();
+            ChatFolders.Clear(); ClearFolderRequest(); _softwareContext = null;
             ClearContinuation("New chat."); RefreshBusy();
         });
         OpenSavedChatCommand = new RelayCommand(p => OpenSavedChat(p as SavedChat), p => p is SavedChat);
@@ -257,6 +257,39 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
     public void CycleTheme() => CurrentTheme = (MediatorTheme)(((int)CurrentTheme + 1) % Themes.Count);
 
     public MediatorSettings Settings => _settings;
+
+    // ── V16.2: the workspace window ──────────────────────────────────────────────────────────────────
+
+    /// <summary>The full-screen workspace (three regions, six right-sidebar modes) around this conversation.</summary>
+    public Workspace.WorkspaceViewModel Workspace => _workspace ??= new Workspace.WorkspaceViewModel(this, () => _settings.Workspace,
+        prefs => UpdateSettings(_settings with { Workspace = prefs }), WorkspaceHost);
+    private Workspace.WorkspaceViewModel? _workspace;
+
+    /// <summary>Set by the host before the workspace is first used (opening files, starting programs, the quick panel's tabs).</summary>
+    public Workspace.IWorkspaceHost? WorkspaceHost { get; set; }
+
+    /// <summary>Approvals waiting for the user, the one shown included.</summary>
+    public int PendingApprovalCount => _approvalQueue.Count;
+
+    public void NotifyStatus(string text) => StatusText = text;
+
+    private string? _softwareContext;
+
+    /// <summary>
+    /// V16.2: a new chat about one desktop program (Software Library). Its tools are routed as if the program were in front
+    /// (<paramref name="process"/>), a prefix picks the tool set for Office or Chrome, and the program's identity, status and what
+    /// Mediator can do with it are given to the model with every prompt of the chat.
+    /// </summary>
+    public void StartAppChat(string name, string? process, string? promptPrefix, string context)
+    {
+        if (ClearConversationCommand.CanExecute(null)) ClearConversationCommand.Execute(null);
+        foreach (var chip in ContextChips.Where(c => c.Kind == ContextKind.App).ToList()) ContextChips.Remove(chip);
+        _activeApp = process;
+        if (process is not null) ContextChips.Add(new ContextChipViewModel(ContextKind.App, name, context));
+        _softwareContext = context;
+        PromptText = promptPrefix ?? "";
+        StatusText = $"New chat about {name}.";
+    }
 
     /// <summary>Saves settings (theme, hotkey, first run). A save failure is reported, never thrown at the UI.</summary>
     public void UpdateSettings(MediatorSettings settings)
@@ -1128,6 +1161,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
     private async Task<RunningJob?> StartAndShowAsync(JobSpec spec, IReadOnlyList<ContextChipViewModel> attached, string started, bool stayOnActions = false)
     {
         spec = WithAllowedFolders(spec);
+        if (_softwareContext is { } software && spec.Launch != LaunchMode.None) spec = spec with { Prompt = spec.Prompt + "\n\nThis chat is about: " + software };
         // Every new turn of a chat carries the conversation (natively resumed sessions already have it). Without this a
         // short follow-up after a failed turn ("now create the parts and assemble them") reached the model alone.
         if (spec.Launch == LaunchMode.Headless) spec = JobSpecFactory.WithConversation(spec, ConversationHistory());
@@ -1290,6 +1324,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         {
             if (card.IsCompleted) return; // cancelled before it was shown
             _approvalQueue.Add(card);
+            OnPropertyChanged(nameof(PendingApprovalCount));
             PendingApproval ??= card;
             OnPropertyChanged(nameof(QueuedApprovalsText));
             IsVisible = true;
@@ -1315,6 +1350,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         }
         else LogApproval(card.Request, "✖ Not answered (cancelled or timed out)");
         _approvalQueue.Remove(card);
+        OnPropertyChanged(nameof(PendingApprovalCount));
         if (ReferenceEquals(PendingApproval, card)) PendingApproval = _approvalQueue.FirstOrDefault();
         OnPropertyChanged(nameof(QueuedApprovalsText));
     }

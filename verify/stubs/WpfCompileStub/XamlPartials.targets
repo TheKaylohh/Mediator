@@ -97,11 +97,15 @@
             {
                 sb.AppendLine("        void System.Windows.Markup.IComponentConnector.Connect(int connectionId, object target)");
                 sb.AppendLine("        {");
-                sb.AppendLine("            switch (connectionId)");
-                sb.AppendLine("            {");
-                for (int i = 0; i < fields.Count; i++)
-                    sb.AppendLine($"                case {i + 1}: this.{fields[i].Name} = ({fields[i].Type})target; return;");
-                sb.AppendLine("            }");
+                // A view with no named elements (a mode panel) has nothing to connect: no switch, as the markup compiler does.
+                if (fields.Count > 0)
+                {
+                    sb.AppendLine("            switch (connectionId)");
+                    sb.AppendLine("            {");
+                    for (int i = 0; i < fields.Count; i++)
+                        sb.AppendLine($"                case {i + 1}: this.{fields[i].Name} = ({fields[i].Type})target; return;");
+                    sb.AppendLine("            }");
+                }
                 sb.AppendLine("            this._contentLoaded = true;");
                 sb.AppendLine("        }");
             }

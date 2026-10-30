@@ -3,312 +3,584 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:vm="clr-namespace:Mediator.UI;assembly=Mediator.UI"
-        mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=vm:MediatorOverlayViewModel}"
-        Title="Mediator" Width="1200" Height="800" WindowState="Maximized" WindowStartupLocation="CenterScreen"
+        xmlns:ws="clr-namespace:Mediator.UI.Workspace;assembly=Mediator.UI"
+        xmlns:modes="clr-namespace:Mediator.Wpf.Modes"
+        mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=ws:WorkspaceViewModel}"
+        Title="Mediator" Width="1440" Height="900" MinWidth="720" MinHeight="480" WindowState="Maximized" WindowStartupLocation="CenterScreen"
         AllowDrop="True" Background="{DynamicResource WindowBackgroundBrush}"
-        FontFamily="{DynamicResource UiFont}" FontSize="14" Foreground="{DynamicResource TextBrush}">
-  <!-- No Windows title bar: the window keeps resizing, snapping and the taskbar; the auto-hiding bar below replaces it. -->
+        FontFamily="{DynamicResource UiFont}" FontSize="13" Foreground="{DynamicResource TextBrush}">
+  <!-- V16.2 workspace. No Windows title bar: the top bar below is the caption (drag to move, double-click to maximize). -->
   <WindowChrome.WindowChrome>
     <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0" />
   </WindowChrome.WindowChrome>
-  <!-- Full-screen chat: same view model as the overlay (conversation, prompt, attachments, jobs), laid out like a chat app. -->
   <Grid x:Name="RootGrid">
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition x:Name="SidebarColumn" Width="270" />
-      <ColumnDefinition Width="*" />
-    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="44" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
 
-    <!-- Sidebar: new chat, search, starred + recent chats, jobs (Ctrl+B hides it) -->
-    <Border x:Name="Sidebar" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0">
-      <DockPanel Margin="12">
-        <TextBlock DockPanel.Dock="Top" Text="MEDIATOR" Style="{StaticResource TechLabel}" FontSize="13" Margin="4,4,0,12" />
-        <Button DockPanel.Dock="Top" Style="{StaticResource OutlineButton}" Padding="10,7" HorizontalContentAlignment="Left"
-                Command="{Binding ClearConversationCommand}" AutomationProperties.Name="New chat">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" Margin="0,0,8,0" />
-            <TextBlock Text="New chat" />
-            <TextBlock Style="{StaticResource MutedText}" FontSize="11" Text="  Ctrl+Shift+O" />
-          </StackPanel>
-        </Button>
-        <Grid DockPanel.Dock="Top" Margin="0,10,0,0">
-          <TextBox x:Name="SearchBox" Style="{StaticResource FieldBox}" Padding="26,5,6,5" AutomationProperties.Name="Search chats"
-                   Text="{Binding ChatSearch, UpdateSourceTrigger=PropertyChanged}" ToolTip="Search titles, prompts and answers (Ctrl+K)" />
-          <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
-                     Foreground="{DynamicResource MutedBrush}" Text="&#xE721;" />
-          <TextBlock Margin="26,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="12.5" Foreground="{DynamicResource MutedBrush}"
-                     Text="Search chats" Visibility="{Binding ChatSearch, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
-        </Grid>
-        <Grid Margin="0,16,0,0">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="2*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-          </Grid.RowDefinitions>
-        <TextBlock Text="Chats" Style="{StaticResource MutedText}" Margin="4,0,0,6" />
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding SavedChats}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <DockPanel Margin="0,1">
-                  <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" ToolTip="Delete this chat"
-                          Command="{Binding DataContext.DeleteSavedChatCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
-                          AutomationProperties.Name="Delete chat">
-                    <TextBlock Style="{StaticResource Icon}" FontSize="9" Text="&#xE711;" />
-                  </Button>
-                  <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" ToolTip="Star: keep this chat at the top"
-                          Command="{Binding DataContext.PinSavedChatCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
-                          AutomationProperties.Name="Star chat">
-                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE734;" x:Name="StarGlyph" />
-                  </Button>
-                  <Button Style="{StaticResource FlatButton}" Padding="6,4" HorizontalContentAlignment="Left" ToolTip="Open and continue this chat"
-                          Command="{Binding DataContext.OpenSavedChatCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
-                    <StackPanel>
-                      <TextBlock Text="{Binding DisplayTitle}" FontSize="13" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding Updated, StringFormat='{}{0:MMM d, HH:mm}'}" />
-                    </StackPanel>
-                  </Button>
-                </DockPanel>
-                <DataTemplate.Triggers>
-                  <DataTrigger Binding="{Binding Pinned}" Value="True">
-                    <Setter TargetName="StarGlyph" Property="Text" Value="&#xE735;" />
-                    <Setter TargetName="StarGlyph" Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                  </DataTrigger>
-                </DataTemplate.Triggers>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
-        <TextBlock Grid.Row="2" Text="{Binding JobsTabHeader}" Style="{StaticResource MutedText}" Margin="4,12,0,6" />
-        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding Jobs}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Grid Margin="2,3" ToolTip="{Binding Detail}">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <Ellipse Width="8" Height="8" Margin="2,6,8,0" VerticalAlignment="Top" Fill="{Binding State, Converter={StaticResource JobStateBrush}}" />
-                  <StackPanel Grid.Column="1">
-                    <TextBlock Text="{Binding Title}" FontSize="13" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Style="{StaticResource MutedText}" FontSize="11">
-                      <Run Text="{Binding StateText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding Provider, Mode=OneWay}" />
-                    </TextBlock>
-                  </StackPanel>
-                </Grid>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
-        </Grid>
-      </DockPanel>
-    </Border>
-
-    <!-- Main: title bar, conversation, composer -->
-    <DockPanel Grid.Column="1">
-      <DockPanel DockPanel.Dock="Top" Margin="8,6,16,0">
-        <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Click="ToggleSidebar" ToolTip="Show or hide the sidebar (Ctrl+B)"
-                AutomationProperties.Name="Toggle sidebar">
-          <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="&#xE700;" />
-        </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding RetryCommand}"
-                ToolTip="Retry: run the last prompt again" AutomationProperties.Name="Retry">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72C;" Margin="0,0,6,0" />
-            <TextBlock Text="Retry" FontSize="12" />
-          </StackPanel>
-        </Button>
-        <CheckBox DockPanel.Dock="Right" Margin="8,0" VerticalAlignment="Center" FontSize="11.5" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
-                  ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged in the chat." />
-        <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ChipToggle}" IsChecked="{Binding IsChatPinned}" ToolTip="Star this chat (kept at the top)"
-                      Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Star">
-          <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE734;" />
-        </ToggleButton>
-        <TextBox Style="{StaticResource FieldBox}" Margin="8,0" MaxWidth="560" HorizontalAlignment="Center" BorderThickness="0" Background="Transparent"
-                 FontSize="14" FontWeight="SemiBold" Text="{Binding ChatTitle, UpdateSourceTrigger=LostFocus}" ToolTip="Click to rename this chat"
-                 Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Chat title"
-                 KeyDown="TitleKeyDown" />
-      </DockPanel>
-      <!-- Composer -->
-      <Border DockPanel.Dock="Bottom" MaxWidth="860" Margin="24,8,24,20" Padding="12,8" CornerRadius="14"
-              Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource HudFrameBrush}" BorderThickness="1">
-        <StackPanel>
-          <!-- A job was refused a folder: allow it for this chat in one click -->
-          <Border Margin="0,0,0,6" Padding="10,6" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}"
-                  Visibility="{Binding HasFolderRequest, Converter={StaticResource BoolToVisibility}}">
-            <DockPanel>
-              <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,3" Margin="4,0,0,0" Command="{Binding DismissFolderRequestCommand}"
-                      Content="Dismiss" FontSize="12" AutomationProperties.Name="Dismiss folder request" />
-              <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="10,3" Command="{Binding AllowFolderRequestCommand}"
-                      ToolTip="Let this chat's jobs read and write this folder (the running job gets it now)" AutomationProperties.Name="Allow folder">
-                <TextBlock Text="Allow" FontSize="12" />
-              </Button>
-              <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72E;" Margin="0,0,8,0" VerticalAlignment="Center" />
-              <TextBlock Text="{Binding FolderRequestText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12.5" />
-            </DockPanel>
-          </Border>
-          <!-- Folders allowed for this chat -->
-          <ItemsControl ItemsSource="{Binding ChatFolders}" Focusable="False" Margin="0,0,0,2">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Margin="0,0,6,4" Padding="8,2" CornerRadius="10" BorderThickness="1" BorderBrush="{DynamicResource LineBrush}"
-                        ToolTip="{Binding}">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8B7;" Margin="0,0,5,0" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding}" FontSize="11.5" MaxWidth="320" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                    <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="4,0,-4,0" ToolTip="Stop allowing this folder"
-                            Command="{Binding DataContext.RemoveChatFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
-                      <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
-                    </Button>
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <ToggleButton HorizontalAlignment="Left" Margin="0,0,0,4" Style="{StaticResource ChipToggle}"
-                        DataContext="{Binding Continuation}" IsChecked="{Binding IsSelected}" ToolTip="{Binding ToolTipText}"
-                        Visibility="{Binding DataContext.HasContinuation, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding Text}" FontSize="11.5" />
-          </ToggleButton>
-          <ItemsControl ItemsSource="{Binding ContextChips}" Focusable="False">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <ToggleButton Style="{StaticResource ChipToggle}" IsChecked="{Binding IsIncluded}" ToolTip="{Binding ToolTipText}">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="0,0,5,0" Text="{Binding KindGlyph}" />
-                    <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="260" TextTrimming="CharacterEllipsis" />
-                    <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="4,0,-4,0" Command="{Binding RemoveCommand}" ToolTip="Remove"
-                            Visibility="{Binding IsRemovable, Converter={StaticResource BoolToVisibility}}">
-                      <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
-                    </Button>
-                  </StackPanel>
-                </ToggleButton>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <DockPanel Margin="2,0,0,2" Visibility="{Binding HasSaveFolder, Converter={StaticResource BoolToVisibility}}">
-            <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="4,0" Command="{Binding ClearSaveFolderCommand}"
-                    ToolTip="Clear: jobs use the folder selected in Explorer again" AutomationProperties.Name="Clear save folder">
-              <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
-            </Button>
-            <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="{Binding SaveFolderText}" ToolTip="{Binding SaveFolder}" />
-          </DockPanel>
-          <Grid>
-            <TextBox x:Name="PromptBox" Padding="2,8" Background="Transparent" BorderThickness="0" FontSize="15"
-                     Foreground="{DynamicResource TextBrush}" CaretBrush="{DynamicResource TextBrush}" SelectionBrush="{DynamicResource SelectionBrush}"
-                     AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="200" VerticalScrollBarVisibility="Auto"
-                     Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Enter to send · Shift+Enter for a new line · Up for your last prompt · Esc to stop" />
-            <TextBlock Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="15" Foreground="{DynamicResource MutedBrush}"
-                       Text="Reply, ask a follow-up, or drop files here"
-                       Visibility="{Binding PromptText, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
-          </Grid>
-          <DockPanel Margin="0,4,0,0">
-            <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding AttachCommand}" ToolTip="Attach files (read-only for jobs)">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE723;" Margin="0,0,6,0" />
-                <TextBlock Text="Attach" FontSize="12" />
-              </StackPanel>
-            </Button>
-            <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding ChooseSaveFolderCommand}"
-                    ToolTip="Choose the folder jobs save into (a Windows folder picker)">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE74E;" Margin="0,0,6,0" />
-                <TextBlock Text="Save to" FontSize="12" />
-              </StackPanel>
-            </Button>
-            <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding AllowFolderCommand}"
-                    ToolTip="Allow a folder for this chat: its jobs may read and write it (also given to a job that is running)">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72E;" Margin="0,0,6,0" />
-                <TextBlock Text="Allow folder" FontSize="12" />
-              </StackPanel>
-            </Button>
-<Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="10,3" Margin="6,0,0,0" Command="{Binding StopCommand}"
-                    Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVisibility}}" ToolTip="Stop the running prompt" AutomationProperties.Name="Stop">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE71A;" Margin="0,0,5,0" />
-                <TextBlock Text="Stop" FontSize="12" VerticalAlignment="Center" />
-              </StackPanel>
-            </Button>
-            <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="14,5" Command="{Binding SubmitPromptCommand}" AutomationProperties.Name="Send"
-                    Visibility="{Binding IsChatBusy, Converter={StaticResource InverseBoolToVisibility}}">
-              <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="&#xE724;" />
-            </Button>
-<ComboBox DockPanel.Dock="Right" MinWidth="200" Margin="6,0,0,0" FontSize="11.5" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
-                      DisplayMemberPath="Label" ToolTip="Model: Auto lets the routing rules pick; any other entry runs on that CLI and model" AutomationProperties.Name="Model" />
-            <ComboBox DockPanel.Dock="Right" MinWidth="70" Margin="6,0,0,0" FontSize="11.5" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
-                      ToolTip="Reasoning effort (--effort). Auto: the CLI's default" AutomationProperties.Name="Effort" />
-            <TextBlock Style="{StaticResource MutedText}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding RouteText}" />
-          </DockPanel>
-        </StackPanel>
-      </Border>
-
-      <!-- Conversation -->
-      <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="860" Margin="24,24,24,8">
-          <TextBlock Style="{StaticResource MutedText}" FontSize="16" HorizontalAlignment="Center" Margin="0,80,0,0" Text="Start a conversation below."
-                     Visibility="{Binding HasConversation, Converter={StaticResource InverseBoolToVisibility}}" />
-          <ItemsControl ItemsSource="{Binding Conversation}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <StackPanel Margin="0,0,0,24">
-                  <!-- user bubble, right-aligned -->
-                  <Border HorizontalAlignment="Right" MaxWidth="640" Padding="14,10" CornerRadius="14" Background="{DynamicResource PanelBrush}"
-                          BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
-                    <TextBox Text="{Binding UserPrompt, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0"
-                             Foreground="{DynamicResource TextBrush}" />
-                  </Border>
-                  <TextBlock Style="{StaticResource TechLabel}" Margin="0,14,0,2" Text="{Binding BadgeText}" />
-                  <TextBlock Style="{StaticResource MutedText}" Text="{Binding ThinkingSummary}"
-                             Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
-                  <ItemsControl ItemsSource="{Binding Steps}" Focusable="False" Margin="0,2,0,4">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding}" />
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                  <TextBox Text="{Binding ResponseText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" FontSize="15"
-                           Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextBrush}" />
-                </StackPanel>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
-      </ScrollViewer>
-    </DockPanel>
-
-    <!-- Window bar: shows when the mouse reaches the top edge, hides about two seconds after it leaves. Drag it to move the
-         window, double-click it to maximize or restore. -->
-    <Border x:Name="WindowBar" Grid.ColumnSpan="2" VerticalAlignment="Top" Height="34" Opacity="0" IsHitTestVisible="False" Panel.ZIndex="100"
-            Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
-            MouseLeftButtonDown="WindowBarMouseDown">
+    <!-- ═══ Top navigation bar ═══ -->
+    <Border Grid.Row="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
+            MouseLeftButtonDown="TopBarMouseDown">
       <DockPanel LastChildFill="True">
+        <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="12,0" Command="{Binding ToggleLeftCommand}"
+                ToolTip="Show or hide the navigation sidebar (Ctrl+B)" AutomationProperties.Name="Toggle left sidebar">
+          <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE700;" />
+        </Button>
+        <TextBlock DockPanel.Dock="Left" Text="MEDIATOR" Style="{StaticResource TechLabel}" FontSize="12" VerticalAlignment="Center" Margin="2,0,12,0" />
+        <!-- Current project / workspace -->
+        <Border DockPanel.Dock="Left" Padding="10,3" CornerRadius="11" BorderThickness="1" BorderBrush="{DynamicResource LineBrush}" VerticalAlignment="Center"
+                ToolTip="{Binding ProjectToolTip}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE8B7;" Margin="0,0,6,0" />
+            <TextBlock Text="{Binding ProjectText}" FontSize="12" MaxWidth="220" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+
+        <!-- Window buttons -->
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-          <Button Style="{StaticResource FlatButton}" Width="44" Click="MinimizeClick" ToolTip="Minimize" AutomationProperties.Name="Minimize">
+          <Button Style="{StaticResource FlatButton}" Width="40" Click="MinimizeClick" ToolTip="Minimize" AutomationProperties.Name="Minimize">
             <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE921;" />
           </Button>
-          <Button Style="{StaticResource FlatButton}" Width="44" Click="MaximizeClick" ToolTip="Maximize or restore" AutomationProperties.Name="Maximize or restore">
+          <Button Style="{StaticResource FlatButton}" Width="40" Click="MaximizeClick" ToolTip="Maximize or restore" AutomationProperties.Name="Maximize or restore">
             <TextBlock x:Name="MaximizeGlyph" Style="{StaticResource Icon}" FontSize="10" Text="&#xE923;" />
           </Button>
-          <Button Style="{StaticResource FlatButton}" Width="44" Click="CloseClick" ToolTip="Close (the chat is kept)" AutomationProperties.Name="Close">
+          <Button Style="{StaticResource FlatButton}" Width="40" Click="CloseClick" ToolTip="Close (the chat is kept)" AutomationProperties.Name="Close">
             <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8BB;" />
           </Button>
         </StackPanel>
-        <TextBlock Text="MEDIATOR" Style="{StaticResource TechLabel}" VerticalAlignment="Center" Margin="14,0,0,0" />
+        <!-- Profile -->
+        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="10,0" Command="{Binding ToggleProfileCommand}"
+                ToolTip="Usage, providers, connections, shortcuts, appearance, settings, logs, about" AutomationProperties.Name="Profile menu">
+          <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xE77B;" />
+        </Button>
+        <!-- Notifications -->
+        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="10,0" Command="{Binding OpenNotificationsCommand}"
+                ToolTip="{Binding NotificationText}" AutomationProperties.Name="Notifications">
+          <Grid>
+            <TextBlock Style="{StaticResource Icon}" FontSize="15" Text="&#xEA8F;" />
+            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-8,0" MinWidth="15" Height="15" CornerRadius="8" Padding="3,0"
+                    Background="{DynamicResource DangerBrush}" Visibility="{Binding HasNotifications, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Text="{Binding NotificationCount}" FontSize="9.5" FontWeight="SemiBold" Foreground="{DynamicResource OnAccentBrush}" HorizontalAlignment="Center" />
+            </Border>
+          </Grid>
+        </Button>
+        <!-- The six right-sidebar modes -->
+        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="10,0" Command="{Binding ToggleRightCommand}"
+                ToolTip="Show or hide the right sidebar (Ctrl+Alt+B)" AutomationProperties.Name="Toggle right sidebar">
+          <TextBlock Style="{StaticResource Icon}" FontSize="14" Text="&#xE89F;" />
+        </Button>
+        <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Modes}" Focusable="False" Margin="0,0,4,0">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="Horizontal" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <ToggleButton Style="{StaticResource ModeToggle}" Height="43" IsChecked="{Binding IsActive}" Command="{Binding SelectCommand}"
+                            ToolTip="{Binding Description}" AutomationProperties.Name="{Binding Title}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="{Binding Glyph}" Margin="0,0,6,0" />
+                  <TextBlock Text="{Binding Title}" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+              </ToggleButton>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <!-- Global search and command palette -->
+        <Button Style="{StaticResource OutlineButton}" Margin="16,7" Padding="10,0" MaxWidth="460" HorizontalAlignment="Center" HorizontalContentAlignment="Left"
+                Command="{Binding OpenPaletteCommand}" AutomationProperties.Name="Search and commands">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE721;" Margin="0,0,8,0" Foreground="{DynamicResource MutedBrush}" />
+            <TextBlock Text="Search chats or run a command" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,0,24,0" />
+            <TextBlock Text="Ctrl+P" Style="{StaticResource TechLabel}" />
+          </StackPanel>
+        </Button>
       </DockPanel>
+    </Border>
+
+    <!-- ═══ Body: left sidebar | conversation | right sidebar ═══ -->
+    <Grid x:Name="BodyGrid" Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition x:Name="LeftColumn" Width="{Binding LeftWidth, Mode=TwoWay, Converter={StaticResource PixelsToGridLength}}" MaxWidth="{Binding LeftMaxWidth}" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" MinWidth="{Binding CenterMinWidth}" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition x:Name="RightColumn" Width="{Binding RightWidth, Mode=TwoWay, Converter={StaticResource PixelsToGridLength}}" MaxWidth="{Binding RightMaxWidth}" />
+      </Grid.ColumnDefinitions>
+
+      <!-- ─── Left sidebar: navigation ─── -->
+      <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" Visibility="{Binding IsLeftShown, Converter={StaticResource BoolToVisibility}}">
+        <DockPanel Margin="10,10,8,8">
+          <Button DockPanel.Dock="Top" Style="{StaticResource OutlineButton}" Padding="10,6" HorizontalContentAlignment="Left"
+                  Command="{Binding NewChatCommand}" AutomationProperties.Name="New chat">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="Ctrl+N" VerticalAlignment="Center" />
+              <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" Margin="0,0,8,0" />
+              <TextBlock Text="New chat" />
+            </DockPanel>
+          </Button>
+          <Grid DockPanel.Dock="Top" Margin="0,8,0,4">
+            <TextBox x:Name="SearchBox" Style="{StaticResource FieldBox}" Padding="26,5,6,5" AutomationProperties.Name="Search chats"
+                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Search titles, prompts and answers (Ctrl+K)" />
+            <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                       Foreground="{DynamicResource MutedBrush}" Text="&#xE721;" />
+            <TextBlock Margin="26,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="12" Foreground="{DynamicResource MutedBrush}"
+                       Text="Search chats" Visibility="{Binding SearchText, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+          </Grid>
+          <!-- Profile menu, at the bottom like a chat app -->
+          <Button DockPanel.Dock="Bottom" Style="{StaticResource ListButton}" Margin="0,6,0,0" Command="{Binding ToggleProfileCommand}" AutomationProperties.Name="Profile">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Right" Style="{StaticResource Icon}" FontSize="10" Text="&#xE70E;" />
+              <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="&#xE77B;" Margin="0,0,8,0" />
+              <TextBlock Text="Profile and settings" FontSize="12.5" />
+            </DockPanel>
+          </Button>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <!-- Active jobs -->
+              <ToggleButton x:Name="JobsSection" Style="{StaticResource SectionToggle}" IsChecked="True">
+                <TextBlock Text="{Binding JobsHeader}" />
+              </ToggleButton>
+              <StackPanel Visibility="{Binding IsChecked, ElementName=JobsSection, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource MutedText}" Margin="6,0,0,4" Text="No jobs yet in this session."
+                           Visibility="{Binding JobRows.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+                <ItemsControl ItemsSource="{Binding JobRows}" Focusable="False">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Button Style="{StaticResource ListButton}" Command="{Binding InspectCommand}" ToolTip="{Binding Job.Detail}" Padding="6,4">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <Ellipse Width="8" Height="8" Margin="0,5,8,0" VerticalAlignment="Top" Fill="{Binding Job.State, Converter={StaticResource JobStateBrush}}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding Job.Title}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="10.5">
+                              <Run Text="{Binding StateLabel, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Job.Provider, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Job.ElapsedText, Mode=OneWay}" />
+                            </TextBlock>
+                          </StackPanel>
+                          <Button Grid.Column="2" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding Job.KillCommand}" ToolTip="Cancel this job"
+                                  Visibility="{Binding Job.IsActive, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Cancel job">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="9" Text="&#xE711;" />
+                          </Button>
+                        </Grid>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <!-- Pinned chats -->
+              <ToggleButton x:Name="PinnedSection" Style="{StaticResource SectionToggle}" IsChecked="True"
+                            Visibility="{Binding HasPinnedChats, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="Pinned" />
+              </ToggleButton>
+              <ItemsControl ItemsSource="{Binding PinnedChats}" Focusable="False"
+                            Visibility="{Binding IsChecked, ElementName=PinnedSection, Converter={StaticResource BoolToVisibility}}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <DockPanel Margin="0,1">
+                      <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding DeleteCommand}" ToolTip="Delete this chat" AutomationProperties.Name="Delete chat">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="9" Text="&#xE74D;" />
+                      </Button>
+                      <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding PinCommand}" ToolTip="Unpin" AutomationProperties.Name="Unpin chat">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE735;" Foreground="{DynamicResource AccentBrush}" />
+                      </Button>
+                      <Button Style="{StaticResource ListButton}" Command="{Binding OpenCommand}" ToolTip="Open and continue this chat">
+                        <StackPanel>
+                          <TextBlock Text="{Binding Title}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Style="{StaticResource MutedText}" FontSize="10.5">
+                            <Run Text="{Binding UpdatedText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ProjectText, Mode=OneWay}" />
+                          </TextBlock>
+                        </StackPanel>
+                      </Button>
+                    </DockPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <!-- Recent chats -->
+              <ToggleButton x:Name="RecentSection" Style="{StaticResource SectionToggle}" IsChecked="True">
+                <TextBlock Text="Recent" />
+              </ToggleButton>
+              <StackPanel Visibility="{Binding IsChecked, ElementName=RecentSection, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource MutedText}" Margin="6,0,0,4" Text="No chats match."
+                           Visibility="{Binding RecentChats.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+                <ItemsControl ItemsSource="{Binding RecentChats}" Focusable="False">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <DockPanel Margin="0,1">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding DeleteCommand}" ToolTip="Delete this chat" AutomationProperties.Name="Delete chat">
+                          <TextBlock Style="{StaticResource Icon}" FontSize="9" Text="&#xE74D;" />
+                        </Button>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding PinCommand}" ToolTip="Pin: keep this chat at the top" AutomationProperties.Name="Pin chat">
+                          <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE734;" />
+                        </Button>
+                        <Button Style="{StaticResource ListButton}" Command="{Binding OpenCommand}" ToolTip="Open and continue this chat">
+                          <StackPanel>
+                            <TextBlock Text="{Binding Title}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="10.5">
+                              <Run Text="{Binding UpdatedText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ProjectText, Mode=OneWay}" />
+                            </TextBlock>
+                          </StackPanel>
+                        </Button>
+                      </DockPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <!-- Projects: folders chats worked in -->
+              <ToggleButton x:Name="ProjectsSection" Style="{StaticResource SectionToggle}" IsChecked="False">
+                <TextBlock Text="Projects" />
+              </ToggleButton>
+              <StackPanel Visibility="{Binding IsChecked, ElementName=ProjectsSection, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource MutedText}" Margin="6,0,0,4" TextWrapping="Wrap"
+                           Text="A project appears here once a chat is allowed a folder (Allow folder or Save to)."
+                           Visibility="{Binding HasProjects, Converter={StaticResource InverseBoolToVisibility}}" />
+                <ItemsControl ItemsSource="{Binding Projects}" Focusable="False">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <DockPanel Margin="0,1" ToolTip="{Binding Folder}">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="5,2" Command="{Binding OpenFolderCommand}" ToolTip="Open the folder" AutomationProperties.Name="Open project folder">
+                          <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8DA;" />
+                        </Button>
+                        <Button Style="{StaticResource ListButton}" Command="{Binding SearchChatsCommand}" ToolTip="Show this project's chats">
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE8B7;" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" MaxWidth="170" />
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding Detail}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                          </StackPanel>
+                        </Button>
+                      </DockPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+      <GridSplitter Grid.Column="1" Style="{StaticResource SidebarSplitter}" HorizontalAlignment="Stretch"
+                    Visibility="{Binding IsLeftShown, Converter={StaticResource BoolToVisibility}}" />
+
+      <!-- ─── Center: the conversation (scoped to the chat's view model) ─── -->
+      <DockPanel Grid.Column="2" DataContext="{Binding Main}">
+        <!-- Conversation header -->
+        <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,6">
+          <DockPanel>
+            <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding RetryCommand}"
+                    ToolTip="Retry: run the last prompt again" AutomationProperties.Name="Retry">
+              <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72C;" />
+            </Button>
+            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ChipToggle}" Margin="6,0" IsChecked="{Binding IsChatPinned}" ToolTip="Pin this chat (kept at the top)"
+                          Visibility="{Binding HasConversation, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Pin">
+              <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE840;" />
+            </ToggleButton>
+            <CheckBox DockPanel.Dock="Right" Margin="8,0" VerticalAlignment="Center" FontSize="11.5" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
+                      ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged." />
+            <!-- Switch provider / model mid-conversation: the next turn runs there with the whole conversation handed over. -->
+            <ComboBox DockPanel.Dock="Right" MinWidth="190" Margin="6,0" FontSize="11.5" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
+                      DisplayMemberPath="Label" ToolTip="Provider and model for the next turn: the conversation is handed over. Auto lets the routing rules pick."
+                      AutomationProperties.Name="Provider and model" />
+            <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+              <TextBox Style="{StaticResource FieldBox}" BorderThickness="0" Background="Transparent" Padding="0" FontSize="14" FontWeight="SemiBold"
+                       Text="{Binding ChatTitle, UpdateSourceTrigger=LostFocus}" ToolTip="Click to rename this chat" AutomationProperties.Name="Chat title" KeyDown="TitleKeyDown" />
+              <TextBlock Style="{StaticResource MutedText}" FontSize="11">
+                <Run Text="{Binding DataContext.ProjectText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.ProviderText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding DataContext.SessionText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" />
+              </TextBlock>
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
+        <!-- Composer -->
+        <Border DockPanel.Dock="Bottom" MaxWidth="980" Margin="20,6,20,14" Padding="12,8" CornerRadius="14"
+                Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource HudFrameBrush}" BorderThickness="1">
+          <StackPanel>
+            <!-- An approval is waiting: answer it in Access -->
+            <Border Margin="0,0,0,6" Padding="10,6" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource WarningBrush}"
+                    Visibility="{Binding HasPendingApproval, Converter={StaticResource BoolToVisibility}}">
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="10,3"
+                        Command="{Binding DataContext.OpenNotificationsCommand, RelativeSource={RelativeSource AncestorType=Window}}" AutomationProperties.Name="Review approval">
+                  <TextBlock Text="Review" FontSize="12" />
+                </Button>
+                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE7BA;" Margin="0,0,8,0" Foreground="{DynamicResource WarningBrush}" />
+                <TextBlock Text="{Binding PendingApproval.Title}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12.5" />
+              </DockPanel>
+            </Border>
+            <!-- A job was refused a folder: allow it for this chat in one click -->
+            <Border Margin="0,0,0,6" Padding="10,6" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}"
+                    Visibility="{Binding HasFolderRequest, Converter={StaticResource BoolToVisibility}}">
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="8,3" Margin="4,0,0,0" Command="{Binding DismissFolderRequestCommand}"
+                        Content="Dismiss" FontSize="12" AutomationProperties.Name="Dismiss folder request" />
+                <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="10,3" Command="{Binding AllowFolderRequestCommand}"
+                        ToolTip="Let this chat's jobs read and write this folder (the running job gets it now)" AutomationProperties.Name="Allow folder">
+                  <TextBlock Text="Allow" FontSize="12" />
+                </Button>
+                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72E;" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding FolderRequestText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12.5" />
+              </DockPanel>
+            </Border>
+            <!-- Context: folders allowed for this chat, continuation, attachments and app chips, Save to -->
+            <ItemsControl ItemsSource="{Binding ChatFolders}" Focusable="False" Margin="0,0,0,2">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Margin="0,0,6,4" Padding="8,2" CornerRadius="10" BorderThickness="1" BorderBrush="{DynamicResource LineBrush}" ToolTip="{Binding}">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8B7;" Margin="0,0,5,0" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding}" FontSize="11.5" MaxWidth="320" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                      <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="4,0,-4,0" ToolTip="Stop allowing this folder"
+                              Command="{Binding DataContext.Main.RemoveChatFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
+                      </Button>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <ToggleButton HorizontalAlignment="Left" Margin="0,0,0,4" Style="{StaticResource ChipToggle}"
+                          DataContext="{Binding Continuation}" IsChecked="{Binding IsSelected}" ToolTip="{Binding ToolTipText}"
+                          Visibility="{Binding DataContext.Main.HasContinuation, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Text="{Binding Text}" FontSize="11.5" />
+            </ToggleButton>
+            <ItemsControl ItemsSource="{Binding ContextChips}" Focusable="False">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <ToggleButton Style="{StaticResource ChipToggle}" IsChecked="{Binding IsIncluded}" ToolTip="{Binding ToolTipText}">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="0,0,5,0" Text="{Binding KindGlyph}" />
+                      <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="260" TextTrimming="CharacterEllipsis" />
+                      <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="4,0,-4,0" Command="{Binding RemoveCommand}" ToolTip="Remove"
+                              Visibility="{Binding IsRemovable, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
+                      </Button>
+                    </StackPanel>
+                  </ToggleButton>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <DockPanel Margin="2,0,0,2" Visibility="{Binding HasSaveFolder, Converter={StaticResource BoolToVisibility}}">
+              <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="4,0" Command="{Binding ClearSaveFolderCommand}"
+                      ToolTip="Clear: jobs use the folder selected in Explorer again" AutomationProperties.Name="Clear save folder">
+                <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
+              </Button>
+              <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="{Binding SaveFolderText}" ToolTip="{Binding SaveFolder}" />
+            </DockPanel>
+            <Grid>
+              <TextBox x:Name="PromptBox" Padding="2,8" Background="Transparent" BorderThickness="0" FontSize="14.5"
+                       Foreground="{DynamicResource TextBrush}" CaretBrush="{DynamicResource TextBrush}" SelectionBrush="{DynamicResource SelectionBrush}"
+                       AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="220" VerticalScrollBarVisibility="Auto"
+                       Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}" ToolTip="Enter to send · Shift+Enter for a new line · Up for your last prompt · Esc to stop" />
+              <TextBlock Margin="4,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="14.5" Foreground="{DynamicResource MutedBrush}"
+                         Text="Ask, reply, or drop files here"
+                         Visibility="{Binding PromptText, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+            </Grid>
+            <DockPanel Margin="0,4,0,0">
+              <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding AttachCommand}" ToolTip="Attach files (read-only for jobs)">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE723;" Margin="0,0,6,0" />
+                  <TextBlock Text="Attach" FontSize="12" />
+                </StackPanel>
+              </Button>
+              <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding ChooseSaveFolderCommand}"
+                      ToolTip="Choose the folder jobs save into (a Windows folder picker)">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE74E;" Margin="0,0,6,0" />
+                  <TextBlock Text="Save to" FontSize="12" />
+                </StackPanel>
+              </Button>
+              <Button DockPanel.Dock="Left" Style="{StaticResource FlatButton}" Padding="8,4" Command="{Binding AllowFolderCommand}"
+                      ToolTip="Allow a folder for this chat: its jobs may read and write it (also given to a job that is running)">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72E;" Margin="0,0,6,0" />
+                  <TextBlock Text="Allow folder" FontSize="12" />
+                </StackPanel>
+              </Button>
+              <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="10,3" Margin="6,0,0,0" Command="{Binding StopCommand}"
+                      Visibility="{Binding IsChatBusy, Converter={StaticResource BoolToVisibility}}" ToolTip="Stop the running prompt" AutomationProperties.Name="Stop">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE71A;" Margin="0,0,5,0" />
+                  <TextBlock Text="Stop" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+              <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="14,5" Command="{Binding SubmitPromptCommand}" AutomationProperties.Name="Send"
+                      Visibility="{Binding IsChatBusy, Converter={StaticResource InverseBoolToVisibility}}">
+                <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="&#xE724;" />
+              </Button>
+              <ComboBox DockPanel.Dock="Right" MinWidth="70" Margin="6,0,0,0" FontSize="11.5" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
+                        ToolTip="Reasoning effort (--effort). Auto: the CLI's default" AutomationProperties.Name="Effort" />
+              <TextBlock Style="{StaticResource MutedText}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding RouteText}" />
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Messages -->
+        <Grid>
+          <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="980" Margin="24,20,24,8">
+              <TextBlock Style="{StaticResource MutedText}" FontSize="16" HorizontalAlignment="Center" Margin="0,80,0,0" Text="Start a conversation below."
+                         Visibility="{Binding HasConversation, Converter={StaticResource InverseBoolToVisibility}}" />
+              <ItemsControl ItemsSource="{Binding Conversation}" Focusable="False">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="0,0,0,22">
+                      <Border HorizontalAlignment="Right" MaxWidth="680" Padding="14,10" CornerRadius="14" Background="{DynamicResource PanelBrush}"
+                              BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
+                        <TextBox Text="{Binding UserPrompt, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0"
+                                 Foreground="{DynamicResource TextBrush}" />
+                      </Border>
+                      <!-- Which provider and model answered: each turn keeps its own badge, so switches and failovers stay visible. -->
+                      <TextBlock Style="{StaticResource TechLabel}" Margin="0,12,0,2" Text="{Binding BadgeText}" />
+                      <TextBlock Style="{StaticResource MutedText}" Text="{Binding ThinkingSummary}"
+                                 Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                      <ItemsControl ItemsSource="{Binding Steps}" Focusable="False" Margin="0,2,0,4">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding}" />
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                      <TextBox Text="{Binding ResponseText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" FontSize="14.5"
+                               Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextBrush}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+          <Border x:Name="JumpToLatest" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8" Visibility="Collapsed">
+            <Button Style="{StaticResource OutlineButton}" Background="{DynamicResource PanelBrush}" Padding="10,4" Click="JumpToLatestClick"
+                    AutomationProperties.Name="Jump to latest">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE74B;" Margin="0,0,6,0" />
+                <TextBlock Text="Jump to latest" FontSize="12" />
+              </StackPanel>
+            </Button>
+          </Border>
+        </Grid>
+      </DockPanel>
+
+      <GridSplitter Grid.Column="3" Style="{StaticResource SidebarSplitter}" HorizontalAlignment="Stretch"
+                    Visibility="{Binding IsRightShown, Converter={StaticResource BoolToVisibility}}" />
+
+      <!-- ─── Right sidebar: six modes in one panel (each keeps its state while another shows) ─── -->
+      <Border Grid.Column="4" Background="{DynamicResource PanelBrush}" Visibility="{Binding IsRightShown, Converter={StaticResource BoolToVisibility}}">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" Margin="12,8,6,4">
+            <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding ToggleRightCommand}" ToolTip="Hide (Ctrl+Alt+B)"
+                    AutomationProperties.Name="Hide right sidebar">
+              <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8BB;" />
+            </Button>
+            <TextBlock Text="{Binding ActiveModeTitle}" Style="{StaticResource SectionTitle}" Margin="0" VerticalAlignment="Center" />
+          </DockPanel>
+          <Grid Margin="10,0,8,8">
+            <modes:CockpitModeView DataContext="{Binding Cockpit}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+            <modes:ArtifactsModeView DataContext="{Binding Artifacts}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+            <modes:AccessModeView DataContext="{Binding Access}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+            <modes:ActivityModeView DataContext="{Binding Activity}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+            <modes:KnowledgeModeView DataContext="{Binding Knowledge}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+            <modes:SoftwareModeView DataContext="{Binding Software}" Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
+          </Grid>
+        </DockPanel>
+      </Border>
+    </Grid>
+
+    <!-- ═══ Overlays: command palette, profile menu, shortcuts, about ═══ -->
+    <Border Grid.RowSpan="2" Panel.ZIndex="50" Background="{DynamicResource DropOverlayBrush}" MouseLeftButtonDown="OverlayBackgroundClick"
+            Visibility="{Binding IsPaletteOpen, Converter={StaticResource BoolToVisibility}}">
+      <Border Width="560" VerticalAlignment="Top" Margin="0,60,0,0" Style="{StaticResource Card}" Padding="8" MouseLeftButtonDown="SwallowClick">
+        <StackPanel>
+          <TextBox x:Name="PaletteBox" Style="{StaticResource FieldBox}" FontSize="14" Padding="8,6" AutomationProperties.Name="Command palette"
+                   Text="{Binding PaletteQuery, UpdateSourceTrigger=PropertyChanged}">
+            <TextBox.InputBindings>
+              <KeyBinding Key="Enter" Command="{Binding RunFirstPaletteItemCommand}" />
+              <KeyBinding Key="Escape" Command="{Binding ClosePaletteCommand}" />
+            </TextBox.InputBindings>
+          </TextBox>
+          <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+            <ItemsControl ItemsSource="{Binding PaletteResults}" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Style="{StaticResource ListButton}" Command="{Binding RunCommand}">
+                    <DockPanel>
+                      <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="11" Text="{Binding Hint}" MaxWidth="220" Margin="12,0,0,0" />
+                      <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="{Binding Glyph}" Margin="0,0,10,0" />
+                      <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <Border Grid.RowSpan="2" Panel.ZIndex="40" Width="300" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,44,96,0" Style="{StaticResource Card}" Padding="6"
+            Background="{DynamicResource RaisedBrush}" Visibility="{Binding IsProfileOpen, Converter={StaticResource BoolToVisibility}}">
+      <ItemsControl ItemsSource="{Binding ProfileItems}" Focusable="False">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Style="{StaticResource ListButton}" Command="{Binding RunCommand}" ToolTip="{Binding Hint}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="{Binding Glyph}" Margin="0,0,10,0" />
+                <TextBlock Text="{Binding Title}" />
+              </StackPanel>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </Border>
+
+    <Border Grid.RowSpan="2" Panel.ZIndex="60" Width="460" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource Card}" Padding="16"
+            Background="{DynamicResource RaisedBrush}" Visibility="{Binding IsShortcutsOpen, Converter={StaticResource BoolToVisibility}}">
+      <StackPanel>
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding CloseOverlaysCommand}" AutomationProperties.Name="Close shortcuts">
+            <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8BB;" />
+          </Button>
+          <TextBlock Text="Keyboard shortcuts" Style="{StaticResource SectionTitle}" Margin="0" />
+        </DockPanel>
+        <ItemsControl ItemsSource="{Binding Shortcuts}" Focusable="False" Margin="0,8,0,0">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}" FontFamily="{DynamicResource TechFont}" FontSize="12" Margin="0,3" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+
+    <Border Grid.RowSpan="2" Panel.ZIndex="60" Width="380" HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource Card}" Padding="16"
+            Background="{DynamicResource RaisedBrush}" Visibility="{Binding IsAboutOpen, Converter={StaticResource BoolToVisibility}}">
+      <StackPanel>
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding CloseOverlaysCommand}" AutomationProperties.Name="Close about">
+            <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE8BB;" />
+          </Button>
+          <TextBlock Text="About" Style="{StaticResource SectionTitle}" Margin="0" />
+        </DockPanel>
+        <TextBlock Text="{Binding VersionText}" Margin="0,8,0,4" FontWeight="SemiBold" />
+        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                   Text="Drives your existing Claude and Google subscriptions through their official CLIs, and your desktop programs through gated, audited tools. No billing or plan features." />
+        <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" Text="{Binding LayoutText}" />
+      </StackPanel>
     </Border>
   </Grid>
 </Window>

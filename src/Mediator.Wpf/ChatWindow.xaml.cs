@@ -2,31 +2,32 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Mediator.UI;
+using Mediator.UI.Workspace;
 
 namespace Mediator.Wpf;
 
 /// <summary>
-/// Full-screen chat view of the overlay's conversation, laid out and driven like the Claude app (see ComposerKeys for the
-/// prompt box). Shortcuts: Ctrl+Shift+O new chat, Ctrl+K search chats, Ctrl+B sidebar, Ctrl+Shift+C copy the last answer.
-/// Closing only hides it; it is reused. V14.1: no Windows title bar; a slim bar (minimize, maximize, close) slides in when the
-/// mouse reaches the top edge and hides about two seconds after it leaves.
+/// V16.2: the full-screen workspace. Top bar (project, search and command palette, the six right-sidebar modes,
+/// notifications, profile), left sidebar (new chat, search, jobs, pinned and recent chats, projects), the conversation, and
+/// the right sidebar. Layout lives in <see cref="WorkspaceViewModel"/>: this window only reports its width and forwards keys.
+/// Shortcuts: Ctrl+N new chat, Ctrl+K search chats, Ctrl+P palette, Ctrl+B left sidebar, Ctrl+Alt+B right sidebar,
+/// Ctrl+1..6 modes, Ctrl+Shift+C copy the last answer, Esc closes the palette or menus. Closing only hides the window.
 /// </summary>
 public partial class ChatWindow : Window
 {
+    private readonly WorkspaceViewModel _ws;
     private readonly MediatorOverlayViewModel _vm;
-    private GridLength _sidebarWidth = new(270);
-    private readonly DispatcherTimer _barHide = new() { Interval = TimeSpan.FromSeconds(2) };
-    private bool _barShown;
-    private const double BarRevealZone = 6; // px from the top edge of the content
+    /// <summary>The two splitter columns between the regions.</summary>
+    private const double SplitterWidth = 10;
 
     public ChatWindow(MediatorOverlayViewModel vm, DragEventHandler dragOver, DragEventHandler dragLeave, DragEventHandler drop)
     {
         InitializeComponent();
         _vm = vm;
-        DataContext = vm;
+        _ws = vm.Workspace;
+        DataContext = _ws;
         ComposerKeys.Attach(PromptBox, vm);
         PreviewDragEnter += dragOver;
         PreviewDragOver += dragOver;
@@ -35,9 +36,10 @@ public partial class ChatWindow : Window
         PreviewKeyDown += OnShortcut;
         vm.Conversation.CollectionChanged += (_, _) => ScrollToEnd();
         vm.FocusPromptRequested += () => { if (IsVisible) FocusPrompt(); };
-        _barHide.Tick += (_, _) => { _barHide.Stop(); SetBar(false); };
-        PreviewMouseMove += OnMouseMoveForBar;
-        MouseLeave += (_, _) => { if (_barShown) _barHide.Start(); };
+        _ws.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(WorkspaceViewModel.IsPaletteOpen) && _ws.IsPaletteOpen) FocusPalette(); };
+        BodyGrid.SizeChanged += (_, _) => _ws.AvailableWidth = Math.Max(0, BodyGrid.ActualWidth - SplitterWidth);
+        ChatScroll.ScrollChanged += (_, _) =>
+            JumpToLatest.Visibility = ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset > 200 ? Visibility.Visible : Visibility.Collapsed;
         StateChanged += (_, _) => FitToWorkArea();
         Loaded += (_, _) => FitToWorkArea();
 #if MEDIATOR_WEBVIEW
@@ -55,32 +57,17 @@ public partial class ChatWindow : Window
         FocusPrompt();
     }
 
-    // ── Window bar ───────────────────────────────────────────────────────────────────────────────────
-
-    private void OnMouseMoveForBar(object sender, MouseEventArgs e)
-    {
-        double y = e.GetPosition(RootGrid).Y;
-        if (y <= BarRevealZone || (_barShown && WindowBar.IsMouseOver)) { SetBar(true); _barHide.Stop(); }
-        else if (_barShown && !_barHide.IsEnabled) _barHide.Start();
-    }
-
-    private void SetBar(bool show)
-    {
-        if (show == _barShown) return;
-        _barShown = show;
-        WindowBar.IsHitTestVisible = show;
-        WindowBar.BeginAnimation(OpacityProperty, new DoubleAnimation(show ? 1 : 0, TimeSpan.FromMilliseconds(show ? 120 : 250)));
-    }
+    // ── Window caption (the top bar) ────────────────────────────────────────────────────────────────
 
     /// <summary>Without a title bar, a maximized window reaches past the screen by its resize border: pull the content in.</summary>
     private void FitToWorkArea()
     {
         RootGrid.Margin = WindowState == WindowState.Maximized ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);
-        MaximizeGlyph.Text = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
+        MaximizeGlyph.Text = WindowState == WindowState.Maximized ? "" : "";
     }
 
-    /// <summary>Drag to move, double-click to maximize or restore (the bar's buttons handle their own clicks).</summary>
-    private void WindowBarMouseDown(object sender, MouseButtonEventArgs e)
+    /// <summary>The top bar is the caption: drag to move, double-click to maximize or restore (its buttons handle their own clicks).</summary>
+    private void TopBarMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ClickCount == 2) { MaximizeClick(sender, e); return; }
         try { DragMove(); } catch (InvalidOperationException) { } // the button was released before the drag started
@@ -93,28 +80,56 @@ public partial class ChatWindow : Window
 
     private void CloseClick(object sender, RoutedEventArgs e) => Close();
 
+    // ── Overlays and focus ───────────────────────────────────────────────────────────────────────────
+
+    /// <summary>A click outside the palette closes it.</summary>
+    private void OverlayBackgroundClick(object sender, MouseButtonEventArgs e) => _ws.CloseOverlaysCommand.Execute(null);
+
+    /// <summary>A click inside the palette card stays there.</summary>
+    private void SwallowClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    private void FocusPalette() => Dispatcher.BeginInvoke(() => { PaletteBox.Focus(); PaletteBox.SelectAll(); }, DispatcherPriority.Input);
+
     public void FocusPrompt() => Dispatcher.BeginInvoke(() => { PromptBox.Focus(); PromptBox.CaretIndex = PromptBox.Text.Length; }, DispatcherPriority.Input);
 
     private void ScrollToEnd() => Dispatcher.BeginInvoke(() => ChatScroll.ScrollToEnd(), DispatcherPriority.Background);
 
+    private void JumpToLatestClick(object sender, RoutedEventArgs e) => ScrollToEnd();
+
     private void OnShortcut(object sender, KeyEventArgs e)
     {
         var mods = Keyboard.Modifiers;
-        bool ctrl = (mods & ModifierKeys.Control) != 0, shift = (mods & ModifierKeys.Shift) != 0;
-        if (!ctrl) return;
-        switch (e.Key)
+        bool ctrl = (mods & ModifierKeys.Control) != 0, shift = (mods & ModifierKeys.Shift) != 0, alt = (mods & ModifierKeys.Alt) != 0;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key; // with Alt held, WPF reports the key as System
+        if (key == Key.Escape && (_ws.IsPaletteOpen || _ws.IsProfileOpen || _ws.IsShortcutsOpen || _ws.IsAboutOpen))
         {
+            _ws.CloseOverlaysCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+        if (!ctrl) return;
+        switch (key)
+        {
+            case Key.N when !shift && !alt:
             case Key.O when shift:
-                if (_vm.ClearConversationCommand.CanExecute(null)) _vm.ClearConversationCommand.Execute(null);
+                _ws.NewChatCommand.Execute(null);
                 FocusPrompt();
                 break;
             case Key.K when !shift:
-                if (SidebarColumn.Width.Value == 0) ToggleSidebar(this, e);
-                SearchBox.Focus();
-                SearchBox.SelectAll();
+                if (!_ws.IsLeftShown) _ws.ToggleLeftCommand.Execute(null);
+                Dispatcher.BeginInvoke(() => { SearchBox.Focus(); SearchBox.SelectAll(); }, DispatcherPriority.Input);
+                break;
+            case Key.P when !shift:
+                _ws.OpenPaletteCommand.Execute(null);
+                break;
+            case Key.B when alt:
+                _ws.ToggleRightCommand.Execute(null);
                 break;
             case Key.B when !shift:
-                ToggleSidebar(this, e);
+                _ws.ToggleLeftCommand.Execute(null);
+                break;
+            case >= Key.D1 and <= Key.D6 when !shift && !alt:
+                _ws.SelectMode((RightMode)(key - Key.D1));
                 break;
             case Key.C when shift:
                 if (_vm.LastResponse is { } text) CopyText(text);
@@ -123,14 +138,6 @@ public partial class ChatWindow : Window
                 return;
         }
         e.Handled = true;
-    }
-
-    private void ToggleSidebar(object sender, RoutedEventArgs e)
-    {
-        bool hidden = SidebarColumn.Width.Value == 0;
-        if (!hidden) _sidebarWidth = SidebarColumn.Width;
-        SidebarColumn.Width = hidden ? _sidebarWidth : new GridLength(0);
-        Sidebar.Visibility = hidden ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Enter commits a rename, Esc cancels it.</summary>

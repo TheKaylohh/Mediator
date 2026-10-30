@@ -1,4 +1,4 @@
-# Mediator features (V16)
+# Mediator features (V16.2)
 
 Everything Mediator can do, what each feature is for, and prompts it handles. Type a prompt in the overlay
 (Ctrl+Shift+Space) or Full view. Mediator picks the tools from the prompt, or you can force them with a prefix
@@ -167,6 +167,10 @@ Antigravity CLI) and never on pay-per-token API keys.
 - **Built-in file formats:** Office documents, 3D meshes, STEP/IGES, DXF/SVG, PDFs and images.
 - **Custom MCP servers:** add any MCP server. It gets a 15-second health check, and its tools ask before every call.
 - **Full check from the console:** `mediator-cli doctor` checks every prerequisite.
+
+## 16b. Workspace window (V16.2)
+- **Full view** is a full-screen workspace: left navigation (new chat, search, jobs, pinned/recent chats, projects), the conversation, and a right sidebar with six modes: Cockpit, Artifacts, Access, Activity, Knowledge, Software. See [docs/v16/WORKSPACE.md](v16/WORKSPACE.md).
+- **Shortcuts:** Ctrl+N, Ctrl+K, Ctrl+P (command palette), Ctrl+B / Ctrl+Alt+B (sidebars), Ctrl+1…6 (modes).
 
 ## 17. App
 - **Overlay and Full view:**

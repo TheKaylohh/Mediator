@@ -82,8 +82,9 @@ public partial class App : Application
         vm.Onboarding = onboarding;
 
         vm.Chats = new ChatStore(System.IO.Path.Combine(_runtime.Paths.DataDirectory, "chats"));
-        var window = new MainWindow(vm);
+        var window = new MainWindow(vm) { DataDirectory = _runtime.Paths.DataDirectory };
         MainWindow = window;
+        vm.WorkspaceHost = window; // V16.2: the workspace window opens files and programs and the quick panel's tabs through it
 
         _tray = new TrayIcon();
         _tray.ToggleRequested += () => Dispatcher.BeginInvoke(() =>

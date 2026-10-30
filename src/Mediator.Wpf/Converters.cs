@@ -38,6 +38,19 @@ public sealed class EmptyToVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
 }
 
+/// <summary>
+/// V16.2: a sidebar width (device-independent pixels, from the workspace ViewModel) as a grid column width, both ways: a
+/// GridSplitter drag writes the new width back. 0 collapses the column.
+/// </summary>
+public sealed class PixelsToGridLengthConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        new GridLength(value is double d && double.IsFinite(d) && d > 0 ? d : 0);
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is GridLength { IsAbsolute: true } g ? g.Value : Binding.DoNothing;
+}
+
 public sealed class JobStateToBrushConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)

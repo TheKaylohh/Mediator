@@ -1,0 +1,55 @@
+<UserControl x:Class="Mediator.Wpf.Modes.ArtifactsModeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ws="clr-namespace:Mediator.UI.Workspace;assembly=Mediator.UI"
+             mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=ws:ArtifactsModeViewModel}">
+  <!-- 6.2 Artifacts: files this chat produced or used, with the selected one's details and actions. -->
+  <DockPanel>
+    <ComboBox DockPanel.Dock="Top" Margin="0,4,0,6" FontSize="12" ItemsSource="{Binding Kinds}" SelectedItem="{Binding KindFilter}" AutomationProperties.Name="Kind of file" />
+    <!-- Viewer: the selected file -->
+    <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Margin="0,6,0,0" Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
+      <StackPanel DataContext="{Binding Selected}">
+        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+        <TextBlock Style="{StaticResource MutedText}" FontSize="11">
+          <Run Text="{Binding Kind, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding SizeText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding CreatedText, Mode=OneWay}" /><Run Text=" · from " /><Run Text="{Binding Source, Mode=OneWay}" />
+        </TextBlock>
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+          <Button Style="{StaticResource AccentButton}" Padding="10,3" Command="{Binding OpenCommand}" AutomationProperties.Name="Open externally">
+            <TextBlock Text="Open" FontSize="12" />
+          </Button>
+          <Button Style="{StaticResource OutlineButton}" Padding="10,3" Margin="6,0,0,0" Command="{Binding RevealCommand}" AutomationProperties.Name="Open folder">
+            <TextBlock Text="Folder" FontSize="12" />
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="11" Margin="2,6,0,0" Text="{Binding ViewerNote}" />
+    <!-- Library -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="2,4" Visibility="{Binding HasItems, Converter={StaticResource InverseBoolToVisibility}}"
+                   Text="No files yet. Files the answers name (and that exist) and attachments appear here." />
+        <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Button Style="{StaticResource ListButton}" Padding="6,4" Command="{Binding SelectCommand}" ToolTip="{Binding Path}">
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding SizeText}" Margin="8,0,0,0" />
+                  <Border DockPanel.Dock="Left" Width="40" Margin="0,0,8,0" Padding="2,1" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource LineBrush}">
+                    <TextBlock Style="{StaticResource TechLabel}" FontSize="9.5" HorizontalAlignment="Center" Text="{Binding Extension}" />
+                  </Border>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding CreatedText}" />
+                  </StackPanel>
+                </DockPanel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

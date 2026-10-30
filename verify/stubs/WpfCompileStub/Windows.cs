@@ -222,10 +222,18 @@ namespace System.Windows
         public static void SetText(string text) { }
     }
 
+    public enum GridUnitType { Auto = 0, Pixel = 1, Star = 2 }
+
     public struct GridLength
     {
-        public GridLength(double value) { Value = value; }
+        public GridLength(double value) : this(value, GridUnitType.Pixel) { }
+        public GridLength(double value, GridUnitType type) { Value = value; GridUnitType = type; }
         public double Value { get; }
+        public GridUnitType GridUnitType { get; }
+        public bool IsAbsolute => GridUnitType == GridUnitType.Pixel;
+        public bool IsStar => GridUnitType == GridUnitType.Star;
+        public bool IsAuto => GridUnitType == GridUnitType.Auto;
+        public static GridLength Auto => new(1.0, GridUnitType.Auto);
     }
 
     public static class SystemParameters
@@ -458,7 +466,19 @@ namespace System.Windows.Controls
     public class ScrollViewer : ContentControl
     {
         public void ScrollToEnd() { }
+        public double VerticalOffset { get; }
+        public double ScrollableHeight { get; }
+        public double ViewportHeight { get; }
+        public event ScrollChangedEventHandler ScrollChanged { add { } remove { } }
     }
+
+    public class ScrollChangedEventArgs : RoutedEventArgs
+    {
+        public double VerticalChange { get; }
+        public double ExtentHeightChange { get; }
+    }
+
+    public delegate void ScrollChangedEventHandler(object sender, ScrollChangedEventArgs e);
 
     public class TextBox : Control
     {

@@ -1,0 +1,121 @@
+<UserControl x:Class="Mediator.Wpf.Modes.CockpitModeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ws="clr-namespace:Mediator.UI.Workspace;assembly=Mediator.UI"
+             mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=ws:CockpitModeViewModel}">
+  <!-- 6.1 Cockpit: the live execution environment of the open chat. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel>
+      <TextBlock Text="ENVIRONMENT" Style="{StaticResource TechLabel}" Margin="2,4,0,4" />
+      <Border Style="{StaticResource Card}">
+        <ItemsControl ItemsSource="{Binding Environment}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <DockPanel Margin="0,2">
+                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
+                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
+              </DockPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <TextBlock Text="CONTEXT" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <ItemsControl ItemsSource="{Binding Context}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <DockPanel Margin="0,2">
+                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
+                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
+              </DockPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <TextBlock Text="CONNECTORS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <ItemsControl ItemsSource="{Binding Connectors}" Focusable="False">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <DockPanel Margin="0,2">
+                <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" Text="{Binding Value}" MaxWidth="180" />
+                <TextBlock Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis" />
+              </DockPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <TextBlock Text="TOOLS (LATEST JOB)" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource MutedText}" Text="No tool calls yet." Visibility="{Binding HasTools, Converter={StaticResource InverseBoolToVisibility}}" />
+          <ItemsControl ItemsSource="{Binding Tools}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="0,2" ToolTip="{Binding Detail}">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding TimeText}" />
+                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                  </DockPanel>
+                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" Text="{Binding Phase}" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="OUTPUTS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource MutedText}" Text="No files yet." Visibility="{Binding Outputs.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+          <ItemsControl ItemsSource="{Binding Outputs}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Button Style="{StaticResource ListButton}" Padding="4,3" Command="{Binding OpenCommand}" ToolTip="{Binding Path}">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding SizeText}" Margin="8,0,0,0" />
+                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource TechLabel}" Width="44" Text="{Binding Extension}" />
+                    <TextBlock Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                  </DockPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="CHANGES" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding ChangesNote}" />
+      </Border>
+
+      <TextBlock Text="BACKGROUND TASKS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource MutedText}" Text="Nothing running." Visibility="{Binding HasBackgroundTasks, Converter={StaticResource InverseBoolToVisibility}}" />
+          <ItemsControl ItemsSource="{Binding BackgroundTasks}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Button Style="{StaticResource ListButton}" Padding="4,3" Command="{Binding InspectCommand}" ToolTip="Show this job's activity">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding Job.ElapsedText}" />
+                    <Ellipse DockPanel.Dock="Left" Width="7" Height="7" Margin="0,0,8,0" Fill="{Binding Job.State, Converter={StaticResource JobStateBrush}}" />
+                    <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
+                      <Run Text="{Binding Job.Title, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding StateLabel, Mode=OneWay}" />
+                    </TextBlock>
+                  </DockPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

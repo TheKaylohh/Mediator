@@ -162,6 +162,7 @@ namespace System.Windows.Input
         A = 44, B = 45, C = 46, D = 47, E = 48, F = 49, G = 50, H = 51, I = 52, J = 53, K = 54, L = 55, M = 56,
         N = 57, O = 58, P = 59, Q = 60, R = 61, S = 62, T = 63, U = 64, V = 65, W = 66, X = 67, Y = 68, Z = 69,
         Left = 23, Up = 24, Right = 25, Down = 26,
+        D0 = 34, D1 = 35, D2 = 36, D3 = 37, D4 = 38, D5 = 39, D6 = 40, D7 = 41, D8 = 42, D9 = 43, System = 156,
     }
 
     [Flags]
