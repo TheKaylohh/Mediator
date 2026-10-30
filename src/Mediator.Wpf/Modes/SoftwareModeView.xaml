@@ -14,7 +14,7 @@
         <ItemsControl.ItemTemplate>
           <DataTemplate>
             <StackPanel>
-              <TextBlock Text="{Binding Name}" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+              <TextBlock Text="{Binding Name}" Style="{StaticResource PanelHeading}" />
               <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
@@ -22,31 +22,31 @@
                       <StackPanel>
                         <DockPanel>
                           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding NewChatCommand}" ToolTip="New chat about this program" AutomationProperties.Name="New chat">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" MinWidth="28" MinHeight="28" Command="{Binding NewChatCommand}" ToolTip="New chat about this program" AutomationProperties.Name="New chat">
                               <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE8BD;" />
                             </Button>
-                            <Button Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding RunCommand}" ToolTip="Start it" AutomationProperties.Name="Run">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" MinWidth="28" MinHeight="28" Command="{Binding RunCommand}" ToolTip="Start it" AutomationProperties.Name="Run">
                               <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE768;" />
                             </Button>
-                            <Button Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding PinCommand}" ToolTip="Pin to the top" AutomationProperties.Name="Pin">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" MinWidth="28" MinHeight="28" Command="{Binding PinCommand}" ToolTip="Pin to the top" AutomationProperties.Name="Pin">
                               <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE840;" />
                             </Button>
-                            <Button Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding DetailsCommand}" ToolTip="Details" AutomationProperties.Name="Details">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" MinWidth="28" MinHeight="28" Command="{Binding DetailsCommand}" ToolTip="Details" AutomationProperties.Name="Details">
                               <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE946;" />
                             </Button>
-                            <Button Style="{StaticResource FlatButton}" Padding="6,2" Command="{Binding ConfigureCommand}" ToolTip="Configure (Connectors)" AutomationProperties.Name="Configure">
+                            <Button Style="{StaticResource FlatButton}" Padding="6,4" MinWidth="28" MinHeight="28" Command="{Binding ConfigureCommand}" ToolTip="Configure (Connectors)" AutomationProperties.Name="Configure">
                               <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE713;" />
                             </Button>
                           </StackPanel>
                           <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" FontSize="16" Text="{Binding Glyph}" Margin="0,0,10,0" />
                           <StackPanel>
-                            <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding StatusText}" />
+                            <TextBlock Text="{Binding Name}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding StatusText}" />
                           </StackPanel>
                         </DockPanel>
                         <StackPanel Margin="26,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
-                          <TextBlock Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" Text="{Binding Detail}" />
-                          <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,0">
+                          <TextBlock Style="{StaticResource MutedText}" FontSize="12" TextWrapping="Wrap" Text="{Binding Detail}" />
+                          <TextBlock FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
                             <Run Text="Mediator can: " Foreground="{DynamicResource MutedBrush}" /><Run Text="{Binding Capabilities, Mode=OneWay}" />
                           </TextBlock>
                         </StackPanel>

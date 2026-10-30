@@ -5,109 +5,195 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ws="clr-namespace:Mediator.UI.Workspace;assembly=Mediator.UI"
              mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=ws:CockpitModeViewModel}">
-  <!-- 6.1 Cockpit: the live execution environment of the open chat. -->
+  <!-- 6.1 Cockpit: the live execution environment of the open chat. V18.2: each section is a collapsible header with a hairline between
+       sections (no card per section); labels are secondary, values primary; every state has a glyph and a word as well as a colour. -->
+  <UserControl.Resources>
+    <!-- Label / value row (Environment, Context, Sources). A row with a Kind also shows its status glyph. -->
+    <DataTemplate x:Key="InfoRowTemplate" DataType="ws:InfoRow">
+      <Grid Margin="0,3" ToolTip="{Binding Value}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="92" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Style="{StaticResource InfoLabel}" Text="{Binding Label}" VerticalAlignment="Top" Margin="0,1,0,0" />
+        <DockPanel Grid.Column="1" VerticalAlignment="Top">
+          <TextBlock DockPanel.Dock="Left" Style="{StaticResource StatusGlyph}" Margin="0,1,4,0" VerticalAlignment="Top" Visibility="{Binding Kind, Converter={StaticResource EmptyToCollapsed}}" />
+          <TextBlock Style="{StaticResource InfoValue}" Text="{Binding Value}" />
+        </DockPanel>
+      </Grid>
+    </DataTemplate>
+    <!-- Connector row: status glyph, name, and the state in words. -->
+    <DataTemplate x:Key="ConnectorRowTemplate" DataType="ws:InfoRow">
+      <DockPanel Margin="0,3" ToolTip="{Binding Value}">
+        <TextBlock DockPanel.Dock="Left" Style="{StaticResource StatusGlyph}" Margin="0,0,6,0" />
+        <TextBlock DockPanel.Dock="Right" Style="{StaticResource InfoLabel}" Text="{Binding Value}" MaxWidth="150" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+        <TextBlock Style="{StaticResource InfoValue}" Text="{Binding Label}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+      </DockPanel>
+    </DataTemplate>
+  </UserControl.Resources>
   <ScrollViewer VerticalScrollBarVisibility="Auto">
-    <StackPanel>
-      <TextBlock Text="ENVIRONMENT" Style="{StaticResource TechLabel}" Margin="2,4,0,4" />
-      <Border Style="{StaticResource Card}">
-        <ItemsControl ItemsSource="{Binding Environment}" Focusable="False">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <DockPanel Margin="0,2">
-                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
-                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
-              </DockPanel>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-      </Border>
+    <StackPanel Margin="0,0,6,0">
 
-      <TextBlock Text="CONTEXT" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
-        <ItemsControl ItemsSource="{Binding Context}" Focusable="False">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <DockPanel Margin="0,2">
-                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
-                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
-              </DockPanel>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-      </Border>
-
-      <TextBlock Text="CONNECTORS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
-        <ItemsControl ItemsSource="{Binding Connectors}" Focusable="False">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <DockPanel Margin="0,2">
-                <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" Text="{Binding Value}" MaxWidth="180" />
-                <TextBlock Text="{Binding Label}" FontSize="12" TextTrimming="CharacterEllipsis" />
-              </DockPanel>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-      </Border>
-
-      <TextBlock Text="TOOLS (LATEST JOB)" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
+      <!-- Environment -->
+      <Border Style="{StaticResource PanelSection}">
         <StackPanel>
-          <TextBlock Style="{StaticResource MutedText}" Text="No tool calls yet." Visibility="{Binding HasTools, Converter={StaticResource InverseBoolToVisibility}}" />
-          <ItemsControl ItemsSource="{Binding Tools}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <StackPanel Margin="0,2" ToolTip="{Binding Detail}">
-                  <DockPanel>
-                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding TimeText}" />
-                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
-                  </DockPanel>
-                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" Text="{Binding Phase}" />
-                </StackPanel>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <ToggleButton x:Name="EnvironmentSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Environment section">
+            <TextBlock Text="Environment" />
+          </ToggleButton>
+          <ItemsControl ItemsSource="{Binding Environment}" ItemTemplate="{StaticResource InfoRowTemplate}" Focusable="False" Margin="16,0,0,0"
+                        Visibility="{Binding IsChecked, ElementName=EnvironmentSection, Converter={StaticResource BoolToVisibility}}" />
         </StackPanel>
       </Border>
 
-      <TextBlock Text="OUTPUTS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
+      <!-- Context -->
+      <Border Style="{StaticResource PanelSection}">
         <StackPanel>
-          <TextBlock Style="{StaticResource MutedText}" Text="No files yet." Visibility="{Binding Outputs.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
-          <ItemsControl ItemsSource="{Binding Outputs}" Focusable="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Button Style="{StaticResource ListButton}" Padding="4,3" Command="{Binding OpenCommand}" ToolTip="{Binding Path}">
-                  <DockPanel>
-                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding SizeText}" Margin="8,0,0,0" />
-                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource TechLabel}" Width="44" Text="{Binding Extension}" />
-                    <TextBlock Text="{Binding Name}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                  </DockPanel>
-                </Button>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <ToggleButton x:Name="ContextSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Context section">
+            <TextBlock Text="Context" />
+          </ToggleButton>
+          <ItemsControl ItemsSource="{Binding Context}" ItemTemplate="{StaticResource InfoRowTemplate}" Focusable="False" Margin="16,0,0,0"
+                        Visibility="{Binding IsChecked, ElementName=ContextSection, Converter={StaticResource BoolToVisibility}}" />
         </StackPanel>
       </Border>
 
-      <TextBlock Text="CHANGES" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
-        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding ChangesNote}" />
+      <!-- Connectors: AI providers (CLIs), desktop programs, MCP servers. An installed program is not an active AI integration. -->
+      <Border Style="{StaticResource PanelSection}">
+        <StackPanel>
+          <ToggleButton x:Name="ConnectorsSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Connectors section">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Connectors" />
+              <Border Style="{StaticResource CountBadge}" Margin="8,0,0,0" Visibility="{Binding ConnectorSummary, Converter={StaticResource EmptyToCollapsed}}">
+                <TextBlock Style="{StaticResource InfoLabel}" FontWeight="Normal" Text="{Binding ConnectorSummary}" />
+              </Border>
+            </StackPanel>
+          </ToggleButton>
+          <StackPanel Margin="16,0,0,0" Visibility="{Binding IsChecked, ElementName=ConnectorsSection, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Style="{StaticResource InfoLabel}" TextWrapping="Wrap" Margin="0,2,0,2"
+                       Text="Not checked yet. The list fills in once the quick panel's Connectors tab has probed them."
+                       Visibility="{Binding HasConnectors, Converter={StaticResource InverseBoolToVisibility}}" />
+            <StackPanel Visibility="{Binding HasClis, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Style="{StaticResource InfoLabel}" Margin="0,4,0,0" Text="AI PROVIDERS" FontWeight="SemiBold" ToolTip="Model CLIs Mediator can run jobs on" />
+              <ItemsControl ItemsSource="{Binding ConnectorClis}" ItemTemplate="{StaticResource ConnectorRowTemplate}" Focusable="False" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding HasMcp, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Style="{StaticResource InfoLabel}" Margin="0,8,0,0" Text="MCP SERVERS" FontWeight="SemiBold" ToolTip="Tool servers jobs can call" />
+              <ItemsControl ItemsSource="{Binding ConnectorMcp}" ItemTemplate="{StaticResource ConnectorRowTemplate}" Focusable="False" />
+            </StackPanel>
+            <StackPanel Visibility="{Binding HasApps, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Style="{StaticResource InfoLabel}" Margin="0,8,0,0" Text="DESKTOP PROGRAMS" FontWeight="SemiBold"
+                         ToolTip="Programs Mediator has a connector for. Installed is not the same as connected to a job: 'Live' means the connector answered." />
+              <ItemsControl ItemsSource="{Binding ConnectorApps}" ItemTemplate="{StaticResource ConnectorRowTemplate}" Focusable="False" />
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
       </Border>
 
-      <TextBlock Text="BACKGROUND TASKS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
-      <Border Style="{StaticResource Card}">
+      <!-- Tools -->
+      <Border Style="{StaticResource PanelSection}">
         <StackPanel>
-          <TextBlock Style="{StaticResource MutedText}" Text="Nothing running." Visibility="{Binding HasBackgroundTasks, Converter={StaticResource InverseBoolToVisibility}}" />
+          <ToggleButton x:Name="ToolsSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Tools section">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Tools" />
+              <TextBlock Style="{StaticResource InfoLabel}" FontWeight="Normal" Margin="8,0,0,0" VerticalAlignment="Center" Text="latest job" />
+            </StackPanel>
+          </ToggleButton>
+          <StackPanel Margin="16,0,0,0" Visibility="{Binding IsChecked, ElementName=ToolsSection, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Style="{StaticResource InfoLabel}" Margin="0,2" Text="No tool calls yet." Visibility="{Binding HasTools, Converter={StaticResource InverseBoolToVisibility}}" />
+            <ItemsControl ItemsSource="{Binding Tools}" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="0,3" ToolTip="{Binding Detail}">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource StatusGlyph}" VerticalAlignment="Top" Margin="0,2,6,0" />
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="{StaticResource FsCaption}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Style="{StaticResource InfoLabel}" Text="{Binding Phase}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Style="{StaticResource InfoLabel}" FontFamily="{DynamicResource TechFont}" Text="{Binding TimeText}" Margin="8,2,0,0" VerticalAlignment="Top" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Outputs -->
+      <Border Style="{StaticResource PanelSection}">
+        <StackPanel>
+          <ToggleButton x:Name="OutputsSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Outputs section">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Outputs" />
+              <Border Style="{StaticResource CountBadge}" Margin="8,0,0,0" Visibility="{Binding Outputs.Count, Converter={StaticResource EmptyToCollapsed}}">
+                <TextBlock Style="{StaticResource InfoLabel}" FontWeight="Normal" Text="{Binding Outputs.Count}" />
+              </Border>
+            </StackPanel>
+          </ToggleButton>
+          <StackPanel Margin="16,0,0,0" Visibility="{Binding IsChecked, ElementName=OutputsSection, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Style="{StaticResource InfoLabel}" TextWrapping="Wrap" Margin="0,2"
+                       Text="No files generated yet. Files an answer names (and that exist on disk) will be listed here."
+                       Visibility="{Binding Outputs.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />
+            <ItemsControl ItemsSource="{Binding Outputs}" Focusable="False">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Style="{StaticResource ListButton}" Padding="4,4" Command="{Binding OpenCommand}" ToolTip="{Binding Path}" AutomationProperties.Name="{Binding Name}">
+                    <DockPanel>
+                      <TextBlock DockPanel.Dock="Right" Style="{StaticResource InfoLabel}" Text="{Binding SizeText}" Margin="8,0,0,0" />
+                      <TextBlock DockPanel.Dock="Left" Style="{StaticResource TechLabel}" Width="44" Text="{Binding Extension}" />
+                      <TextBlock Text="{Binding Name}" FontSize="{StaticResource FsBody}" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Changes: tracking does not exist yet, so say that instead of showing something that reads as "no changes". -->
+      <Border Style="{StaticResource PanelSection}">
+        <StackPanel>
+          <ToggleButton x:Name="ChangesSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Changes section">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="Changes" />
+              <Border Style="{StaticResource CountBadge}" Margin="8,0,0,0">
+                <TextBlock Style="{StaticResource InfoLabel}" FontWeight="Normal" Text="tracking unavailable" />
+              </Border>
+            </StackPanel>
+          </ToggleButton>
+          <DockPanel Margin="16,2,0,0" Visibility="{Binding IsChecked, ElementName=ChangesSection, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock DockPanel.Dock="Left" Style="{StaticResource StatusGlyph}" Margin="0,1,6,0" VerticalAlignment="Top" Foreground="{DynamicResource WarningBrush}" Text="&#xE7BA;" />
+            <TextBlock Style="{StaticResource InfoLabel}" TextWrapping="Wrap" Text="{Binding ChangesNote}" />
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Background tasks -->
+      <StackPanel Margin="0,0,0,12">
+        <ToggleButton x:Name="TasksSection" Style="{StaticResource PanelHeader}" AutomationProperties.Name="Background tasks section">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Background tasks" />
+            <Border Style="{StaticResource CountBadge}" Margin="8,0,0,0" Visibility="{Binding BackgroundTasks.Count, Converter={StaticResource EmptyToCollapsed}}"
+                    Background="{DynamicResource SelectionBrush}">
+              <TextBlock Style="{StaticResource InfoLabel}" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" Text="{Binding BackgroundTasks.Count}" />
+            </Border>
+          </StackPanel>
+        </ToggleButton>
+        <StackPanel Margin="16,0,0,0" Visibility="{Binding IsChecked, ElementName=TasksSection, Converter={StaticResource BoolToVisibility}}">
+          <TextBlock Style="{StaticResource InfoLabel}" Margin="0,2" Text="Nothing running." Visibility="{Binding HasBackgroundTasks, Converter={StaticResource InverseBoolToVisibility}}" />
           <ItemsControl ItemsSource="{Binding BackgroundTasks}" Focusable="False">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
-                <Button Style="{StaticResource ListButton}" Padding="4,3" Command="{Binding InspectCommand}" ToolTip="Show this job's activity">
+                <Button Style="{StaticResource ListButton}" Padding="4,4" Command="{Binding InspectCommand}" ToolTip="Show this job's activity" AutomationProperties.Name="{Binding Job.Title}">
                   <DockPanel>
-                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding Job.ElapsedText}" />
-                    <Ellipse DockPanel.Dock="Left" Width="7" Height="7" Margin="0,0,8,0" Fill="{Binding Job.State, Converter={StaticResource JobStateBrush}}" />
-                    <TextBlock FontSize="12" TextTrimming="CharacterEllipsis">
-                      <Run Text="{Binding Job.Title, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding StateLabel, Mode=OneWay}" />
+                    <TextBlock DockPanel.Dock="Right" Style="{StaticResource InfoLabel}" FontFamily="{DynamicResource TechFont}" Text="{Binding Job.ElapsedText}" Margin="8,0,0,0" />
+                    <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,8,0" Fill="{Binding Job.State, Converter={StaticResource JobStateBrush}}" />
+                    <TextBlock FontSize="{StaticResource FsBody}" TextTrimming="CharacterEllipsis">
+                      <Run Text="{Binding Job.Title, Mode=OneWay}" /><Run Text=" · " Foreground="{DynamicResource MutedBrush}" /><Run Text="{Binding StateLabel, Mode=OneWay}" Foreground="{DynamicResource MutedBrush}" />
                     </TextBlock>
                   </DockPanel>
                 </Button>
@@ -115,7 +201,7 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
         </StackPanel>
-      </Border>
+      </StackPanel>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

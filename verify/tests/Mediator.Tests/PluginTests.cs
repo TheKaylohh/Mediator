@@ -6,7 +6,7 @@ using Mediator.UI.Workspace;
 
 namespace Mediator.Tests;
 
-/// <summary>V18: connectors as plug-in pieces, and the full-screen app and the quick panel never shown together.</summary>
+/// <summary>V18: connectors as plug-in pieces, and the full-screen app and the quick panel shown together.</summary>
 static class PluginTests
 {
     static string TempDir(string name)
@@ -94,27 +94,22 @@ static class PluginTests
         await runtime.EndJobAsync(job.JobId);
     }
 
-    /// <summary>The full-screen app and the quick panel are never on screen together.</summary>
+    /// <summary>V18.1: the full-screen app and the quick panel can be on screen together.</summary>
     public static void OneViewAtATime()
     {
         var vm = new MediatorOverlayViewModel(new ModelChoiceTests.GatedRuntime(), new InlineDispatcher(), new MemorySettingsStore());
-        int activations = 0, closes = 0;
-        vm.WorkspaceActivationRequested += () => activations++;
-        vm.WorkspaceCloseRequested += () => closes++;
-
         vm.Show();
-        Check.True(vm.IsVisible, "the quick panel opens while the full-screen app is closed");
         vm.IsWorkspaceOpen = true;
-        Check.True(!vm.IsVisible, "opening the full-screen app hides the quick panel");
-        vm.Show();
+        Check.True(vm.IsVisible, "opening the full-screen app leaves the quick panel up");
+        vm.Hide();
         vm.OnHotkey(null);
-        Check.True(!vm.IsVisible && activations == 2, "the hotkey, the tray and approvals bring the full-screen app forward instead");
+        Check.True(vm.IsVisible, "the hotkey and the tray open the quick panel while the full-screen app is open");
 
         vm.ShowPanelTab(MediatorOverlayViewModel.ConnectorsTab);
-        Check.True(closes == 1 && !vm.IsWorkspaceOpen && vm.IsVisible && vm.SelectedTab == MediatorOverlayViewModel.ConnectorsTab,
-            "a settings tab asked for by the full-screen app closes it and opens the quick panel on that tab");
+        Check.True(vm.IsWorkspaceOpen && vm.IsVisible && vm.SelectedTab == MediatorOverlayViewModel.ConnectorsTab,
+            "a settings tab asked for by the full-screen app opens on the quick panel and leaves the full-screen app open");
         vm.OpenFullViewCommand.Execute(null);
-        Check.True(!vm.IsVisible, "Open full view hides the quick panel");
+        Check.True(vm.IsVisible, "Open full view leaves the quick panel as it was");
     }
 
     /// <summary>The full-screen app reopens where it was; a bad saved place is ignored.</summary>

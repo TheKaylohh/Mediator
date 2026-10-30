@@ -69,8 +69,10 @@ internal sealed class ChatRenderer
         foreach (var t in vm.Conversation) r.Watch(t);
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(MediatorOverlayViewModel.CurrentTheme) or nameof(MediatorOverlayViewModel.IsChatBusy)) r.Schedule();
+            if (e.PropertyName is nameof(MediatorOverlayViewModel.IsChatBusy)) r.Schedule();
         };
+        // The page is repainted the moment the new brushes are merged, not after the 200 ms debounce (and not before them).
+        ThemeManager.Applied += () => { r._debounce.Stop(); r.Render(); };
         r._web.NavigateToString(Page);
         return true;
     }
@@ -153,26 +155,39 @@ internal sealed class ChatRenderer
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
 :root{--bg:#0b1220;--panel:#111a2b;--text:#e6edf6;--muted:#8aa0b8;--accent:#3fd0ff;--line:#22324a}
-html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 "Segoe UI",sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 24px 8px}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 "Segoe UI Variable Text","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:820px;margin:0 auto;padding:24px 24px 8px}
 .empty{color:var(--muted);text-align:center;margin-top:80px;font-size:16px}
 .turn{margin-bottom:28px}
 .user{margin-left:auto;max-width:640px;width:fit-content;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 14px;white-space:pre-wrap}
-.badge{font:11px Consolas,monospace;color:var(--accent);margin:14px 0 2px;letter-spacing:.5px}
-details{color:var(--muted);font-size:12px;margin-bottom:4px}
+.badge{font:12px "Cascadia Mono",Consolas,monospace;color:var(--accent);margin:14px 0 2px;letter-spacing:.5px}
+details{color:var(--muted);font-size:13px;margin-bottom:6px}
+summary{cursor:pointer;border-radius:4px}
 .thinking{color:var(--muted);font-style:italic}
+.answer>:first-child{margin-top:0}
+.answer p{margin:0 0 .8em}
+.answer h1,.answer h2,.answer h3,.answer h4{line-height:1.3;margin:1.3em 0 .5em;font-weight:600}
+.answer h1{font-size:1.45em}.answer h2{font-size:1.25em}.answer h3{font-size:1.1em}.answer h4{font-size:1em;color:var(--muted)}
+.answer ul,.answer ol{margin:.3em 0 .9em;padding-left:1.5em}.answer li{margin:.2em 0}
+.answer blockquote{margin:.8em 0;padding:.1em 1em;border-left:3px solid var(--line);color:var(--muted)}
 .answer pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto}
-.answer code{font-family:Consolas,monospace;font-size:13px;background:var(--panel);padding:1px 4px;border-radius:4px}
+.answer code{font-family:"Cascadia Mono",Consolas,monospace;font-size:13px;background:var(--panel);padding:1px 4px;border-radius:4px}
 .answer pre code{background:none;padding:0}
-.answer table{border-collapse:collapse}.answer th,.answer td{border:1px solid var(--line);padding:4px 8px}
+.answer table{border-collapse:collapse;display:block;max-width:100%;overflow-x:auto;margin:.8em 0;font-size:14px}
+.answer th,.answer td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+.answer th{background:var(--panel);font-weight:600}
+.answer tr:nth-child(even) td{background:color-mix(in srgb,var(--panel) 55%,transparent)}
 .answer hr{border:0;border-top:1px solid var(--line)}
 .answer a{color:var(--accent)}
 .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
 .err{color:#ff6b6b}
 .acts{display:flex;gap:2px;margin-top:4px;opacity:0;transition:opacity .15s}
+.acts:focus-within{opacity:1}
+@media (prefers-reduced-motion:reduce){.acts{transition:none}}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .turn:hover .acts,.turn.last .acts.a{opacity:1}
 .acts.u{justify-content:flex-end}
-.acts button,.code-head button{background:none;border:0;color:var(--muted);font:12px "Segoe UI",sans-serif;padding:3px 8px;border-radius:6px;cursor:pointer}
+.acts button,.code-head button{background:none;border:0;color:var(--muted);font:13px "Segoe UI",sans-serif;padding:4px 10px;border-radius:6px;cursor:pointer}
 .acts button:hover,.code-head button:hover{background:var(--panel);color:var(--text)}
 .code{border:1px solid var(--line);border-radius:8px;margin:10px 0;overflow:hidden}
 .code-head{display:flex;justify-content:space-between;align-items:center;background:var(--panel);border-bottom:1px solid var(--line);padding:2px 4px 2px 10px;font:11px Consolas,monospace;color:var(--muted)}

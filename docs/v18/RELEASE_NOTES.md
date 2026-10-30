@@ -1,10 +1,10 @@
 # V18: connectors as plug-ins, the full-screen app, light and dark themes
 
-## 1. The quick panel and the full-screen app are never open together
+## 1. The quick panel and the full-screen app can be open together
 
-- Opening the full screen (Open full view, the "Mediator Workspace" shortcut, `Mediator.exe --workspace`) hides the quick panel.
-- While the full screen is open, the hotkey, the tray icon and a new approval bring the full screen forward (restoring it if minimized) instead of opening the panel.
-- Settings, Usage and Connections in the full screen's profile menu close it and open the quick panel on that tab; Open full view there brings it back.
+- Opening the full screen (Open full view, the "Mediator Workspace" shortcut, `Mediator.exe --workspace`) leaves the quick panel as it is. The hotkey and the tray icon still toggle the panel.
+- Clicking from the panel into the full screen does not hide the panel; clicking another program's window does (unless pinned).
+- Settings, Usage and Connections in the full screen's profile menu open the quick panel on that tab; the full screen stays open.
 - Rules live in `MediatorOverlayViewModel` (`IsWorkspaceOpen`, `ShowPanelTab`) and are tested.
 
 ## 2. The full screen is its own app

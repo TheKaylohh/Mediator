@@ -64,7 +64,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
 
         ToggleCommand = new RelayCommand(() => { if (IsVisible) Hide(); else Show(); });
         HideCommand = new RelayCommand(Hide);
-        OpenFullViewCommand = new RelayCommand(() => { Hide(); OpenFullViewRequested?.Invoke(); });
+        OpenFullViewCommand = new RelayCommand(() => OpenFullViewRequested?.Invoke());
         SubmitPromptCommand = new RelayCommand(SubmitPrompt, () => PromptText.Trim().Length > 0 && !IsChatBusy);
         StopCommand = new RelayCommand(StopChat, () => IsChatBusy);
         EffortOptions = new ObservableCollection<string>(["Auto", .. ModelCatalog.Efforts]);
@@ -80,7 +80,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         ClearSaveFolderCommand = new RelayCommand(() => SetSaveFolder(null), () => SaveFolder is not null);
         ClearConversationCommand = new RelayCommand(() =>
         {
-            Conversation.Clear(); _turns.Clear(); _chatId = null; _lastSession = null;
+            Conversation.Clear(); _turns.Clear(); _chatId = null; _lastSession = null; OnPropertyChanged(nameof(CurrentChatId));
             _chatTitle = null; _chatPinned = false; OnPropertyChanged(nameof(ChatTitle)); OnPropertyChanged(nameof(IsChatPinned));
             ChatFolders.Clear(); ClearFolderRequest(); _softwareContext = null;
             ClearContinuation("New chat."); RefreshBusy();
@@ -475,52 +475,24 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
         Show();
     }
 
-    /// <summary>
-    /// Shows the quick panel, unless the full-screen app is open: V18, the two are never on screen together, so the hotkey,
-    /// the tray icon and an approval bring the full-screen app forward instead.
-    /// </summary>
+    /// <summary>Shows the quick panel. V18.1: it can be on screen together with the full-screen app.</summary>
     public void Show()
     {
-        if (IsWorkspaceOpen)
-        {
-            IsVisible = false;
-            WorkspaceActivationRequested?.Invoke();
-            return;
-        }
         IsVisible = true;
         _ = RefreshProvidersAsync();
     }
 
+    /// <summary>V18.1: the full-screen app is open (shown, even minimized). Set by its window; informational, the quick panel is unaffected.</summary>
+    public bool IsWorkspaceOpen { get => _isWorkspaceOpen; set => SetProperty(ref _isWorkspaceOpen, value); }
     private bool _isWorkspaceOpen;
 
     /// <summary>
-    /// V18: the full-screen app is open (shown, even minimized). Set by its window. Opening it hides the quick panel; while it is
-    /// open the quick panel does not show (see <see cref="Show"/>).
-    /// </summary>
-    public bool IsWorkspaceOpen
-    {
-        get => _isWorkspaceOpen;
-        set
-        {
-            if (!SetProperty(ref _isWorkspaceOpen, value)) return;
-            if (value) IsVisible = false;
-        }
-    }
-
-    /// <summary>V18: bring the full-screen app forward (restore it if minimized).</summary>
-    public event Action? WorkspaceActivationRequested;
-    /// <summary>V18: close the full-screen app (it hides; Mediator keeps running in the tray).</summary>
-    public event Action? WorkspaceCloseRequested;
-
-    /// <summary>
-    /// V18: the full-screen app asked for one of the quick panel's tabs (settings, usage, connectors): it closes, and the quick
-    /// panel opens on that tab. "Open full view" there brings the full-screen app back.
+    /// V18.1: the full-screen app asked for one of the quick panel's tabs (settings, usage, connectors): the quick panel opens
+    /// on that tab, and the full-screen app stays open.
     /// </summary>
     public void ShowPanelTab(int tab)
     {
         SelectedTab = tab;
-        WorkspaceCloseRequested?.Invoke();
-        IsWorkspaceOpen = false; // the window reports it too; a host without one must not keep the panel hidden
         Show();
     }
 
@@ -828,6 +800,8 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
 
     private ChatStore? _chats;
     private string? _chatId;                 // the open chat's file; null until its first answer is saved
+    /// <summary>The open chat's id (null until its first answer is saved); the sidebar highlights that chat.</summary>
+    public string? CurrentChatId => _chatId;
     private ContinuableSession? _lastSession; // the open chat's latest resumable session (kept even if the chip is dismissed)
 
     /// <summary>Where chats are saved; null (tests) turns persistence off.</summary>
@@ -945,7 +919,9 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
     private void SaveChat()
     {
         if (_chats is null || Conversation.Count == 0) return;
+        bool firstSave = _chatId is null;
         _chatId ??= ChatStore.NewId();
+        if (firstSave) OnPropertyChanged(nameof(CurrentChatId));
         var turns = Conversation.Select(t => new SavedTurn(t.JobId, t.UserPrompt, t.BadgeText, t.ResponseText, t.Steps.ToList(), t.IsError)).ToList();
         var resume = (Continuation?.Session ?? _lastSession) is { } s ? SavedResume.From(s) : null;
         try { _chats.Save(new SavedChat(_chatId, DefaultTitle(), DateTimeOffset.Now, turns, resume, _chatPinned, _chatTitle, ChatFolders.ToList())); }
@@ -972,6 +948,7 @@ public sealed partial class MediatorOverlayViewModel : ObservableObject, IApprov
             Conversation.Add(turn);
         }
         _chatId = chat.Id;
+        OnPropertyChanged(nameof(CurrentChatId));
         _chatTitle = chat.CustomTitle;
         _chatPinned = chat.Pinned;
         ChatFolders.Clear();

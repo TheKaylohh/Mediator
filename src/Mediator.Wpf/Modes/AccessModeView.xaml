@@ -8,11 +8,11 @@
   <!-- 6.3 Access: pending requests (answered here), current grants, past decisions. -->
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel>
-      <TextBlock Text="REQUESTS" Style="{StaticResource TechLabel}" Margin="2,4,0,4" />
+      <TextBlock Text="Requests" Style="{StaticResource PanelHeading}" Margin="2,4,0,6" />
       <Border Style="{StaticResource Card}" BorderBrush="{DynamicResource WarningBrush}" Visibility="{Binding HasPending, Converter={StaticResource BoolToVisibility}}">
         <StackPanel DataContext="{Binding Pending}">
           <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
-          <TextBlock Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0">
+          <TextBlock Style="{StaticResource MutedText}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0">
             <Run Text="Job " /><Run Text="{Binding JobId, Mode=OneWay}" /><Run Text=" · tool " /><Run Text="{Binding Tool, Mode=OneWay}" /><Run Text=" · risk " /><Run Text="{Binding Risk, Mode=OneWay}" />
           </TextBlock>
           <TextBlock Text="{Binding Summary}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
@@ -22,7 +22,7 @@
                 <CheckBox IsChecked="{Binding IsChecked}" IsEnabled="{Binding IsSelectable}" Margin="0,2" Foreground="{DynamicResource TextBrush}">
                   <StackPanel>
                     <TextBlock Text="{Binding Primary}" FontSize="12" TextWrapping="Wrap" />
-                    <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding Detail}" TextWrapping="Wrap" />
+                    <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding Detail}" TextWrapping="Wrap" />
                   </StackPanel>
                 </CheckBox>
               </DataTemplate>
@@ -42,9 +42,9 @@
         </StackPanel>
       </Border>
       <TextBlock Style="{StaticResource MutedText}" Margin="2,0,0,4" Text="{Binding PendingText}" />
-      <CheckBox Margin="2,2,0,4" FontSize="11.5" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve every request until the app restarts" />
+      <CheckBox Margin="2,2,0,4" FontSize="12" IsChecked="{Binding AutoApproveAll}" Content="Auto-approve every request until the app restarts" />
 
-      <TextBlock Text="PERMISSIONS" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <TextBlock Text="Permissions" Style="{StaticResource PanelHeading}" />
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="No folder is shared with this chat."
@@ -58,7 +58,7 @@
                   </Button>
                   <StackPanel>
                     <TextBlock Text="{Binding Resource}" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Resource}" />
-                    <TextBlock Style="{StaticResource MutedText}" FontSize="10.5">
+                    <TextBlock Style="{StaticResource MutedText}" FontSize="11.5">
                       <Run Text="{Binding Scope, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Expires, Mode=OneWay}" />
                     </TextBlock>
                   </StackPanel>
@@ -66,11 +66,11 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0" Text="{Binding RulesNote}" />
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0" Text="{Binding RulesNote}" />
         </StackPanel>
       </Border>
 
-      <TextBlock Text="HISTORY" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <TextBlock Text="History" Style="{StaticResource PanelHeading}" />
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Style="{StaticResource MutedText}" Text="No decisions yet." Visibility="{Binding History.Count, Converter={StaticResource EmptyToCollapsed}, ConverterParameter=invert}" />

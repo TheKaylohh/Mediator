@@ -28,6 +28,9 @@ public static class ThemeManager
         _ = PackUriHelper.UriSchemePack;
     }
 
+    /// <summary>Raised right after a theme dictionary is merged, so things drawn outside WPF (the chat page) can follow at once.</summary>
+    public static event Action? Applied;
+
     /// <summary>Raised with the theme and the reasons when neither the compiled resource nor the loose file could be loaded.</summary>
     public static event Action<MediatorTheme, string>? LoadFailed;
 
@@ -51,6 +54,7 @@ public static class ThemeManager
         if (merged.Count == 0) merged.Add(next);
         else merged[0] = next;
         LoadedFrom = from;
+        Applied?.Invoke();
         return true;
     }
 

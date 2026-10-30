@@ -122,6 +122,8 @@ public sealed class JobItemViewModel : ObservableObject
 /// <param name="IsUncertain">The outcome is unknown: the call may still complete (shown in amber, never as failed or stopped).</param>
 public sealed record ActivityItemViewModel(DateTimeOffset At, string JobId, string Tool, string Phase, string Detail, bool IsProblem = false, bool IsUncertain = false)
 {
+    /// <summary>live (done) | bad (failed) | warn (waiting or uncertain) | "": drives the status glyph.</summary>
+    public string Kind => IsProblem ? "bad" : IsUncertain || Phase.StartsWith("waiting", StringComparison.Ordinal) ? "warn" : Phase.Contains("done", StringComparison.Ordinal) ? "live" : "";
     public string TimeText => At.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 }
 

@@ -65,6 +65,11 @@ public sealed class WorkspaceViewModel : ObservableObject
         ];
 
         Main.SavedChats.CollectionChanged += (_, _) => RefreshChats();
+        Main.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MediatorOverlayViewModel.CurrentChatId))
+                foreach (var item in PinnedChats.Concat(RecentChats)) item.IsCurrent = item.Chat.Id == Main.CurrentChatId;
+        };
         Main.Jobs.CollectionChanged += OnJobsChanged;
         Main.Conversation.CollectionChanged += (_, _) => RefreshHeader();
         Main.ChatFolders.CollectionChanged += (_, _) => { RefreshProjects(); RefreshHeader(); };
@@ -383,8 +388,11 @@ public sealed class NullWorkspaceHost : IWorkspaceHost
 public sealed record PaletteItem(string Title, string Glyph, string Hint, RelayCommand RunCommand);
 
 /// <summary>A saved chat in the left sidebar, with its own actions.</summary>
-public sealed class ChatListItem(SavedChat chat, MediatorOverlayViewModel main)
+public sealed class ChatListItem(SavedChat chat, MediatorOverlayViewModel main) : ObservableObject
 {
+    private bool _isCurrent = main.CurrentChatId == chat.Id;
+    /// <summary>This is the chat open in the centre.</summary>
+    public bool IsCurrent { get => _isCurrent; internal set => SetProperty(ref _isCurrent, value); }
     public SavedChat Chat { get; } = chat;
     public string Title => Chat.DisplayTitle;
     public string UpdatedText => Chat.Updated.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.InvariantCulture);

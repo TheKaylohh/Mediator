@@ -14,20 +14,20 @@
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
       <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="8,2" Command="{Binding ExportCommand}"
               ToolTip="Save the shown events as text, with secrets removed (Documents\Mediator)" AutomationProperties.Name="Export log">
-        <TextBlock Text="Export" FontSize="11.5" />
+        <TextBlock Text="Export" FontSize="12" />
       </Button>
       <ComboBox MinWidth="120" FontSize="12" ItemsSource="{Binding Categories}" SelectedItem="{Binding Category}" AutomationProperties.Name="Category" HorizontalAlignment="Left" />
     </DockPanel>
     <Border DockPanel.Dock="Top" Margin="0,0,0,6" Padding="8,3" CornerRadius="10" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}" HorizontalAlignment="Left"
             Visibility="{Binding HasJobFilter, Converter={StaticResource BoolToVisibility}}">
       <StackPanel Orientation="Horizontal">
-        <TextBlock Text="{Binding JobFilterText}" FontSize="11.5" VerticalAlignment="Center" />
+        <TextBlock Text="{Binding JobFilterText}" FontSize="12" VerticalAlignment="Center" />
         <Button Style="{StaticResource FlatButton}" Padding="4,0" Margin="4,0,-4,0" Command="{Binding ClearJobFilterCommand}" ToolTip="Show every job" AutomationProperties.Name="Clear job filter">
           <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
         </Button>
       </StackPanel>
     </Border>
-    <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" Margin="2,4,0,0" Text="{Binding ExportText}"
+    <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="Wrap" Margin="2,4,0,0" Text="{Binding ExportText}"
                Visibility="{Binding ExportText, Converter={StaticResource EmptyToCollapsed}}" />
     <ScrollViewer VerticalScrollBarVisibility="Auto">
       <StackPanel>
@@ -39,12 +39,13 @@
                 <StackPanel>
                   <DockPanel>
                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding TimeText}" />
-                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource StatusGlyph}" Margin="0,0,6,0" />
+                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="12" TextTrimming="CharacterEllipsis" />
                   </DockPanel>
-                  <TextBlock Style="{StaticResource MutedText}" FontSize="11">
+                  <TextBlock Style="{StaticResource MutedText}" FontSize="12">
                     <Run Text="{Binding Phase, Mode=OneWay}" /><Run Text=" · job " /><Run Text="{Binding JobId, Mode=OneWay}" />
                   </TextBlock>
-                  <TextBlock Text="{Binding Detail}" FontSize="11.5" TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis"
+                  <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap" MaxHeight="48" TextTrimming="CharacterEllipsis"
                              Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
                 </StackPanel>
               </Border>

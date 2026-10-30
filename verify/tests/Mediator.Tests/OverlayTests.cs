@@ -675,7 +675,7 @@ static class OverlayTests
         void Mutate(string rel, string from, string to)
         {
             string p = Path.Combine(copy, rel);
-            string text = File.ReadAllText(p);
+            string text = File.ReadAllText(p).Replace("\r\n", "\n"); // a CRLF checkout: the anchors use \n
             int i = text.IndexOf(from, StringComparison.Ordinal);
             Check.True(i >= 0, $"mutation anchor '{from}' found in {rel}");
             File.WriteAllText(p, text[..i] + to + text[(i + from.Length)..]);
@@ -686,8 +686,8 @@ static class OverlayTests
         Mutate("MainWindow.xaml", "<TextBlock Text=\"{Binding ReactorCaption}\"", "<TextBlock Style=\"{StaticResource TechLabel}\" Text=\"{Binding ReactorCaption}\"");
         Mutate("MainWindow.xaml", "State=\"{Binding ReactorState}\"", "State=\"{Binding ReactorStatus}\"");
         Mutate("Controls/HudOrbControl.xaml", "Fill=\"{Binding RingBrush, ElementName=Root}\"", "Fill=\"{Binding RingColour, ElementName=Root}\"");
-        Mutate("App.xaml", "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrush}\" />\n        <Setter Property=\"FontSize\" Value=\"11.5\" />",
-            "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrsh}\" />\n        <Setter Property=\"FontSize\" Value=\"11.5\" />");
+        Mutate("App.xaml", "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrush}\" />\n        <Setter Property=\"FontSize\" Value=\"12\" />",
+            "<Setter Property=\"Foreground\" Value=\"{DynamicResource MutedBrsh}\" />\n        <Setter Property=\"FontSize\" Value=\"12\" />");
 
         // V8 pack-URI rules
         Mutate("ThemeManager.cs", "new(ThemeSources.PackUri(theme), UriKind.Absolute)", "new($\"/Mediator;component/Themes/{theme}.xaml\", UriKind.Relative)");

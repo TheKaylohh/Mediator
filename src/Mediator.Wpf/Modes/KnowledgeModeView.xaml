@@ -8,7 +8,7 @@
   <!-- 6.5 Knowledge: what the AI has for this chat, and exactly what it read for the latest answer. -->
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel>
-      <TextBlock Text="RETRIEVED FOR THE LATEST ANSWER" Style="{StaticResource TechLabel}" Margin="2,4,0,4" />
+      <TextBlock Text="Retrieved for the latest answer" Style="{StaticResource PanelHeading}" Margin="2,4,0,6" />
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="Nothing was read: the answer came from the conversation and the model's own knowledge."
@@ -19,9 +19,9 @@
                 <StackPanel Margin="0,2" ToolTip="{Binding Detail}">
                   <DockPanel>
                     <TextBlock DockPanel.Dock="Right" Style="{StaticResource TechLabel}" Text="{Binding TimeText}" />
-                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Tool}" FontFamily="{DynamicResource TechFont}" FontSize="12" TextTrimming="CharacterEllipsis" />
                   </DockPanel>
-                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" MaxHeight="34" Text="{Binding Detail}" />
+                  <TextBlock Style="{StaticResource MutedText}" FontSize="12" TextWrapping="Wrap" MaxHeight="34" Text="{Binding Detail}" />
                 </StackPanel>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -29,21 +29,21 @@
         </StackPanel>
       </Border>
 
-      <TextBlock Text="SOURCES" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <TextBlock Text="Sources" Style="{StaticResource PanelHeading}" />
       <Border Style="{StaticResource Card}">
         <ItemsControl ItemsSource="{Binding Sources}" Focusable="False">
           <ItemsControl.ItemTemplate>
             <DataTemplate>
               <DockPanel Margin="0,2">
-                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource MutedText}" Text="{Binding Label}" />
-                <TextBlock Text="{Binding Value}" FontSize="12" TextWrapping="Wrap" />
+                <TextBlock DockPanel.Dock="Left" Width="104" Style="{StaticResource InfoLabel}" Text="{Binding Label}" />
+                <TextBlock Text="{Binding Value}" Style="{StaticResource InfoValue}" />
               </DockPanel>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
       </Border>
 
-      <TextBlock Text="MEMORY AND INDEXING" Style="{StaticResource TechLabel}" Margin="2,8,0,4" />
+      <TextBlock Text="Memory and indexing" Style="{StaticResource PanelHeading}" />
       <Border Style="{StaticResource Card}">
         <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding MemoryNote}" />
       </Border>

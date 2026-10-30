@@ -43,12 +43,11 @@ public partial class MainWindow : Window, Mediator.UI.Workspace.IWorkspaceHost
         vm.BrowseForSaveFolderRequested += BrowseForSaveFolder;
         vm.BrowseForAllowFolderRequested += BrowseForAllowFolder;
         vm.OpenFullViewRequested += OpenWorkspace;
-        vm.WorkspaceActivationRequested += OpenWorkspace;      // V18: the hotkey or tray while the full-screen app is open
-        vm.WorkspaceCloseRequested += () => _chat?.Hide();     // V18: it asked for a quick-panel tab
         Deactivated += (_, _) =>
         {
             LastDeactivatedUtc = DateTime.UtcNow;
-            _vm.OnDeactivated();
+            // V18.1: clicking into the full-screen app is not "another window": the panel stays beside it (pin or Esc to hide).
+            Dispatcher.BeginInvoke(() => { if (_chat is not { IsActive: true }) _vm.OnDeactivated(); }, DispatcherPriority.Background);
         };
         SizeChanged += (_, _) => PlaceAboveTray();
         DpiChanged += (_, _) => PlaceAboveTray();

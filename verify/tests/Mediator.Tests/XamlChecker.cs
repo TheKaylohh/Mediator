@@ -211,6 +211,10 @@ static partial class XamlChecker
 
             void Walk(XElement el, Type? context)
             {
+                // A DataTemplate with a DataType (ws:ChatListItem) scopes its bindings to that view-model type, as WPF does.
+                if (el.Name.LocalName == "DataTemplate" && el.Attribute("DataType")?.Value is { } dataType
+                    && viewModels.GetTypes().FirstOrDefault(t => t.Name == dataType[(dataType.IndexOf(':') + 1)..]) is { } templateType)
+                    context = templateType;
                 // DataContext="{Binding X}" changes the scope for the element's own other bindings and its children.
                 if (el.Attribute("DataContext") is { } dc && ParseBinding(dc.Value) is { } dcb)
                 {

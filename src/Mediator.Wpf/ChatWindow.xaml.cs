@@ -15,10 +15,11 @@ namespace Mediator.Wpf;
 /// Shortcuts: Ctrl+N new chat, Ctrl+K search chats, Ctrl+P palette, Ctrl+B left sidebar, Ctrl+Alt+B right sidebar,
 /// Ctrl+1..6 modes, Ctrl+Shift+C copy the last answer, Esc closes the palette or menus. Closing only hides the window.
 /// V18: a standalone app window: its own taskbar button and Alt+Tab entry, it reopens where it was, `Mediator.exe --workspace`
-/// (the "Mediator Workspace" shortcut) opens it directly, and while it is open the quick panel stays hidden.
+/// (the "Mediator Workspace" shortcut) opens it directly, and it can be open together with the quick panel.
 /// </summary>
 public partial class ChatWindow : Window
 {
+    private const double CompactNavBelow = 1150;
     private readonly WorkspaceViewModel _ws;
     private readonly MediatorOverlayViewModel _vm;
     /// <summary>The two splitter columns between the regions.</summary>
@@ -40,11 +41,13 @@ public partial class ChatWindow : Window
         vm.FocusPromptRequested += () => { if (IsVisible) FocusPrompt(); };
         _ws.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(WorkspaceViewModel.IsPaletteOpen) && _ws.IsPaletteOpen) FocusPalette(); };
         BodyGrid.SizeChanged += (_, _) => _ws.AvailableWidth = Math.Max(0, BodyGrid.ActualWidth - SplitterWidth);
+        // Narrow window: the six mode buttons keep their glyphs and lose their labels (tooltips and accessible names stay), so nothing clips.
+        SizeChanged += (_, _) => Resources["NavLabelVisibility"] = ActualWidth < CompactNavBelow ? Visibility.Collapsed : Visibility.Visible;
         ChatScroll.ScrollChanged += (_, _) =>
             JumpToLatest.Visibility = ChatScroll.ScrollableHeight - ChatScroll.VerticalOffset > 200 ? Visibility.Visible : Visibility.Collapsed;
         StateChanged += (_, _) => FitToWorkArea();
         Loaded += (_, _) => FitToWorkArea();
-        // V18: while this window is open the quick panel stays hidden (the hotkey and the tray bring this one forward).
+        // V18.1: reported to the view model; the quick panel can be open at the same time.
         IsVisibleChanged += (_, _) =>
         {
             if (!IsVisible) SavePlacement();

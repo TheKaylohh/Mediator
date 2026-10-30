@@ -42,10 +42,17 @@ public abstract class RightModeViewModel : ObservableObject
 }
 
 /// <summary>A label and a value in a compact card ("Provider · model", "Chat · Claude Code · sonnet").</summary>
-public sealed record InfoRow(string Label, string Value, bool IsWarning = false);
+/// <param name="Kind">live | warn | bad | off | "" (no marker): drives the status glyph and colour; the Value always says it in words too.</param>
+public sealed record InfoRow(string Label, string Value, bool IsWarning = false, string Kind = "");
 
 /// <summary>A tool call in the Cockpit's Tools card.</summary>
-public sealed record ToolCallRow(string TimeText, string Tool, string Phase, string Detail, bool IsProblem);
+public sealed record ToolCallRow(string TimeText, string Tool, string Phase, string Detail, bool IsProblem)
+{
+    /// <summary>live (done), bad (failed), warn (waiting or uncertain), "" (running or received).</summary>
+    public string Kind => IsProblem || Phase.Contains("fail", StringComparison.Ordinal) || Phase.Contains("error", StringComparison.Ordinal) ? "bad"
+        : Phase.Contains("waiting", StringComparison.Ordinal) || Phase.Contains("unknown", StringComparison.Ordinal) || Phase.Contains("not run", StringComparison.Ordinal) ? "warn"
+        : Phase.Contains("done", StringComparison.Ordinal) ? "live" : "";
+}
 
 // ── 6.1 Cockpit ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -55,7 +62,16 @@ public sealed class CockpitModeViewModel(WorkspaceViewModel workspace)
 {
     public ObservableCollection<InfoRow> Environment { get; } = new();
     public ObservableCollection<InfoRow> Context { get; } = new();
-    public ObservableCollection<InfoRow> Connectors { get; } = new();
+    public ObservableCollection<InfoRow> ConnectorClis { get; } = new();
+    public ObservableCollection<InfoRow> ConnectorApps { get; } = new();
+    public ObservableCollection<InfoRow> ConnectorMcp { get; } = new();
+    public bool HasClis => ConnectorClis.Count > 0;
+    public bool HasApps => ConnectorApps.Count > 0;
+    public bool HasMcp => ConnectorMcp.Count > 0;
+    /// <summary>False until the Connectors tab of the quick panel has probed them once.</summary>
+    public bool HasConnectors => HasClis || HasApps || HasMcp;
+    private string _connectorSummary = "";
+    public string ConnectorSummary { get => _connectorSummary; private set => SetProperty(ref _connectorSummary, value); }
     public ObservableCollection<ToolCallRow> Tools { get; } = new();
     public ObservableCollection<JobRow> BackgroundTasks { get; } = new();
     /// <summary>Files this chat produced (shared with the Artifacts mode).</summary>
@@ -63,7 +79,7 @@ public sealed class CockpitModeViewModel(WorkspaceViewModel workspace)
     public bool HasTools => Tools.Count > 0;
     public bool HasBackgroundTasks => BackgroundTasks.Count > 0;
     /// <summary>Not tracked yet: Git working-tree changes and per-file diffs.</summary>
-    public string ChangesNote { get; } = "File changes and diffs are not tracked yet. Files the AI wrote are listed under Outputs.";
+    public string ChangesNote { get; } = "Change tracking is not available yet, so this is not an empty diff: edits may exist that are not listed here. Files the AI named are under Outputs.";
 
     public override void Refresh()
     {
@@ -83,18 +99,29 @@ public sealed class CockpitModeViewModel(WorkspaceViewModel workspace)
         [
             new("Conversation", $"{Main.Conversation.Count} turn(s), carried to every follow-up"),
             new("Attachments", Main.AttachmentChips.Count(c => c.IsIncluded) is var n and > 0 ? $"{n} included" : "none"),
-            new("Context window", "not reported by the CLIs per turn yet", IsWarning: false),
+            new("Context window", "Unavailable: the CLIs do not report token usage per turn", IsWarning: false, Kind: "off"),
             new("Status", Workspace.SessionText),
         ]);
-        var connectors = new List<InfoRow>();
+        var clis = new List<InfoRow>();
+        var apps = new List<InfoRow>();
+        var mcp = new List<InfoRow>();
         if (Main.Connectors is { } con)
         {
-            connectors.AddRange(con.Clis.Select(c => new InfoRow(c.Name, c.StatusText, c.NeedsAttention)));
-            connectors.AddRange(con.Apps.Select(a => new InfoRow(a.Name, a.StatusText)));
-            connectors.AddRange(con.McpServers.Select(m => new InfoRow(m.Name + " (MCP)", $"{m.StatusText} · {m.ToolsText}", !m.IsHealthy)));
+            clis.AddRange(con.Clis.Select(c => new InfoRow(c.Name, c.StatusText, c.NeedsAttention, KindOf(c.StatusKind))));
+            apps.AddRange(con.Apps.Select(a => new InfoRow(a.Name, a.StatusText, false, KindOf(a.StatusKind))));
+            mcp.AddRange(con.McpServers.Select(m => new InfoRow(m.Name, $"{m.StatusText} · {m.ToolsText}", !m.IsHealthy,
+                m.IsHealthy ? "live" : m.StatusText == "Failing" ? "bad" : KindOf(m.StatusKind))));
         }
-        if (connectors.Count == 0) connectors.Add(new InfoRow("Connectors", "checked when the quick panel's Connectors tab opens"));
-        Fill(Connectors, connectors);
+        Fill(ConnectorClis, clis);
+        Fill(ConnectorApps, apps);
+        Fill(ConnectorMcp, mcp);
+        var all = clis.Concat(apps).Concat(mcp).ToList();
+        int live = all.Count(r => r.Kind == "live"), attention = all.Count(r => r.Kind is "warn" or "bad");
+        ConnectorSummary = all.Count == 0 ? "" : all.Any(r => r.Value.StartsWith("Checking", StringComparison.Ordinal)) ? "checking…" : attention == 0 ? $"{live} live" : $"{live} live · {attention} need attention";
+        OnPropertyChanged(nameof(HasClis));
+        OnPropertyChanged(nameof(HasApps));
+        OnPropertyChanged(nameof(HasMcp));
+        OnPropertyChanged(nameof(HasConnectors));
         string? job = Main.Jobs.FirstOrDefault()?.JobId;
         Fill(Tools, Main.Activity.Where(a => job is null || a.JobId == job).Take(40)
             .Select(a => new ToolCallRow(a.TimeText, a.Tool, a.Phase, a.Detail, a.IsProblem)));
@@ -103,6 +130,8 @@ public sealed class CockpitModeViewModel(WorkspaceViewModel workspace)
         OnPropertyChanged(nameof(HasBackgroundTasks));
         Workspace.Artifacts.Refresh();
     }
+
+    private static string KindOf(string status) => status switch { ConnectorStatus.Live => "live", ConnectorStatus.Warn => "warn", _ => "off" };
 
     internal static void Fill<T>(ObservableCollection<T> target, IEnumerable<T> items)
     {

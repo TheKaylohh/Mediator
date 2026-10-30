@@ -93,7 +93,7 @@
                         </Style>
                       </Ellipse.Style>
                     </Ellipse>
-                    <TextBlock Text="{Binding Name}" FontSize="11" Foreground="{DynamicResource MutedBrush}" />
+                    <TextBlock Text="{Binding Name}" FontSize="12" Foreground="{DynamicResource MutedBrush}" />
                   </StackPanel>
                 </Border>
               </DataTemplate>
@@ -122,7 +122,7 @@
             <!-- V10: routing policy pill (Auto Best / Quota Saver (Antigravity) / Claude First) -->
             <Button Style="{StaticResource FlatButton}" Padding="8,3" Margin="0,0,2,0" Command="{Binding CycleRoutingPolicyCommand}"
                     ToolTip="Which subscription goes first when you do not pick one (click to change)" AutomationProperties.Name="Routing policy">
-              <TextBlock Text="{Binding RoutingPolicyText}" FontSize="11" Foreground="{DynamicResource AccentBrush}" />
+              <TextBlock Text="{Binding RoutingPolicyText}" FontSize="12" Foreground="{DynamicResource AccentBrush}" />
             </Button>
             <!-- V18: light / dark mode (the same toggle as in the full-screen app); the classic themes are in the setup card. -->
             <Button Style="{StaticResource FlatButton}" Padding="6,4" Command="{Binding ToggleLightDarkCommand}"
@@ -146,13 +146,13 @@
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <TextBlock Style="{StaticResource MutedText}" Text="{Binding StatusText}" ToolTip="{Binding StatusText}" VerticalAlignment="Center" />
-          <CheckBox Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center" FontSize="11.5"
+          <CheckBox Grid.Column="1" Margin="8,0,8,0" VerticalAlignment="Center" FontSize="12"
                     IsChecked="{Binding KeepSubscription}" Content="Keep sub."
                     ToolTip="Never switch subscriptions: if the routed one is at its limit, refuse instead of failing over" />
-          <CheckBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="11.5"
+          <CheckBox Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="12"
                     IsChecked="{Binding UseTerminal}" Content="Terminal"
                     ToolTip="Run jobs as an interactive Claude Code terminal (billing-safe fallback) instead of headless" />
-          <CheckBox Grid.Column="3" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="11.5"
+          <CheckBox Grid.Column="3" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="12"
                     IsChecked="{Binding AutoApproveAll}" Content="Auto-approve"
                     ToolTip="Approve every tool request without asking (until the app restarts). Each one is still logged in the chat." />
           <Button Grid.Column="4" Style="{StaticResource DangerButton}" Padding="12,5" Command="{Binding KillAllCommand}"
@@ -253,9 +253,9 @@
                 <TextBlock Text="Stop" FontSize="12" VerticalAlignment="Center" />
               </StackPanel>
             </Button>
-            <ComboBox DockPanel.Dock="Left" MinWidth="190" Margin="0,0,6,0" FontSize="11.5" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
+            <ComboBox DockPanel.Dock="Left" MinWidth="190" Margin="0,0,6,0" FontSize="12" ItemsSource="{Binding ModelOptions}" SelectedItem="{Binding SelectedModel}"
                       DisplayMemberPath="Label" ToolTip="Model: Auto lets the routing rules pick; any other entry runs on that CLI and model" AutomationProperties.Name="Model" />
-            <ComboBox DockPanel.Dock="Left" MinWidth="70" Margin="0,0,6,0" FontSize="11.5" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
+            <ComboBox DockPanel.Dock="Left" MinWidth="70" Margin="0,0,6,0" FontSize="12" ItemsSource="{Binding EffortOptions}" SelectedItem="{Binding SelectedEffort}"
                       ToolTip="Reasoning effort (--effort). Auto: the CLI's default" AutomationProperties.Name="Effort" />
           </DockPanel>
           <DockPanel Margin="4,4,0,0" Visibility="{Binding HasSaveFolder, Converter={StaticResource BoolToVisibility}}">
@@ -263,23 +263,23 @@
                     ToolTip="Clear: jobs use the folder selected in Explorer again" AutomationProperties.Name="Clear save folder">
               <TextBlock Style="{StaticResource Icon}" FontSize="8" Text="&#xE711;" />
             </Button>
-            <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="{Binding SaveFolderText}" ToolTip="{Binding SaveFolder}" />
+            <TextBlock Style="{StaticResource MutedText}" FontSize="12" TextTrimming="CharacterEllipsis" Text="{Binding SaveFolderText}" ToolTip="{Binding SaveFolder}" />
           </DockPanel>
           <Border Margin="0,6,0,0" Padding="8,5" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource AccentBrush}"
                   Visibility="{Binding HasFolderRequest, Converter={StaticResource BoolToVisibility}}">
             <DockPanel>
               <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,2" Margin="4,0,0,0" Command="{Binding DismissFolderRequestCommand}"
-                      Content="Dismiss" FontSize="11.5" AutomationProperties.Name="Dismiss folder request" />
+                      Content="Dismiss" FontSize="12" AutomationProperties.Name="Dismiss folder request" />
               <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Padding="8,2" Command="{Binding AllowFolderRequestCommand}"
                       ToolTip="Let this chat's jobs read and write this folder (the running job gets it now)" AutomationProperties.Name="Allow folder">
-                <TextBlock Text="Allow" FontSize="11.5" />
+                <TextBlock Text="Allow" FontSize="12" />
               </Button>
-              <TextBlock Text="{Binding FolderRequestText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="11.5" />
+              <TextBlock Text="{Binding FolderRequestText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12" />
             </DockPanel>
           </Border>
           <TextBlock Style="{StaticResource MutedText}" Margin="4,4,0,0" Text="{Binding SuggestionText}"
                      Visibility="{Binding SuggestionText, Converter={StaticResource EmptyToCollapsed}}" />
-          <TextBlock Margin="4,2,0,0" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Text="{Binding RouteText}"
+          <TextBlock Margin="4,2,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Text="{Binding RouteText}"
                      Visibility="{Binding RouteText, Converter={StaticResource EmptyToCollapsed}}" />
         </StackPanel>
 
@@ -290,7 +290,7 @@
                       Visibility="{Binding DataContext.HasContinuation, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibility}}"
                       AutomationProperties.Name="Continue session">
           <StackPanel Orientation="Horizontal">
-            <TextBlock Text="{Binding Text}" FontSize="11.5" />
+            <TextBlock Text="{Binding Text}" FontSize="12" />
             <Button Style="{StaticResource FlatButton}" Padding="3,0" Margin="6,0,-4,0" ToolTip="Start fresh (remove the follow-up)"
                     Command="{Binding DataContext.ClearContinuationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                     AutomationProperties.Name="Remove continue session">
@@ -311,7 +311,7 @@
               <ToggleButton Style="{StaticResource ChipToggle}" IsChecked="{Binding IsIncluded}" ToolTip="{Binding ToolTipText}">
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Style="{StaticResource Icon}" FontSize="11" Margin="0,0,5,0" Text="{Binding KindGlyph}" />
-                  <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="200" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Label}" FontSize="12" MaxWidth="200" TextTrimming="CharacterEllipsis" />
                   <TextBlock Style="{StaticResource Icon}" FontSize="9" Margin="5,0,0,0" Text="&#xE8CB;" Foreground="{DynamicResource AccentBrush}"
                              ToolTip="Also shared with the running job"
                              Visibility="{Binding SharedWith, Converter={StaticResource EmptyToCollapsed}}" />
@@ -350,7 +350,7 @@
                             <ItemsControl ItemsSource="{Binding Steps}" Focusable="False">
                               <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                  <TextBlock Style="{StaticResource MutedText}" FontSize="11" Text="{Binding}" />
+                                  <TextBlock Style="{StaticResource MutedText}" FontSize="12" Text="{Binding}" />
                                 </DataTemplate>
                               </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -366,12 +366,12 @@
                     <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding OpenFullViewCommand}" AutomationProperties.Name="Open full view">
                       <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE740;" Margin="0,0,5,0" />
-                        <TextBlock Text="Full view" FontSize="11" />
+                        <TextBlock Text="Full view" FontSize="12" />
                       </StackPanel>
                     </Button>
                     <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding ClearConversationCommand}"
                             AutomationProperties.Name="Clear conversation">
-                      <TextBlock Text="Clear conversation" FontSize="11" />
+                      <TextBlock Text="Clear conversation" FontSize="12" />
                     </Button>
                   </StackPanel>
                 </StackPanel>
@@ -390,10 +390,10 @@
                           </Border>
                           <StackPanel Grid.Column="1" Margin="4,0,8,0">
                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding Description}" Foreground="{DynamicResource MutedBrush}" FontSize="11.5" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding Provider}" Foreground="{DynamicResource AccentBrush}" FontFamily="{DynamicResource TechFont}" FontSize="10.5" Margin="0,2,0,0"
+                            <TextBlock Text="{Binding Description}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Provider}" Foreground="{DynamicResource AccentBrush}" FontFamily="{DynamicResource TechFont}" FontSize="11.5" Margin="0,2,0,0"
                                        ToolTip="{Binding ToolsText}" />
-                            <TextBlock Text="{Binding DisabledReason}" Foreground="{DynamicResource WarningBrush}" FontSize="10.5" TextWrapping="Wrap"
+                            <TextBlock Text="{Binding DisabledReason}" Foreground="{DynamicResource WarningBrush}" FontSize="11.5" TextWrapping="Wrap"
                                        Visibility="{Binding IsEnabled, Converter={StaticResource InverseBoolToVisibility}}" />
                           </StackPanel>
                           <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -433,7 +433,7 @@
                     <TextBlock Style="{StaticResource MutedText}" Text="Instructions (what the AI should do; your prompt is added when it runs)" TextWrapping="Wrap" />
                     <TextBox Margin="0,2,0,6" MinHeight="60" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              Text="{Binding NewActionInstructions, UpdateSourceTrigger=PropertyChanged}" />
-                    <CheckBox Content="Needs a folder (selected in Explorer or named in the prompt)" FontSize="11.5" IsChecked="{Binding NewActionNeedsFolder}" />
+                    <CheckBox Content="Needs a folder (selected in Explorer or named in the prompt)" FontSize="12" IsChecked="{Binding NewActionNeedsFolder}" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
                       <Button Style="{StaticResource FlatButton}" Padding="10,4" Margin="0,0,6,0" Content="Cancel" Command="{Binding NewActionCommand}" />
                       <Button Style="{StaticResource AccentButton}" Content="Save action" Command="{Binding SaveActionCommand}" />
@@ -479,7 +479,7 @@
                                          Visibility="{Binding RoutingText, Converter={StaticResource EmptyToCollapsed}}" />
                               <TextBlock Style="{StaticResource MutedText}" Text="{Binding Detail}" TextWrapping="Wrap" MaxHeight="48"
                                          Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
-                              <TextBlock Style="{StaticResource TechLabel}" FontSize="10" Text="{Binding JobId}" />
+                              <TextBlock Style="{StaticResource TechLabel}" FontSize="11" Text="{Binding JobId}" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                               <Button Style="{StaticResource FlatButton}" Padding="6,4" Margin="0,0,4,0" ToolTip="Open full view"
@@ -518,7 +518,7 @@
                           <Run Text="{Binding Tool, Mode=OneWay}" FontWeight="SemiBold" />
                           <Run Text="{Binding Phase, Mode=OneWay}" Foreground="{DynamicResource MutedBrush}" />
                         </TextBlock>
-                        <TextBlock Text="{Binding Detail}" FontSize="11" TextWrapping="Wrap" MaxHeight="44"
+                        <TextBlock Text="{Binding Detail}" FontSize="12" TextWrapping="Wrap" MaxHeight="44"
                                    Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}">
                           <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -550,7 +550,7 @@
                     <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Padding="6,3" Command="{Binding RefreshCommand}" ToolTip="Check again">
                       <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE72C;" />
                     </Button>
-                    <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="11.5" Foreground="{DynamicResource MutedBrush}" Text="{Binding LiveSummary}" />
+                    <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12" Foreground="{DynamicResource MutedBrush}" Text="{Binding LiveSummary}" />
                     <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" FontSize="13" Text="Connection center" />
                   </DockPanel>
 
@@ -578,16 +578,16 @@
                               </StackPanel>
                               <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
                                       BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
-                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                                <TextBlock FontSize="12" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                               </Border>
                               <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
                                 <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
                               </Button>
                             </Grid>
                             <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
-                              <TextBlock FontSize="11.5" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}" Text="{Binding VersionText}" />
-                              <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding AuthText}" Foreground="{DynamicResource TextBrush}" />
-                              <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding CooldownText}" Foreground="{DynamicResource WarningBrush}"
+                              <TextBlock FontSize="12" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}" Text="{Binding VersionText}" />
+                              <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding AuthText}" Foreground="{DynamicResource TextBrush}" />
+                              <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding CooldownText}" Foreground="{DynamicResource WarningBrush}"
                                          Visibility="{Binding HasCooldown, Converter={StaticResource BoolToVisibility}}" />
                             </StackPanel>
                             <Button HorizontalAlignment="Left" Margin="34,6,0,0" Style="{StaticResource OutlineButton}" Padding="8,2" Content="Sign In" Command="{Binding SignInCommand}"
@@ -623,7 +623,7 @@
                               </StackPanel>
                               <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
                                       BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
-                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                                <TextBlock FontSize="12" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                               </Border>
                               <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
                                 <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
@@ -659,7 +659,7 @@
                               </StackPanel>
                               <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
                                       BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
-                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                                <TextBlock FontSize="12" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                               </Border>
                               <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
                                 <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
@@ -670,11 +670,11 @@
                               <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                 <Button Style="{StaticResource OutlineButton}" Padding="8,2" Command="{Binding SetUpCommand}"
                                         ToolTip="Prepares the extension folder and copies its path: in chrome://extensions turn on Developer mode, Load unpacked, paste">
-                                  <TextBlock Text="{Binding SetUpText}" FontSize="11.5" />
+                                  <TextBlock Text="{Binding SetUpText}" FontSize="12" />
                                 </Button>
                                 <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="6,0,0,0" Command="{Binding OpenFolderCommand}"
                                         ToolTip="Opens the folder Chrome loads the extension from">
-                                  <TextBlock Text="Folder" FontSize="11.5" />
+                                  <TextBlock Text="Folder" FontSize="12" />
                                 </Button>
                               </StackPanel>
                             </StackPanel>
@@ -705,7 +705,7 @@
                               </StackPanel>
                               <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
                                       BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
-                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                                <TextBlock FontSize="12" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                               </Border>
                               <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
                                 <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
@@ -722,7 +722,7 @@
 
                   <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,6,0,0" Command="{Binding ToggleAddCommand}">
-                      <TextBlock Text="+ Add Custom MCP" FontSize="11.5" />
+                      <TextBlock Text="+ Add Custom MCP" FontSize="12" />
                     </Button>
                     <TextBlock Style="{StaticResource SectionTitle}" Text="CUSTOM MCP SERVERS" />
                   </DockPanel>
@@ -741,7 +741,7 @@
                                  Text="The server is started for a 15 s health check (initialize + tools/list). Its tools run on your PC, so every call asks for your approval. No environment variables are stored." />
                       <DockPanel>
                         <Button DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Content="Check and add" Command="{Binding AddServerCommand}" />
-                        <TextBlock FontSize="11.5" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0" Text="{Binding AddStatus}" />
+                        <TextBlock FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0" Text="{Binding AddStatus}" />
                       </DockPanel>
                     </StackPanel>
                   </Border>
@@ -771,14 +771,14 @@
                               </StackPanel>
                               <Border Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0" CornerRadius="9" Padding="8,1" BorderThickness="1"
                                       BorderBrush="{Binding StatusKind, Converter={StaticResource StatusBrush}}">
-                                <TextBlock FontSize="11" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
+                                <TextBlock FontSize="12" Text="{Binding StatusText}" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                               </Border>
                               <Button Grid.Column="3" Style="{StaticResource FlatButton}" Padding="5,3" VerticalAlignment="Center" Command="{Binding ToggleCommand}" ToolTip="Details">
                                 <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE70D;" />
                               </Button>
                             </Grid>
                             <StackPanel Margin="34,6,0,0" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibility}}">
-                              <TextBlock FontSize="11.5" TextWrapping="Wrap" Text="{Binding HealthText}">
+                              <TextBlock FontSize="12" TextWrapping="Wrap" Text="{Binding HealthText}">
                                 <TextBlock.Style>
                                   <Style TargetType="TextBlock">
                                     <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
@@ -796,7 +796,7 @@
                                 <CheckBox VerticalAlignment="Center" Margin="0,0,10,0" IsChecked="{Binding IsEnabled}" Content="Enabled" ToolTip="Offer this server's tools to new jobs" />
                                 <Button Style="{StaticResource OutlineButton}" Padding="8,2" Margin="0,0,6,0" Content="Check" Command="{Binding PingCommand}" />
                                 <Button Style="{StaticResource FlatButton}" Padding="8,2" Command="{Binding RemoveCommand}">
-                                  <TextBlock Text="Remove" Foreground="{DynamicResource DangerBrush}" FontSize="11.5" />
+                                  <TextBlock Text="Remove" Foreground="{DynamicResource DangerBrush}" FontSize="12" />
                                 </Button>
                               </StackPanel>
                             </StackPanel>
@@ -913,7 +913,7 @@
                         <StackPanel Grid.Column="1">
                           <TextBlock>
                             <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
-                            <Run Text="{Binding Status, Mode=OneWay}" FontFamily="{DynamicResource TechFont}" FontSize="11" Foreground="{DynamicResource MutedBrush}" />
+                            <Run Text="{Binding Status, Mode=OneWay}" FontFamily="{DynamicResource TechFont}" FontSize="12" Foreground="{DynamicResource MutedBrush}" />
                           </TextBlock>
                           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Text="{Binding Hint}"
                                      Visibility="{Binding IsMissing, Converter={StaticResource BoolToVisibility}}" />
@@ -922,7 +922,7 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBlock FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,8" Text="{Binding Summary}" />
+                <TextBlock FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8" Text="{Binding Summary}" />
 
                 <TextBlock Style="{StaticResource SectionTitle}" Text="THEME" />
                 <ItemsControl ItemsSource="{Binding ThemeOptions}" Focusable="False">
@@ -952,7 +952,7 @@
 
                 <TextBlock Style="{StaticResource SectionTitle}" Text="HOTKEY" />
                 <TextBox Style="{StaticResource FieldBox}" Text="{Binding HotkeyText, UpdateSourceTrigger=PropertyChanged}" />
-                <TextBlock FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Text="{Binding HotkeyError}"
+                <TextBlock FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource WarningBrush}" Text="{Binding HotkeyError}"
                            Visibility="{Binding HotkeyError, Converter={StaticResource EmptyToCollapsed}}" />
                 <ItemsControl ItemsSource="{Binding HotkeyPresets}" Margin="0,6,0,0" Focusable="False">
                   <ItemsControl.ItemsPanel>
@@ -963,7 +963,7 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Button Style="{StaticResource FlatButton}" Margin="0,0,4,4" Padding="6,2" Content="{Binding}" CommandParameter="{Binding}"
-                              FontFamily="{DynamicResource TechFont}" FontSize="11"
+                              FontFamily="{DynamicResource TechFont}" FontSize="12"
                               Command="{Binding DataContext.Onboarding.UsePresetCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
@@ -1001,7 +1001,7 @@
                 <DockPanel>
                   <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}"
                              Text="{Binding DataContext.QueuedApprovalsText, RelativeSource={RelativeSource AncestorType=Window}}" />
-                  <TextBlock FontSize="11" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}">
+                  <TextBlock FontSize="12" FontFamily="{DynamicResource TechFont}" Foreground="{DynamicResource MutedBrush}">
                     <Run Text="APPROVAL NEEDED" />
                     <Run Text="·" />
                     <Run Text="{Binding Tool, Mode=OneWay}" />
@@ -1012,7 +1012,7 @@
                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" TextWrapping="Wrap" Margin="0,4,0,2" />
                 <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
                            Visibility="{Binding Summary, Converter={StaticResource EmptyToCollapsed}}" />
-                <TextBlock Style="{StaticResource TechLabel}" FontSize="10" Margin="0,2,0,6" Text="{Binding JobId}" />
+                <TextBlock Style="{StaticResource TechLabel}" FontSize="11" Margin="0,2,0,6" Text="{Binding JobId}" />
               </StackPanel>
 
               <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
@@ -1077,7 +1077,7 @@
                       <DataTemplate>
                         <StackPanel Margin="2,3">
                           <TextBlock Text="{Binding Primary}" TextWrapping="Wrap" />
-                          <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource MutedBrush}" FontSize="11" TextWrapping="Wrap"
+                          <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource MutedBrush}" FontSize="12" TextWrapping="Wrap"
                                      Visibility="{Binding Detail, Converter={StaticResource EmptyToCollapsed}}" />
                         </StackPanel>
                       </DataTemplate>

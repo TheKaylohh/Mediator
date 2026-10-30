@@ -12,7 +12,7 @@
     <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Margin="0,6,0,0" Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
       <StackPanel DataContext="{Binding Selected}">
         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
-        <TextBlock Style="{StaticResource MutedText}" FontSize="11">
+        <TextBlock Style="{StaticResource MutedText}" FontSize="12">
           <Run Text="{Binding Kind, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding SizeText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding CreatedText, Mode=OneWay}" /><Run Text=" · from " /><Run Text="{Binding Source, Mode=OneWay}" />
         </TextBlock>
         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
@@ -25,7 +25,7 @@
         </StackPanel>
       </StackPanel>
     </Border>
-    <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="11" Margin="2,6,0,0" Text="{Binding ViewerNote}" />
+    <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="12" Margin="2,6,0,0" Text="{Binding ViewerNote}" />
     <!-- Library -->
     <ScrollViewer VerticalScrollBarVisibility="Auto">
       <StackPanel>
@@ -36,13 +36,13 @@
             <DataTemplate>
               <Button Style="{StaticResource ListButton}" Padding="6,4" Command="{Binding SelectCommand}" ToolTip="{Binding Path}">
                 <DockPanel>
-                  <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding SizeText}" Margin="8,0,0,0" />
+                  <TextBlock DockPanel.Dock="Right" Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding SizeText}" Margin="8,0,0,0" />
                   <Border DockPanel.Dock="Left" Width="40" Margin="0,0,8,0" Padding="2,1" CornerRadius="4" BorderThickness="1" BorderBrush="{DynamicResource LineBrush}">
-                    <TextBlock Style="{StaticResource TechLabel}" FontSize="9.5" HorizontalAlignment="Center" Text="{Binding Extension}" />
+                    <TextBlock Style="{StaticResource TechLabel}" FontSize="11" HorizontalAlignment="Center" Text="{Binding Extension}" />
                   </Border>
                   <StackPanel>
-                    <TextBlock Text="{Binding Name}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Style="{StaticResource MutedText}" FontSize="10.5" Text="{Binding CreatedText}" />
+                    <TextBlock Text="{Binding Name}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Style="{StaticResource MutedText}" FontSize="11.5" Text="{Binding CreatedText}" />
                   </StackPanel>
                 </DockPanel>
               </Button>

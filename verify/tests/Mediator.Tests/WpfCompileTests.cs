@@ -127,7 +127,7 @@ static class WpfCompileTests
         void Mutate(string file, string from, string to)
         {
             string p = Path.Combine(wpf, file);
-            string text = File.ReadAllText(p);
+            string text = File.ReadAllText(p).Replace("\r\n", "\n"); // a CRLF checkout: the anchors use \n
             Check.True(text.Contains(from, StringComparison.Ordinal), $"mutation anchor '{from}' in {file}");
             File.WriteAllText(p, text.Replace(from, to, StringComparison.Ordinal));
         }
