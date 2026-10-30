@@ -2,6 +2,18 @@
 
 Earlier versions: [V7](docs/v7/CHANGELOG.md) (UI/UX), [V6](docs/v6/CHANGELOG.md) (hardening). The full stories, with what was and was not verified, are in [docs/v9/RELEASE_NOTES.md](docs/v9/RELEASE_NOTES.md) and [docs/v8/RELEASE_NOTES.md](docs/v8/RELEASE_NOTES.md).
 
+## V17: CAD co-pilot expansion (2026-10-30)
+
+Details, coverage per program and the Windows checklist: [docs/v17/CAD_EXPANSION.md](docs/v17/CAD_EXPANSION.md).
+
+- **Six new CAD programs**: FreeCAD (fc_), AutoCAD (acad_), Inventor (inv_), Siemens NX (nx_), Creo (creo_), CATIA V5 (catia_), on the shared CAD layer; each driven by one script in its own automation language (Python, or Windows PowerShell over COM), patchable in `%LOCALAPPDATA%\Mediator\cad-scripts`.
+- **New tools**: sketch, model_features, assembly_ops, annotate_drawing, simulate and run_script, with one CAD-neutral operation catalog (units mm/deg/N/MPa); each program lists the operations it supports.
+- **SolidWorks**: sketches with constraints and dimensions, features on the open part (standard holes, linear/circular patterns, delete), live assembly work (insert, mate, fix, move, replace, delete, copies), drawing annotation (projected/section/detail views, dimensions, notes, BOM, balloons), more edits (add global, delete feature, colour, undo), run_script.
+- **FreeCAD**: PartDesign features incl. Hole and patterns, booleans, and CalculiX static analysis (fixed, force, pressure, mesh, solve).
+- **run_script** everywhere: the escape hatch for anything else (CAM, simulation, GD&T, sheet metal); Destructive, shows the code, runs only the approved code.
+- Routing: requests naming a program or its file types, or the program in front, get that program's tools; saved chats are upgraded.
+- 4 new tests (172; 161 run here, all pass). Not yet run against the real programs.
+
 ## V16.2: workspace window (2026-10-30)
 
 Details, what works now and what is still a skeleton: [docs/v16/WORKSPACE.md](docs/v16/WORKSPACE.md).

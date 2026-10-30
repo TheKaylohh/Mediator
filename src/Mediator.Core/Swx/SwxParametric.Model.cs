@@ -642,7 +642,7 @@ public sealed partial class SwxParametric
             case "rebuild":
                 return "rebuilt";
             default:
-                throw new ArgumentException($"unknown op {kind}");
+                return ApplyMoreOps(doc, kind, op) ?? throw new ArgumentException($"unknown op {kind}");
         }
     }
 

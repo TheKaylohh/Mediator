@@ -35,8 +35,10 @@ public sealed partial class SwxParametric
     private string SketchRef(JsonNode? n, string role)
     {
         string recipeName = (string?)n ?? throw new ArgumentException($"{role} sketch name is required");
-        return _sketchNames.TryGetValue(recipeName, out var feature) ? feature
-            : throw new ArgumentException($"unknown sketch '{recipeName}' for {role} (make it first with op \"sketch\")");
+        if (_sketchNames.TryGetValue(recipeName, out var feature)) return feature;
+        // V17: on an open part, a sketch already in the feature tree (e.g. made with the sketch tool) is used by its name.
+        return C(_doc, "FeatureByName", recipeName) is not null ? recipeName
+            : throw new ArgumentException($"unknown sketch '{recipeName}' for {role} (make it first with op \"sketch\" or the sketch tool)");
     }
 
     private void SelectBody(object body, int mark, bool append)

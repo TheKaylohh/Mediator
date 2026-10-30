@@ -151,25 +151,7 @@ public sealed partial class SwxParametric
                 n++;
                 try
                 {
-                    switch (op)
-                    {
-                        case "extrude" when (bool?)f["surface"] == true: SurfaceExtrude(f); break;
-                        case "extrude": SketchFor(f); Extrude(f, cut: false); break;
-                        case "cut": SketchFor(f); Extrude(f, cut: true); break;
-                        case "fillet": Fillet(f); break;
-                        case "chamfer": Chamfer(f); break;
-                        case "plane": Plane(f); break;
-                        case "sketch": NamedSketch(f); break;
-                        case "curve3d": Curve3d(f); break;
-                        case "loft": Loft(f); break;
-                        case "sweep": Sweep(f); break;
-                        case "revolve": Revolve(f); break;
-                        case "knit": Knit(f); break;
-                        case "thicken": Thicken(f); break;
-                        case "shell": Shell(f); break;
-                        case "mirror": Mirror(f); break;
-                        default: throw new ArgumentException($"unknown op '{op}' ({string.Join(", ", Ops)})");
-                    }
+                    RunFeature(f);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -221,8 +203,37 @@ public sealed partial class SwxParametric
         }
     }
 
+    /// <summary>One recipe feature (shared by new parts and, V17, features added to an open part).</summary>
+    private void RunFeature(JsonObject f)
+    {
+        string op = (string?)f["op"] ?? "";
+        switch (op)
+        {
+            case "extrude" when (bool?)f["surface"] == true: SurfaceExtrude(f); break;
+            case "extrude": SketchFor(f); Extrude(f, cut: false); break;
+            case "cut": SketchFor(f); Extrude(f, cut: true); break;
+            case "fillet": Fillet(f); break;
+            case "chamfer": Chamfer(f); break;
+            case "plane": Plane(f); break;
+            case "sketch": NamedSketch(f); break;
+            case "curve3d": Curve3d(f); break;
+            case "loft": Loft(f); break;
+            case "sweep": Sweep(f); break;
+            case "revolve": Revolve(f); break;
+            case "knit": Knit(f); break;
+            case "thicken": Thicken(f); break;
+            case "shell": Shell(f); break;
+            case "mirror": Mirror(f); break;
+            case "hole": Hole(f); break;
+            case "pattern_linear": LinearPattern(f); break;
+            case "pattern_circular": CircularPattern(f); break;
+            case "delete": DeleteFeature((string?)f["feature"] ?? throw new ArgumentException("delete needs feature")); break;
+            default: throw new ArgumentException($"unknown op '{op}' ({string.Join(", ", Ops)})");
+        }
+    }
+
     /// <summary>Every feature op a recipe may use (the tool schema lists the same).</summary>
-    public static readonly string[] Ops = ["extrude", "cut", "revolve", "loft", "sweep", "fillet", "chamfer", "shell", "mirror", "plane", "sketch", "curve3d", "knit", "thicken"];
+    public static readonly string[] Ops = ["extrude", "cut", "revolve", "loft", "sweep", "fillet", "chamfer", "shell", "mirror", "plane", "sketch", "curve3d", "knit", "thicken", "hole", "pattern_linear", "pattern_circular", "delete"];
 
     // ── Versions and windows ───────────────────────────────────────────────────────────────────────────
 

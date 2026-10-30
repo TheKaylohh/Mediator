@@ -395,7 +395,9 @@ public sealed class MediatorRuntime : IMediatorRuntime, IAsyncDisposable
             : null);
         Tools.Register(new SwxToolProvider(Swx, Registry, SolidWorks));
         Tools.Register(new SwxPartToolProvider(SolidWorks));
-        Tools.Register(new Cad.CadAppToolProvider(new SolidWorksCadApp(SolidWorks))); // V16: inspect, edit, drawings, pictures, documents, export
+        string cadScripts = Path.Combine(options.Paths.DataDirectory, "cad-scripts"); // V17: patched connector scripts override the built-in ones
+        Tools.Register(new Cad.CadAppToolProvider(new SolidWorksCadApp(SolidWorks) { ScriptOverrideFolder = cadScripts }));
+        foreach (var cad in JobSpecFactory.OtherCadApps(cadScripts)) Tools.Register(new Cad.CadAppToolProvider(cad)); // V17: FreeCAD, AutoCAD, Inventor, NX, Creo, CATIA
         Tools.Register(new ResolveToolProvider(options.MediaProbe, options.Python, Registry));
         Tools.Register(new BlenderToolProvider(options.Blender, options.ProcessRunner, options.Ffmpeg));
         var cadPython = options.CadPython ?? options.Python;
@@ -1092,6 +1094,9 @@ public static partial class JobSpecFactory
         SolidWorksCadApp.SessionTool, SolidWorksCadApp.DocumentTool, SolidWorksCadApp.ExportTool, // open/save/close, STEP/STL/PDF/DXF
         SolidWorksCadApp.InspectTool, SolidWorksCadApp.EditTool,                   // V16: read and change any part or assembly
         SolidWorksCadApp.DrawingTool, SolidWorksCadApp.ViewsTool,                  // V16: drawings, pictures of the model
+        SolidWorksCadApp.SketchTool, SolidWorksCadApp.FeatureTool,                 // V17: sketches and features on the open part
+        SolidWorksCadApp.AssemblyTool, SolidWorksCadApp.AnnotateTool,              // V17: live assembly work, drawing annotation
+        SolidWorksCadApp.ScriptTool,                                               // V17: anything else, through the SolidWorks API
         CodeCadToolProvider.GenerateTool, CodeCadToolProvider.CustomTool, SwxToolProvider.ImportStepTool, // code → STEP → part
         SwxToolProvider.PartCardsTool, SwxToolProvider.BuildTool,                  // part cards → assembly
         CadFiles.CadFileToolProvider.InspectTool, CadFiles.CadFileToolProvider.ConvertTool, // V15: read and convert CAD files
@@ -1099,6 +1104,18 @@ public static partial class JobSpecFactory
 
     /// <summary>V15: CAD files without SolidWorks: inspect meshes, STEP, IGES and profiles; convert meshes.</summary>
     public static readonly string[] CadFileTools = CadFiles.CadFileToolProvider.Names;
+
+    /// <summary>V17: the CAD programs beyond SolidWorks (each one's tools are named after its prefix: fc_, acad_, inv_, nx_, creo_, catia_).</summary>
+    public static IReadOnlyList<Cad.ICadApp> OtherCadApps(string? scriptOverrides = null) =>
+    [
+        new Cad.Apps.FreeCadApp(overrideFolder: scriptOverrides), new Cad.Apps.AutoCadApp(overrideFolder: scriptOverrides),
+        new Cad.Apps.InventorApp(overrideFolder: scriptOverrides), new Cad.Apps.NxApp(overrideFolder: scriptOverrides),
+        new Cad.Apps.CreoApp(overrideFolder: scriptOverrides), new Cad.Apps.CatiaApp(overrideFolder: scriptOverrides),
+    ];
+
+    /// <summary>V17: each other CAD program's whole toolset (plus the CAD-file tools), by tool prefix.</summary>
+    public static readonly IReadOnlyDictionary<string, string[]> CadToolsByPrefix = OtherCadApps()
+        .ToDictionary(a => a.Prefix, a => new Cad.CadAppToolProvider(a).ToolNames.Concat(CadFileTools).ToArray(), StringComparer.Ordinal);
 
     /// <summary>V15: Word, Excel and PowerPoint files, and classic Outlook mail and calendar.</summary>
     public static readonly string[] OfficeTools = Office.OfficeToolProvider.Names;

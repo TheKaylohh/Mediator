@@ -18,4 +18,9 @@
   <ItemGroup>
     <ProjectReference Include="../Mediator.Protocol/Mediator.Protocol.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- V17: the CAD connectors' automation scripts (Python / PowerShell), embedded; a copy in <data>\cad-scripts overrides one. -->
+    <EmbeddedResource Include="Cad\Scripts\*.py;Cad\Scripts\*.ps1" LogicalName="Mediator.Cad.Scripts.%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

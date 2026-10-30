@@ -236,6 +236,8 @@ public static partial class JobSpecFactory
     {
         var list = tools.Distinct(StringComparer.Ordinal).ToList();
         if (list.Any(t => t.StartsWith("swx_", StringComparison.Ordinal))) list = list.Concat(CadTools).Distinct(StringComparer.Ordinal).ToList();
+        foreach (var (prefix, appTools) in CadToolsByPrefix)
+            if (list.Any(t => t.StartsWith(prefix + "_", StringComparison.Ordinal))) list = list.Concat(appTools).Distinct(StringComparer.Ordinal).ToList();
         if (list.Any(OfficeTools.Contains)) list = list.Concat(OfficeTools).Distinct(StringComparer.Ordinal).ToList();
         return list;
     }
@@ -299,6 +301,13 @@ public static partial class JobSpecFactory
         var groups = new (string[] Keys, string? App, string[] Tools, TaskCategory Category)[]
         {
             (["solidworks", "sldprt", "sldasm", "slddrw"], "sldworks", CadTools, TaskCategory.Cad),
+            // V17: the other CAD programs, by name, file type, or the program in front (process name).
+            (["freecad", "fcstd"], "freecad", CadToolsByPrefix["fc"], TaskCategory.Cad),
+            (["autocad", "dwg", "acad"], "acad", CadToolsByPrefix["acad"], TaskCategory.Cad),
+            (["inventor", "ipt", "iam", "idw"], "inventor", CadToolsByPrefix["inv"], TaskCategory.Cad),
+            (["siemens nx", "nx open", "nx part", "ugraf"], "ugraf", CadToolsByPrefix["nx"], TaskCategory.Cad),
+            (["creo", "pro/engineer", "proe"], "xtop", CadToolsByPrefix["creo"], TaskCategory.Cad),
+            (["catia", "catpart", "catproduct", "catdrawing"], "cnext", CadToolsByPrefix["catia"], TaskCategory.Cad),
             (["parametric", "build123d", "3d print", "generate part", "make part"], null, CadTools, TaskCategory.Cad),
             ([], null, CadFileTools, TaskCategory.Cad),       // V15: CAD files (matched by CadFileWord below)
             (OfficeIntent, null, OfficeTools, TaskCategory.Office), // V15: Word, Excel, PowerPoint, Outlook (and OfficeFileWord)
@@ -317,7 +326,7 @@ public static partial class JobSpecFactory
             || (OpenModelWords.Any(k => HasWord(t, k)) && SolidWorksOpen()); // V16.1: about the model open in SolidWorks
         bool cadFile = CadFileWord().IsMatch(t) || StlFile().IsMatch(t);
         bool officeFile = OfficeFileWord().IsMatch(t) || (OfficeNames.Any(k => HasWord(t, k)) && OfficeAction.Any(k => HasWord(t, k)));
-        bool Special(int i) => (i == 0 && cad) || (i == 2 && cadFile) || (i == 3 && officeFile);
+        bool Special(int i) => (i == 0 && cad) || (i == 8 && cadFile) || (i == 9 && officeFile);
         var hits = groups.Where((g, i) => Special(i) || g.Keys.Any(k => HasWord(t, k)) || (g.App is not null && app.Contains(g.App, StringComparison.Ordinal))).ToList();
         if (hits.Count == 0) return ([], TaskCategory.Chat);
         return (hits.SelectMany(h => h.Tools).Distinct(StringComparer.Ordinal).ToList(), hits[0].Category);

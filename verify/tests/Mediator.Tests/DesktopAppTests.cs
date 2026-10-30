@@ -11,7 +11,7 @@ namespace Mediator.Tests;
 /// </summary>
 static class DesktopAppTests
 {
-    sealed class FakeRegistry : IRegistryReader
+    internal sealed class FakeRegistry : IRegistryReader
     {
         private readonly Dictionary<string, Dictionary<string, string>> _keys = new(StringComparer.OrdinalIgnoreCase);
         public int Reads;

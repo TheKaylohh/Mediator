@@ -15,31 +15,15 @@ public sealed class CadAppToolProvider : IToolProvider
 {
     /// <summary>What inspect_model can report. Empty = <see cref="DefaultSections"/>.</summary>
     public static readonly string[] InspectSections =
-        ["features", "dimensions", "equations", "properties", "mass", "configurations", "selection", "components", "mates", "interference"];
-    public static readonly string[] DefaultSections = ["features", "equations", "properties", "mass", "configurations", "components", "mates"];
-
-    /// <summary>edit_model operations and their required fields.</summary>
-    public static readonly IReadOnlyDictionary<string, string[]> EditOps = new Dictionary<string, string[]>(StringComparer.Ordinal)
-    {
-        ["set_dimension"] = ["name", "value"],
-        ["set_global"] = ["name", "value"],
-        ["suppress"] = ["feature"],
-        ["unsuppress"] = ["feature"],
-        ["rename_feature"] = ["feature", "newName"],
-        ["set_property"] = ["name", "value"],
-        ["delete_property"] = ["name"],
-        ["set_material"] = ["material"],
-        ["activate_configuration"] = ["name"],
-        ["add_configuration"] = ["name"],
-        ["suppress_component"] = ["component"],
-        ["unsuppress_component"] = ["component"],
-        ["rebuild"] = [],
-    };
+        ["features", "dimensions", "equations", "parameters", "properties", "mass", "configurations", "selection", "components", "mates", "interference",
+         "bodies", "layers", "blocks", "entities"];
+    public static readonly string[] DefaultSections = ["features", "equations", "parameters", "properties", "mass", "configurations", "components", "mates"];
 
     public static readonly string[] Sheets = ["A4", "A3", "A2", "A1", "A0", "A", "B", "C", "D", "E"];
     public static readonly string[] ViewNames = ["current", "iso", "front", "back", "left", "right", "top", "bottom", "trimetric"];
     public const int MaxViewBytes = 3_000_000;
-    private const int MaxPaths = 200, MaxOps = 50;
+    private const int MaxPaths = 200, MaxOps = 50, MaxScriptChars = 60_000;
+    public static readonly TimeSpan ScriptDefaultTimeout = TimeSpan.FromMinutes(5), ScriptMaxTimeout = TimeSpan.FromMinutes(30);
 
     private readonly ICadApp _app;
     private readonly string _viewsRoot;
@@ -139,31 +123,11 @@ public sealed class CadAppToolProvider : IToolProvider
 
         if (app.Capabilities.Contains(CadCapability.Edit))
             Add(CadCapability.Edit,
-                $"Change an existing {n} part or assembly (path, or the active document), in order, then rebuild. ops: " +
-                "{op:\"set_dimension\", name:\"D1@Boss-Extrude1\", value, unit?: mm|in|deg} (names from inspect_model dimensions); " +
-                "{op:\"set_global\", name:\"W\", value} (mm); {op:\"suppress\"|\"unsuppress\", feature}; {op:\"rename_feature\", feature, newName}; " +
-                "{op:\"set_property\", name, value, configuration?} (custom property; configuration \"\" or none = the file); {op:\"delete_property\", name, configuration?}; " +
-                $"{{op:\"set_material\", material}} (a name from the material library, e.g. {string.Join(", ", app.MaterialExamples.Select(m => "\"" + m + "\""))}); " +
-                "{op:\"activate_configuration\", name}; {op:\"add_configuration\", name, description?}; {op:\"suppress_component\"|\"unsuppress_component\", " +
-                "component:\"Bolt-2\"} (assemblies); {op:\"rebuild\"}. save: false (default) leaves the changes open and unsaved for the user to " +
-                "review (Ctrl+Z undoes them); true saves the file. The user approves the list and may untick operations. Returns each operation's " +
-                "result, rebuild errors and the new mass and size: check them.",
-                $$"""
-                {
-                  "type": "object",
-                  "required": ["ops"],
-                  "properties": {
-                    "path": { "type": "string" },
-                    "save": { "type": "boolean" },
-                    "ops": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["op"], "properties": {
-                      "op": { "type": "string", "enum": [{{Enum(EditOps.Keys)}}] },
-                      "name": { "type": "string" }, "value": {}, "unit": { "type": "string", "enum": ["mm", "in", "deg"] },
-                      "feature": { "type": "string" }, "newName": { "type": "string" }, "configuration": { "type": "string" },
-                      "material": { "type": "string" }, "description": { "type": "string" }, "component": { "type": "string" } } } }
-                  },
-                  "additionalProperties": false
-                }
-                """, ToolRisk.Write, TimeSpan.FromMinutes(6));
+                $"Change an existing {n} document (path, or the active one), in order, then rebuild. ops: " + OpsHelp(app, CadCapability.Edit) +
+                (app.Ops(CadCapability.Edit).Contains("set_material") ? $" Material examples: {string.Join(", ", app.MaterialExamples.Select(m => "\"" + m + "\""))}." : "") +
+                " save: false (default) leaves the changes open and unsaved for the user to review (undo reverts them); true saves the file. The user " +
+                "approves the list and may untick operations. Returns each operation's result and the rebuilt state: check it.",
+                OpsSchema(app, CadCapability.Edit), ToolRisk.Write, TimeSpan.FromMinutes(6));
 
         if (app.Capabilities.Contains(CadCapability.Drawing) && app.DrawingExtension is { } dwg)
             Add(CadCapability.Drawing,
@@ -201,8 +165,77 @@ public sealed class CadAppToolProvider : IToolProvider
                 }
                 """, ToolRisk.ReadOnly, TimeSpan.FromMinutes(4));
 
+        if (app.Capabilities.Contains(CadCapability.Sketch))
+            Add(CadCapability.Sketch,
+                $"Draw ONE sketch in a {n} {(app.Capabilities.Contains(CadCapability.Feature) ? "part (path, or the active document), for model_features to extrude, cut, revolve, sweep or loft by its name" : "document (path, or the active one)")}. " +
+                CadOpCatalog.SketchEntities + ". Returns the sketch's name and whether it is fully defined. save: false (default) leaves it unsaved.",
+                """
+                {
+                  "type": "object",
+                  "required": ["on", "entities"],
+                  "properties": {
+                    "path": { "type": "string" }, "save": { "type": "boolean" }, "name": { "type": "string" }, "on": {},
+                    "entities": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["type"] } },
+                    "constraints": { "type": "array", "items": { "type": "object" } },
+                    "dimensions": { "type": "array", "items": { "type": "object" } }
+                  },
+                  "additionalProperties": false
+                }
+                """, ToolRisk.Write, TimeSpan.FromMinutes(5));
+
+        foreach (var (cap, what, minutes) in new[]
+                 {
+                     (CadCapability.Feature, $"Model a {n} part (path, or the active document) with features, in order: ", 8),
+                     (CadCapability.Assembly, $"Build or change a {n} assembly (path, or the active document), in order: ", 8),
+                     (CadCapability.Annotate, $"Annotate a {n} drawing (path, or the active document), in order: ", 6),
+                     (CadCapability.Simulate, $"Run a {n} structural analysis on a part (path, or the active document), in order: ", 20),
+                 })
+            if (app.Capabilities.Contains(cap))
+                Add(cap, what + OpsHelp(app, cap) + " Units: mm, degrees, N, MPa. Each operation is a row the user may untick; one that fails is " +
+                    "reported and the rest still run. save: false (default) leaves the changes unsaved for review. Look at the result with capture_views.",
+                    OpsSchema(app, cap), ToolRisk.Write, TimeSpan.FromMinutes(minutes));
+
+        if (app.Capabilities.Contains(CadCapability.Script) && app.Script is { } script)
+            Add(CadCapability.Script,
+                $"Run a {script.Language} script against {n}'s own automation API: anything the user can do in {n} that the other {p}_ tools do not cover " +
+                "(other feature types, simulation and CAM setup, batch work, custom checks). The user reads and approves the code every time. " +
+                script.Guide + " path: the document the script works on (its folder must be shared with the job). timeoutSeconds: default 300, up to 1800. " +
+                "Prefer the other tools when they can do the job.",
+                """
+                {
+                  "type": "object",
+                  "required": ["code"],
+                  "properties": {
+                    "code": { "type": "string" }, "path": { "type": "string" }, "purpose": { "type": "string" },
+                    "timeoutSeconds": { "type": "integer" }
+                  },
+                  "additionalProperties": false
+                }
+                """, ToolRisk.Destructive, ScriptMaxTimeout + TimeSpan.FromMinutes(1));
+
         return list;
     }
+
+    /// <summary>"{op:"extrude", sketch, depth}; ...": the operations this program supports, with their fields.</summary>
+    private static string OpsHelp(ICadApp app, CadCapability cap) =>
+        string.Join("; ", app.Ops(cap).Select(name => CadOpCatalog.Find(cap, name)).OfType<CadOp>()
+            .Select(o => o.Help.StartsWith("{}", StringComparison.Ordinal) ? $"{{op:\"{o.Name}\"}}{o.Help[2..]}"
+                : o.Help.StartsWith('{') ? $"{{op:\"{o.Name}\", {o.Help[1..]}" : $"{{op:\"{o.Name}\"}} {o.Help}")) + ".";
+
+    /// <summary>The schema of an ops tool: path, save, and ops whose "op" is one of the program's operations; other fields are free.</summary>
+    private static string OpsSchema(ICadApp app, CadCapability cap) => $$"""
+        {
+          "type": "object",
+          "required": ["ops"],
+          "properties": {
+            "path": { "type": "string" },
+            "save": { "type": "boolean" },
+            "ops": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["op"], "properties": {
+              "op": { "type": "string", "enum": [{{Enum(app.Ops(cap))}}] } } } }
+          },
+          "additionalProperties": false
+        }
+        """;
 
     // ── Arguments ────────────────────────────────────────────────────────────────────────────────────
 
@@ -238,6 +271,7 @@ public sealed class CadAppToolProvider : IToolProvider
     private async Task<(string? Path, string? Error)> WritableDoc(JobGrant job, string? raw, bool saves, CancellationToken ct)
     {
         if (raw is not null) return Doc(job, raw, PathAccess.Modify);
+        if (!_app.HasLiveSession) return (null, $"{_app.DisplayName} works on files here: give the path of the document.");
         string? active = await _app.ActiveDocumentPathAsync(ct).ConfigureAwait(false);
         if (active is null)
             return saves ? (null, $"The active {_app.DisplayName} document was never saved: save it first with {Name(CadCapability.Documents)} save_as.") : (null, null);
@@ -245,9 +279,10 @@ public sealed class CadAppToolProvider : IToolProvider
         return error is null ? (null, null) : (null, $"The active document {Path.GetFileName(active)} is outside the folders this job may change ({error}). Ask the user to pick its folder.");
     }
 
-    /// <summary>The edit operations, checked: a known op with its required fields. Index keys "1".."n" are the approval rows.</summary>
-    public static (List<(string Key, JsonObject Op)> Ops, string? Error) ParseOps(JsonElement a)
+    /// <summary>The operations, checked: one this program supports, with its required fields. Index keys "1".."n" are the approval rows.</summary>
+    public (List<(string Key, JsonObject Op)> Ops, string? Error) ParseOps(JsonElement a, CadCapability cap = CadCapability.Edit)
     {
+        var supported = _app.Ops(cap);
         if (!a.TryGetProperty("ops", out var ops) || ops.ValueKind != JsonValueKind.Array || ops.GetArrayLength() == 0) return ([], "ops must be a non-empty array.");
         if (ops.GetArrayLength() > MaxOps) return ([], $"At most {MaxOps} operations per call.");
         var list = new List<(string, JsonObject)>();
@@ -257,9 +292,10 @@ public sealed class CadAppToolProvider : IToolProvider
             i++;
             if (JsonNode.Parse(e.GetRawText()) is not JsonObject o) return ([], $"Operation {i} must be an object.");
             string op = (string?)o["op"] ?? "";
-            if (!EditOps.TryGetValue(op, out var required)) return ([], $"Operation {i}: unknown op '{op}' ({string.Join(", ", EditOps.Keys)}).");
-            if (required.FirstOrDefault(r => o[r] is null) is { } missing) return ([], $"Operation {i} ({op}) needs '{missing}'.");
-            if (op is "set_dimension" or "set_global" && !(o["value"] is JsonValue value && value.TryGetValue(out double _)))
+            if (!supported.Contains(op) || CadOpCatalog.Find(cap, op) is not { } def)
+                return ([], $"Operation {i}: '{op}' is not something {_app.DisplayName} can do here ({string.Join(", ", supported)}).");
+            if (def.Required.FirstOrDefault(r => o[r] is null) is { } missing) return ([], $"Operation {i} ({op}) needs '{missing}'.");
+            if (op is "set_dimension" or "set_global" or "add_global" && !(o["value"] is JsonValue value && value.TryGetValue(out double _)))
                 return ([], $"Operation {i} ({op}): value must be a number.");
             list.Add((i.ToString(System.Globalization.CultureInfo.InvariantCulture), o));
         }
@@ -278,8 +314,38 @@ public sealed class CadAppToolProvider : IToolProvider
         "activate_configuration" => $"activate configuration {o["name"]}",
         "add_configuration" => $"add configuration {o["name"]}",
         "suppress_component" or "unsuppress_component" => $"{((string)o["op"]!).Replace("_component", "", StringComparison.Ordinal)} component {o["component"]}",
-        _ => (string?)o["op"] ?? "",
+        _ => Summarize(o),
     };
+
+    /// <summary>"hole · size M6 · points [[10,10]]": an operation's fields in one line, for its approval row.</summary>
+    private static string Summarize(JsonObject o)
+    {
+        var parts = new List<string> { (string?)o["op"] ?? "" };
+        foreach (var (k, v) in o)
+        {
+            if (k == "op" || v is null || parts.Count >= 6) continue;
+            string text = v is JsonValue ? v.ToString() : v.ToJsonString();
+            parts.Add($"{k} {(text.Length > 60 ? text[..60] + "…" : text)}");
+        }
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Files named inside operations (assembly insert/replace, a block to insert) must be readable inside the job's folders;
+    /// each "path" is replaced by its checked full path. Returns the refusal, or null.
+    /// </summary>
+    private static string? AuthorizeOpPaths(JobGrant job, IEnumerable<JsonObject> ops)
+    {
+        foreach (var o in ops)
+        {
+            if ((string?)o["path"] is not { } raw) continue;
+            var v = job.Paths.Check(raw, PathAccess.Read);
+            if (!v.Allowed) return v.Message;
+            if (!File.Exists(v.FullPath)) return $"{v.FullPath} does not exist.";
+            o["path"] = v.FullPath;
+        }
+        return null;
+    }
 
     // ── Previews ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -306,7 +372,16 @@ public sealed class CadAppToolProvider : IToolProvider
                 }, false, []),
             CadCapability.Export => Card($"Export {app} documents", $"{string.Join(", ", Strings(a, "formats"))} → {Str(a, "outputFolder")}", false,
                 (Strings(a, "paths") is { Count: > 0 } ps ? ps : ["(the active document)"]).Select(p => (p, Path.GetFileName(p), ""))),
-            CadCapability.Edit => EditPreview(a, target, Card),
+            CadCapability.Edit => OpsPreview(a, CadCapability.Edit, $"Change {target}", Card),
+            CadCapability.Feature => OpsPreview(a, CadCapability.Feature, $"Model {target}", Card),
+            CadCapability.Assembly => OpsPreview(a, CadCapability.Assembly, $"Change assembly {target}", Card),
+            CadCapability.Annotate => OpsPreview(a, CadCapability.Annotate, $"Annotate drawing {target}", Card),
+            CadCapability.Simulate => OpsPreview(a, CadCapability.Simulate, $"Analyse {target}", Card),
+            CadCapability.Sketch => Card($"Sketch in {target}", $"{(a.TryGetProperty("entities", out var en) && en.ValueKind == JsonValueKind.Array ? en.GetArrayLength() : 0)} entities on {(a.TryGetProperty("on", out var on) ? on.GetRawText() : "?")}" +
+                (Bool(a, "save") ? ". The file is SAVED." : ". Left unsaved."), false, []),
+            CadCapability.Script => Card($"Run a {_app.Script?.Language ?? "script"} script in {app}" + (Str(a, "path") is { } sp ? $" on {Path.GetFileName(sp)}" : ""),
+                (Str(a, "purpose") is { Length: > 0 } purpose ? purpose + " · " : "") + "It can do anything the program's API allows. Read the code before approving.",
+                false, [("code", Str(a, "code") ?? "", "")]),
             CadCapability.Drawing => Card($"New {app} drawing", $"{(Str(a, "modelPath") is { } m ? Path.GetFileName(m) : "the active model")} → {Str(a, "outputPath")}", false,
                 [("sheet", $"Sheet {Str(a, "sheet") ?? "A3"}, {(Str(a, "projection") == "first" ? "first" : "third")}-angle", (Bool(a, "isometric", true) ? "3 views + isometric" : "3 views") +
                     (Bool(a, "dimensions", true) ? ", model dimensions" : "") + (Bool(a, "exportPdf") ? ", PDF" : ""))]),
@@ -315,11 +390,11 @@ public sealed class CadAppToolProvider : IToolProvider
         return Task.FromResult(preview);
     }
 
-    private static JsonObject EditPreview(JsonElement a, string target, Func<string, string, bool, IEnumerable<(string, string, string)>, JsonObject> card)
+    private JsonObject OpsPreview(JsonElement a, CadCapability cap, string title, Func<string, string, bool, IEnumerable<(string, string, string)>, JsonObject> card)
     {
-        var (ops, error) = ParseOps(a);
+        var (ops, error) = ParseOps(a, cap);
         bool save = Bool(a, "save");
-        return card($"Change {target}", error ?? $"{ops.Count} change(s), then rebuild. " + (save ? "The file is SAVED." : "Left unsaved for you to review (Ctrl+Z undoes)."),
+        return card(title, error ?? $"{ops.Count} operation(s). " + (save ? "The file is SAVED." : "Left unsaved for you to review (undo reverts them)."),
             error is null, ops.Select(o => (o.Key, DescribeOp(o.Op), "")));
     }
 
@@ -346,6 +421,9 @@ public sealed class CadAppToolProvider : IToolProvider
                 CadCapability.Edit => await EditAsync(call, ct).ConfigureAwait(false),
                 CadCapability.Drawing => await DrawingAsync(call, ct).ConfigureAwait(false),
                 CadCapability.Views => await ViewsAsync(call, ct).ConfigureAwait(false),
+                CadCapability.Sketch => await SketchAsync(call, ct).ConfigureAwait(false),
+                CadCapability.Feature or CadCapability.Assembly or CadCapability.Annotate or CadCapability.Simulate => await OpsAsync(call, capability, ct).ConfigureAwait(false),
+                CadCapability.Script => await ScriptAsync(call, ct).ConfigureAwait(false),
                 _ => ToolResult.Fail($"Unknown tool {call.Tool.Name}."),
             };
         }
@@ -439,6 +517,59 @@ public sealed class CadAppToolProvider : IToolProvider
         if (kept.Count < ops.Count) report["excludedByUser"] = $"{ops.Count - kept.Count} operation(s) were unticked by the user and not run; do not redo them.";
         bool anyOk = report["results"] is JsonArray results && results.OfType<JsonObject>().Any(r => (bool?)r["ok"] == true);
         return Report(report, !anyOk);
+    }
+
+    private async Task<ToolResult> OpsAsync(ToolCallContext call, CadCapability cap, CancellationToken ct)
+    {
+        var a = call.Arguments;
+        var (ops, opError) = ParseOps(a, cap);
+        if (opError is not null) return ToolResult.Fail(opError);
+        bool save = Bool(a, "save");
+        var (path, error) = await WritableDoc(call.Job, Str(a, "path"), save, ct).ConfigureAwait(false);
+        if (error is not null) return ToolResult.Fail(error);
+        var kept = call.ApprovedRows is { } keep ? ops.Where(o => keep.Contains(o.Key)).ToList() : ops;
+        if (kept.Count == 0) return ToolResult.Fail("The user unticked every operation; nothing was changed.");
+        if (AuthorizeOpPaths(call.Job, kept.Select(o => o.Op)) is { } refused) return ToolResult.Fail(refused);
+        var report = await _app.RunOpsAsync(cap, path, new JsonArray(kept.Select(o => (JsonNode)o.Op.DeepClone()).ToArray()), save, ct).ConfigureAwait(false);
+        if (kept.Count < ops.Count) report["excludedByUser"] = $"{ops.Count - kept.Count} operation(s) were unticked by the user and not run; do not redo them.";
+        bool anyOk = report["results"] is JsonArray results && results.OfType<JsonObject>().Any(r => (bool?)r["ok"] == true);
+        return Report(report, !anyOk);
+    }
+
+    private async Task<ToolResult> SketchAsync(ToolCallContext call, CancellationToken ct)
+    {
+        var a = call.Arguments;
+        if (!a.TryGetProperty("entities", out var entities) || entities.ValueKind != JsonValueKind.Array || entities.GetArrayLength() == 0)
+            return ToolResult.Fail("entities must be a non-empty array.");
+        if (entities.GetArrayLength() > 400) return ToolResult.Fail("At most 400 entities per sketch.");
+        bool save = Bool(a, "save");
+        var (path, error) = await WritableDoc(call.Job, Str(a, "path"), save, ct).ConfigureAwait(false);
+        if (error is not null) return ToolResult.Fail(error);
+        var sketch = JsonNode.Parse(a.GetRawText())!.AsObject();
+        sketch.Remove("path");
+        sketch.Remove("save");
+        return Report(await _app.SketchAsync(path, sketch, save, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// The escape hatch: the program's own automation language. Destructive (always asks, never auto-approved), the user sees
+    /// the code; the target document must be inside the job's folders; output and errors come back to the model.
+    /// </summary>
+    private async Task<ToolResult> ScriptAsync(ToolCallContext call, CancellationToken ct)
+    {
+        var a = call.Arguments;
+        string code = Str(a, "code") ?? "";
+        if (code.Trim().Length == 0) return ToolResult.Fail("code is empty.");
+        if (code.Length > MaxScriptChars) return ToolResult.Fail($"The script is over {MaxScriptChars:N0} characters; split it.");
+        // The approved code is what runs: a preview that differs (the call changed after approval) is refused.
+        if (call.ApprovedPreview?["rows"] is JsonArray rows && rows.FirstOrDefault()?["primary"] is JsonValue shown && (string?)shown != code)
+            return ToolResult.Fail("The script differs from the one the user approved; nothing ran.");
+        var (path, error) = Str(a, "path") is null ? (null, null) : await WritableDoc(call.Job, Str(a, "path"), saves: false, ct).ConfigureAwait(false);
+        if (error is not null) return ToolResult.Fail(error);
+        var timeout = a.TryGetProperty("timeoutSeconds", out var t) && t.TryGetInt32(out int secs)
+            ? TimeSpan.FromSeconds(Math.Clamp(secs, 5, (int)ScriptMaxTimeout.TotalSeconds)) : ScriptDefaultTimeout;
+        var report = await _app.RunScriptAsync(code, path, timeout, ct).ConfigureAwait(false);
+        return Report(report, report["error"] is not null);
     }
 
     private async Task<ToolResult> DrawingAsync(ToolCallContext call, CancellationToken ct)

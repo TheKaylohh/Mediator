@@ -78,7 +78,7 @@ static class CadToolsetTests
         foreach (var t in SolidWorksCadApp.ToolNames)
             Check.True(JobSpecFactory.CadTools.Contains(t), t + " is in every CAD job");
         var cad = new Mediator.Core.Cad.CadAppToolProvider(new SolidWorksCadApp());
-        Check.True(cad.ToolNames.SetEquals(SolidWorksCadApp.ToolNames), "the SolidWorks app offers all seven CAD tools: " + string.Join(", ", cad.ToolNames));
+        Check.True(cad.ToolNames.SetEquals(SolidWorksCadApp.ToolNames), "the SolidWorks app offers every CAD tool: " + string.Join(", ", cad.ToolNames));
         var all = cad.Tools.Concat(new SwxPartToolProvider().Tools).ToDictionary(t => t.Name);
         Check.True(all[SolidWorksCadApp.SessionTool].Risk == Mediator.Core.Bus.ToolRisk.ReadOnly && all[SolidWorksCadApp.ExportTool].Risk == Mediator.Core.Bus.ToolRisk.Write
             && all[SolidWorksCadApp.InspectTool].Risk == Mediator.Core.Bus.ToolRisk.ReadOnly && all[SolidWorksCadApp.EditTool].Risk == Mediator.Core.Bus.ToolRisk.Write, "session and inspect read; export and edit write");

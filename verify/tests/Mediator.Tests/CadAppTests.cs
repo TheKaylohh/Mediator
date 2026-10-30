@@ -107,7 +107,7 @@ static class CadAppTests
         var partial = new CadAppToolProvider(new FakeCadApp("inv", new HashSet<CadCapability> { CadCapability.Session, CadCapability.Inspect }));
         Check.True(partial.ToolNames.SetEquals(["inv_session", "inv_inspect_model"]), "only the app's capabilities become tools: " + string.Join(", ", partial.ToolNames));
         var full = new CadAppToolProvider(new FakeCadApp("fus", All));
-        Check.Equal(7, full.Tools.Count, "every capability is one tool");
+        Check.Equal(Enum.GetValues<CadCapability>().Length - 1, full.Tools.Count, "every capability is one tool (no script tool without a script language)");
         Check.True(full.Tools.All(t => t.LeaseResource == "fakecad" && ToolRegistry.IsValidName(t.Name) && t.Name.StartsWith("fus_", StringComparison.Ordinal)), "prefixed, valid MCP names, all holding the app lease");
         Check.True(full.Tools.Single(t => t.Name == "fus_export_neutral").InputSchema.ToJsonString().Contains("\"pdf\"", StringComparison.Ordinal), "export formats come from the app");
         new ToolRegistry().Register(full); // no duplicate or invalid names
